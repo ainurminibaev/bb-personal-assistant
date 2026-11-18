@@ -43,7 +43,7 @@ python3 setup.py --machine <ID-машины>
    установку BB или сначала согласуй перенос существующего подключения.
 
    ```sh
-   bb plugin install git:https://github.com/ainurminibaev/bb-plugin-telegram-projects.git@4aaf21d9d5b4f189c4dd304722bb7d3d5cf04eb0 --yes
+   bb plugin install git:https://github.com/ainurminibaev/bb-plugin-telegram-projects.git@82a41268c5f0ed97b8ca24bd198b8729ce6ba5e5 --yes
    ```
 
 3. Этот шаг нужен для первого бота в чистой установке. Если установщик сообщил, что Telegram уже настроен, сохрани действующее подключение. Второй независимый бот требует отдельной установки BB. Для первого подключения создай собственного бота через BotFather. В BB открой **Telegram →
