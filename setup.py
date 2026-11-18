@@ -17,14 +17,10 @@ def bb(*args):
     return json.loads(result.stdout)
 
 
-def supports_isolated_groups(version):
-    """The first published release requiring isolation for allowlisted users was personal.28."""
-    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-personal\.(0|[1-9][0-9]*))?", version)
-    if not match:
-        return False
-    major, minor, patch, personal = match.groups()
-    base = tuple(map(int, (major, minor, patch)))
-    return base > (0, 9, 1) or (base == (0, 9, 1) and (personal is None or int(personal) >= 28))
+def supports_group_results(version):
+    """The kit needs the released group-result RPC and the isolated group worker."""
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version)
+    return bool(match and tuple(map(int, match.groups())) >= (0, 9, 2))
 
 
 def main():
@@ -75,9 +71,9 @@ def main():
             bb("plugin", "install", src, "--yes")
     # Existing release-tracking installations can lag behind the newest tag.
     bridge = next(p for p in bb("plugin", "list")["plugins"] if p["id"] == "telegram-projects")
-    if not supports_isolated_groups(bridge["version"]):
+    if not supports_group_results(bridge["version"]):
         raise SystemExit("Update Telegram Bridge through BB Settings → Updates, then rerun setup. "
-                         "Group isolation requires 0.9.1-personal.28 or later.")
+                         "Returning approved group results requires stable Telegram Bridge 0.9.2 or later.")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         with (root / "projects.md").open("x", encoding="utf-8") as registry:
