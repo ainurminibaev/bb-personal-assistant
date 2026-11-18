@@ -1,6 +1,7 @@
 """Register this assistant workspace and install both release-tracking BB plugins."""
 import argparse
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +15,16 @@ SOURCES = {"telegram-projects": TRACKING, "personal-assistant": ASSISTANT}
 def bb(*args):
     result = subprocess.run(["bb", *args, "--json"], check=True, stdout=subprocess.PIPE)
     return json.loads(result.stdout)
+
+
+def supports_isolated_groups(version):
+    """The first published release requiring isolation for allowlisted users was personal.28."""
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-personal\.(0|[1-9][0-9]*))?", version)
+    if not match:
+        return False
+    major, minor, patch, personal = match.groups()
+    base = tuple(map(int, (major, minor, patch)))
+    return base > (0, 9, 1) or (base == (0, 9, 1) and (personal is None or int(personal) >= 28))
 
 
 def main():
@@ -62,6 +73,11 @@ def main():
             raise SystemExit("Установка ожидает подтверждения. Для автоматизации используйте --yes.")
         for src in missing:
             bb("plugin", "install", src, "--yes")
+    # Existing release-tracking installations can lag behind the newest tag.
+    bridge = next(p for p in bb("plugin", "list")["plugins"] if p["id"] == "telegram-projects")
+    if not supports_isolated_groups(bridge["version"]):
+        raise SystemExit("Update Telegram Bridge through BB Settings → Updates, then rerun setup. "
+                         "Group isolation requires 0.9.1-personal.28 or later.")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         with (root / "projects.md").open("x", encoding="utf-8") as registry:

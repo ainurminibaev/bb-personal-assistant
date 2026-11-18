@@ -38,7 +38,9 @@ If you already use the original Telegram Projects plugin, check the [migration g
 
 ## Privacy and access
 
-The assistant uses the files and tools available to its agent process. A group topic has a separate conversation history. Running group and personal agents as the same operating-system user can expose personal files and credentials. Use owner-only access on a personal host until you have isolated group execution.
+The assistant uses the files and tools available to its agent process. A group topic has a separate conversation history. Running group and personal agents as the same operating-system user can expose personal files and credentials. For participant access, configure a separate BB worker for the topic and bind it again. Starting with Telegram Bridge personal.28, participant jobs require this binding. The personal bridge keeps the bot token and sends the reply back to the original Telegram message. Owner-only local operation remains available. [Group worker deployment](https://github.com/ainurminibaev/bb-plugin-telegram-projects/blob/v0.9.1-personal.28/docs/isolated-groups.md).
+
+Use a separate provider login for the worker. Giving it a separate project directory alone still lets processes running as the same OS user read that user’s provider credentials. Before admitting participants, test a file in the intended topic and reply directly to the returned PDF with a correction. Check that the revised PDF arrives in the same topic.
 
 Connecting a personal Telegram account for old channel history is optional. Its session key grants account-wide access. Channel selection limits searches in the connector. The server operator controls the machine handling the session and the two-step verification password. For a shared Linux installation, give the coordinator access to the restricted search socket and keep the key under its own unprivileged account. [Private history service setup](telegram-account/PRIVATE-HISTORY.md).
 
