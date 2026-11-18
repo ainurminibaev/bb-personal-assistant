@@ -121,9 +121,9 @@ class ChannelSearchTest(unittest.IsolatedAsyncioTestCase):
         c.iter_messages.assert_called_once()
 
     async def test_unselected_channel_rejected(self):
-        with self.assertRaisesRegex(ValueError, "не выбран"):
+        with self.assertRaisesRegex(ValueError, "not selected"):
             await self.run_search(-1000000000123, -1000000000124, 123)
 
     async def test_inconsistent_cached_peer_rejected(self):
-        with self.assertRaisesRegex(ValueError, "не совпадает"):
+        with self.assertRaisesRegex(ValueError, "does not match"):
             await self.run_search(-1000000000123, -1000000000123, 124)

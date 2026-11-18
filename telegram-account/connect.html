@@ -1,7 +1,52 @@
-<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Подключить Telegram</title>
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Telegram</title>
 <style>body{max-width:34rem;margin:8vh auto;padding:0 1.2rem;font:17px/1.45 system-ui;color:#162e40}button,input{font:inherit}button{padding:.5rem 1rem;margin-top:1rem}label{display:block;padding:.25rem}img{width:220px;height:220px}</style>
-<h1>Подключить Telegram</h1><p>Ты подключаешь личный Telegram-аккаунт. Ключ сессии даёт доступ ко всему аккаунту. Выбор каналов ограничивает поиск внутри этого помощника. Вводи пароль только на сервере администратора, которому доверяешь.</p><p id="msg">Проверяю подключение…</p><section id="content"></section>
+<h1>Connect Telegram</h1><p id="scope">You are connecting your personal Telegram account. The session key grants access to the entire account. Selecting channels limits searches within this assistant. Enter your password only on a server whose operator you trust.</p><p id="msg">Checking the connection…</p><section id="content"></section>
 <script>
+const languages = {
+  "en": {
+    "title": "Connect Telegram",
+    "scope": "You are connecting your personal Telegram account. The session key grants access to the entire account. Selecting channels limits searches within this assistant. Enter your password only on a server whose operator you trust.",
+    "checking": "Checking the connection…",
+    "scan": "In Telegram on your phone, open Settings → Devices and scan this code.",
+    "qr": "Telegram sign-in QR code",
+    "password": "Enter your Telegram two-step verification password.",
+    "label": "Two-step verification password",
+    "next": "Continue",
+    "channels": "Select the channels the assistant may search.",
+    "empty": "This account has no channels available for search.",
+    "allow": "Allow search",
+    "done": "Your channel choices were saved. You can close this page.",
+    "wrong": "This account does not match the paired bot owner. Restart the connection.",
+    "failed": "Sign-in did not finish. Restart the connection.",
+    "expired": "This link is unavailable. Open a fresh link from the owner’s terminal.",
+    "rejected": "Telegram rejected the password."
+  },
+  "ru": {
+    "title": "Подключить Telegram",
+    "scope": "Ты подключаешь личный Telegram-аккаунт. Ключ сессии даёт доступ ко всему аккаунту. Выбор каналов ограничивает поиск внутри этого помощника. Вводи пароль только на сервере администратора, которому доверяешь.",
+    "checking": "Проверяю подключение…",
+    "scan": "Открой Telegram на телефоне и отсканируй код в разделе «Устройства».",
+    "qr": "QR входа в Telegram",
+    "password": "Telegram запросил пароль двухэтапной защиты.",
+    "label": "Пароль двухэтапной защиты",
+    "next": "Продолжить",
+    "channels": "Выбери каналы, в которых помощник сможет искать сообщения.",
+    "empty": "У этого аккаунта нет доступных каналов.",
+    "allow": "Разрешить поиск",
+    "done": "Каналы сохранены. Можно закрыть страницу.",
+    "wrong": "Этот аккаунт не совпадает с владельцем бота. Запусти подключение заново.",
+    "failed": "Вход не завершён. Запусти подключение заново.",
+    "expired": "Ссылка недоступна. Открой новую ссылку из терминала владельца.",
+    "rejected": "Telegram не принял пароль."
+  }
+};
+const language = navigator.language.toLowerCase().startsWith("ru") ? "ru" : "en";
+const labels = languages[language];
+document.documentElement.lang = language;
+document.title = labels.title;
+document.querySelector("h1").textContent = labels.title;
+document.getElementById("scope").textContent = labels.scope;
+document.getElementById("msg").textContent = labels.checking;
 const key=location.hash.slice(1);history.replaceState(null,"","/");
 const area=document.getElementById("content"),msg=document.getElementById("msg");
 function element(tag,text){const e=document.createElement(tag);if(text)e.textContent=text;return e}
@@ -11,22 +56,22 @@ async function step(data={}){
  if(!response.ok)throw Error();
  const state=await response.json();area.replaceChildren();
  if(state.phase==="new"||state.phase==="qr"){
- msg.textContent="Открой Telegram на телефоне и отсканируй код в разделе «Устройства».";
- if(state.qr){const image=element("img");image.src="data:image/png;base64,"+state.qr;image.alt="QR входа в Telegram";area.append(image)}
+ msg.textContent=labels.scan;
+ if(state.qr){const image=element("img");image.src="data:image/png;base64,"+state.qr;image.alt=labels.qr;area.append(image)}
  setTimeout(()=>step(),1500);
  }else if(state.phase==="password"){
- msg.textContent=state.error||"Telegram запросил пароль двухэтапной защиты.";
+ msg.textContent=state.error ? labels.rejected : labels.password;
  const form=element("form"),p=element("input");p.type="password";p.autocomplete="current-password";p.required=true;
- p.setAttribute("aria-label","Пароль двухэтапной защиты");form.append(p,element("button","Продолжить"));area.append(form);
+ p.setAttribute("aria-label",labels.label);form.append(p,element("button",labels.next));area.append(form);
  form.onsubmit=e=>{e.preventDefault();const password=p.value;p.value="";form.querySelector("button").disabled=true;step({password})};p.focus();
  }else if(state.phase==="channels"){
- msg.textContent=state.channels.length?"Выбери каналы, в которых помощник сможет искать сообщения.":"У этого аккаунта нет доступных каналов.";
+ msg.textContent=state.channels.length?labels.channels:labels.empty;
  const form=element("form");for(const [id,name] of state.channels){const label=element("label"),box=element("input");box.type="checkbox";box.value=String(id);box.checked=state.selected.includes(id);label.append(box,document.createTextNode(" "+name));form.append(label)}
- if(state.channels.length){const button=element("button","Разрешить поиск");form.append(button);form.onsubmit=e=>{e.preventDefault();const ids=[...form.querySelectorAll("input:checked")].map(x=>Number(x.value));if(ids.length){button.disabled=true;step({channels:ids})}}}
+ if(state.channels.length){const button=element("button",labels.allow);form.append(button);form.onsubmit=e=>{e.preventDefault();const ids=[...form.querySelectorAll("input:checked")].map(x=>Number(x.value));if(ids.length){button.disabled=true;step({channels:ids})}}}
  area.append(form);
- }else if(state.phase==="done"){msg.textContent="Каналы сохранены. Можно закрыть страницу."}
- else{msg.textContent=state.phase==="wrong-owner"?"Этот аккаунт не совпадает с владельцем бота. Запусти подключение заново.":"Вход не завершён. Запусти подключение заново."}
- }catch{area.replaceChildren();msg.textContent="Ссылка недоступна. Открой новую ссылку из терминала владельца."}
+ }else if(state.phase==="done"){msg.textContent=labels.done}
+ else{msg.textContent=state.phase==="wrong-owner"?labels.wrong:labels.failed}
+ }catch{area.replaceChildren();msg.textContent=labels.expired}
 }
 step()
 </script></html>

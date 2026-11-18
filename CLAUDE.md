@@ -1,5 +1,3 @@
-# Инструкции помощника
+# Personal assistant instructions
 
-Постоянные правила находятся в `.bb/AGENTS.md`. При запуске вне BB прочитай этот файл перед работой; внутри BB он внедряется в системные инструкции. Не дублируй правила здесь.
-
-Разрешённые проекты и окружения: `projects.md`. Делегирование: `.bb/skills/dispatch/SKILL.md`.
+Read .bb/AGENTS.md before working outside BB. Inside BB, the assistant plugin supplies the coordinator rules. Use projects.md for authorized projects and environments, and .bb/skills/dispatch/SKILL.md for delegation.

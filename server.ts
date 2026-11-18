@@ -6,14 +6,15 @@ export default async function personalAssistant(bb: BbPluginApi) {
     projectId: { type: "string", label: "Personal assistant project ID", default: "" },
     threadId: { type: "string", label: "Personal coordinator thread ID", default: "" },
   });
-  const binding = await settings.get();
+  let binding = await settings.get();
+  settings.onChange(next => { binding = next; });
   const matches = (project?: string, thread?: string) =>
     Boolean(binding.projectId && binding.threadId &&
       binding.projectId === project && binding.threadId === thread);
 
   bb.agents.configure(({project, thread}) =>
     matches(project.id, thread.id)
-      ? { instructions: policy, skills: ["dispatch"], tools: [] }
+      ? { instructions: policy, skills: ["dispatch", "integrations"], tools: [] }
       : { skills: [], tools: [] }
   );
 
@@ -28,7 +29,7 @@ export default async function personalAssistant(bb: BbPluginApi) {
       if (argv.length !== 1 || !["doctor", "work"].includes(argv[0]))
         return { exitCode: 2, stderr: "Usage: bb personal-assistant doctor | work" };
       if (!binding.projectId || !binding.threadId)
-        return { exitCode: 1, stderr: "Set projectId and threadId in the plugin settings, then reload the plugin." };
+        return { exitCode: 1, stderr: "Set projectId and threadId in the plugin settings." };
       if (argv[0] === "doctor") {
         const rows = await bb.sdk.threads.list({
           threadIds: [binding.threadId], archived: false, includeHidden: true, limit: 1, signal: ctx.signal,

@@ -1,11 +1,9 @@
-# Разрешённые проекты
+# Authorized projects
 
-Реестр пока пуст. Для внешнего проекта сначала добавь запись с согласованной областью доступа. Разовые исследования можно выполнять в собственном окружении помощника.
+This registry starts empty. One-off research can run in the assistant's own project. Add an external project after the owner confirms its identity and the intended scope of access.
 
-Для каждого проекта записать: человеческое имя и псевдонимы, BB project ID, машину и проверенный путь, допустимое окружение, владельца данных, разрешённые операции, расположение правил проекта. Секреты здесь не хранить.
+For each project, record its display name and aliases, BB project ID, host, verified path, permitted execution environment, data owner, allowed operations and location of project instructions. Keep credentials outside this file. Projects visible to the BB administrator require individual authorization.
 
-Новый проект добавлять после проверки принадлежности и согласования области доступа. Не считать все проекты, доступные администратору BB, разрешёнными личному помощнику.
+## Creating projects
 
-## Создание проектов
-
-Возможность предусмотрена, но разрешённые машина и корень должны быть заполнены при установке. Пустая настройка не разрешает выбирать произвольный сервер. После настройки создавать проект только по прямой просьбе пользователя или с его согласия.
+Record the permitted host and parent directory before enabling project creation. An empty setting grants no creation scope. Create a project on an explicit request from the owner or after their approval.

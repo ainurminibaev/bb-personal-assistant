@@ -16,7 +16,7 @@ from uuid import UUID
 PLUGIN = "telegram-projects"
 REPO = "git:https://github.com/ainurminibaev/bb-plugin-telegram-projects.git@"
 LEGACY = REPO + "82a41268c5f0ed97b8ca24bd198b8729ce6ba5e5"
-TRACKING = REPO + "semver:^0.9.1-personal.24"
+TRACKING = REPO + "v0.9.18-rc.1"
 
 
 def bb(*args):
