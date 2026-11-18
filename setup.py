@@ -20,7 +20,7 @@ def bb(*args):
 def supports_group_results(version):
     """The kit needs the released group-result RPC and the isolated group worker."""
     match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version)
-    return bool(match and tuple(map(int, match.groups())) >= (0, 9, 2))
+    return bool(match and tuple(map(int, match.groups())) >= (0, 9, 3))
 
 
 def main():
@@ -73,7 +73,7 @@ def main():
     bridge = next(p for p in bb("plugin", "list")["plugins"] if p["id"] == "telegram-projects")
     if not supports_group_results(bridge["version"]):
         raise SystemExit("Update Telegram Bridge through BB Settings → Updates, then rerun setup. "
-                         "Returning approved group results requires stable Telegram Bridge 0.9.2 or later.")
+                         "Returning approved group results requires stable Telegram Bridge 0.9.3 or later.")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         with (root / "projects.md").open("x", encoding="utf-8") as registry:
