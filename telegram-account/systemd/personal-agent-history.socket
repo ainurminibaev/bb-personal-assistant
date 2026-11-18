@@ -1,0 +1,13 @@
+[Unit]
+Description=Personal Agent private Telegram history socket
+
+[Socket]
+ListenStream=/run/personal-agent-history.sock
+Accept=yes
+SocketUser=pa-coordinator
+SocketMode=0600
+MaxConnections=4
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

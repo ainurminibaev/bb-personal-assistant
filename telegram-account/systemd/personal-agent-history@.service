@@ -1,0 +1,26 @@
+[Unit]
+Description=Personal Agent private Telegram history query
+
+[Service]
+User=pa-history
+Group=pa-history
+EnvironmentFile=/etc/personal-agent-history.env
+Environment=PA_TELEGRAM_STATE=/var/lib/personal-agent-history
+StateDirectory=personal-agent-history
+StateDirectoryMode=0700
+ExecStart=/opt/personal-agent-history/venv/bin/python -EsB /opt/personal-agent-history/history_service.py --coordinator-uid ${COORDINATOR_UID} --owner-id ${PA_TELEGRAM_OWNER_ID}
+StandardInput=socket
+StandardOutput=null
+StandardError=journal
+UMask=0077
+RuntimeMaxSec=65
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=

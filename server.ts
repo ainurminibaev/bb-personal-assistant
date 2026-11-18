@@ -1,0 +1,49 @@
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import policy from "./.bb/AGENTS.md" with { type: "text" };
+
+export default async function personalAssistant(bb: BbPluginApi) {
+  const settings = bb.settings.define({
+    projectId: { type: "string", label: "Personal assistant project ID", default: "" },
+    threadId: { type: "string", label: "Personal coordinator thread ID", default: "" },
+  });
+  const binding = await settings.get();
+  const matches = (project?: string, thread?: string) =>
+    Boolean(binding.projectId && binding.threadId &&
+      binding.projectId === project && binding.threadId === thread);
+
+  bb.agents.configure(({project, thread}) =>
+    matches(project.id, thread.id)
+      ? { instructions: policy, skills: ["dispatch"], tools: [] }
+      : { skills: [], tools: [] }
+  );
+
+  bb.cli.register({
+    name: "personal-assistant",
+    summary: "Check the coordinator and its project tasks without starting a model.",
+    commands: [
+      { name: "doctor", usage: "bb personal-assistant doctor", summary: "Check the configured coordinator thread and project." },
+      { name: "work", usage: "bb personal-assistant work", summary: "List open child tasks from the personal coordinator." },
+    ],
+    async run(argv, ctx) {
+      if (argv.length !== 1 || !["doctor", "work"].includes(argv[0]))
+        return { exitCode: 2, stderr: "Usage: bb personal-assistant doctor | work" };
+      if (!binding.projectId || !binding.threadId)
+        return { exitCode: 1, stderr: "Set projectId and threadId in the plugin settings, then reload the plugin." };
+      if (argv[0] === "doctor") {
+        const rows = await bb.sdk.threads.list({
+          threadIds: [binding.threadId], archived: false, includeHidden: true, limit: 1, signal: ctx.signal,
+        });
+        if (!rows.some(row => matches(row.projectId, row.id)))
+          return { exitCode: 1, stderr: "The configured project has no active coordinator with this thread ID." };
+        return { exitCode: 0, stdout: "Coordinator and project verified." };
+      }
+      if (!matches(ctx.projectId, ctx.threadId))
+        return { exitCode: 1, stderr: "Open this command in the registered coordinator thread." };
+      const tasks = await bb.sdk.threads.list({
+        parentThreadId: binding.threadId, archived: false, includeHidden: false, limit: 100, signal: ctx.signal,
+      });
+      return { exitCode: 0, stdout: tasks.map(t => `${t.status}\t${t.title || t.id}`).join("\n") ||
+        "No open child threads." };
+    },
+  });
+}

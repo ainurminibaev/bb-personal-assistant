@@ -18,9 +18,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
+from telethon import TelegramClient, utils
+from telethon.errors import AuthKeyUnregisteredError, SessionPasswordNeededError, SessionRevokedError
 from telethon.sessions import StringSession
+from telethon.tl.types import InputPeerChannel
 import uvicorn
 
 ROOT = Path(os.environ.get("PA_TELEGRAM_STATE", "~/.local/state/personal-assistant/telegram")).expanduser()
@@ -44,6 +45,11 @@ def write(path, data):
 
 
 def owner():
+    configured = os.environ.get("PA_TELEGRAM_OWNER_ID")
+    if configured is not None:
+        if not configured.isascii() or not configured.isdecimal() or int(configured) <= 0:
+            raise ValueError("Invalid paired Telegram owner ID.")
+        return int(configured)
     raw = subprocess.check_output(["bb", "plugin", "rpc", "call", "telegram-projects", "status", "--json"])
     value = json.loads(raw).get("owner")
     if type(value) is not int or value <= 0:
@@ -56,6 +62,10 @@ def client(session=""):
     return TelegramClient(StringSession(session), app["id"], app["hash"], device_model="Личный помощник")
 
 
+class RevokedSession(ValueError):
+    """Telegram confirmed that the stored key no longer authorizes a user."""
+
+
 async def authorized(expected):
     saved = read(ACCOUNT)
     if saved["owner"] != expected:
@@ -64,9 +74,14 @@ async def authorized(expected):
     try:
         await c.connect()
         me = await c.get_me()
-        if not me or me.id != expected:
-            raise ValueError("Вход истёк или сменился владелец.")
+        if me is None:
+            raise RevokedSession("Сессия Telegram отозвана. Подключитесь заново.")
+        if me.id != expected:
+            raise ValueError("Сессия принадлежит другому владельцу.")
         return c, saved
+    except (AuthKeyUnregisteredError, SessionRevokedError) as error:
+        await c.disconnect()
+        raise RevokedSession("Сессия Telegram отозвана. Подключитесь заново.") from error
     except BaseException:
         await c.disconnect()
         raise
@@ -78,27 +93,47 @@ async def search(args):
     thread = os.environ.get("BB_THREAD_ID")
     if not thread or not any(b.get("threadId")==thread and b.get("topicId")==0 for b in status.get("chatBindings", [])):
         raise ValueError("Поиск разрешён из привязанного личного треда.")
-    c, saved = await authorized(status["owner"])
+    print(json.dumps(await read_channels(args, status["owner"]), ensure_ascii=False))
+
+
+async def read_channels(args, expected_owner):
+    c, saved = await authorized(expected_owner)
     try:
         if args.cmd=="search" and args.channel not in saved["channels"]:
             raise ValueError("Канал не выбран владельцем.")
-        # StringSession doesn't cache entity access hashes across processes.
-        available = []
-        async for dialog in c.iter_dialogs():
-            if args.cmd=="channels":
-                if dialog.id in saved["channels"] and getattr(dialog.entity,"broadcast",False):
-                    available.append(dict(id=dialog.id,title=dialog.title))
-                continue
-            if dialog.id == args.channel and getattr(dialog.entity, "broadcast", False):
-                hits = []
-                async for msg in c.iter_messages(dialog.entity, search=args.words, limit=args.limit):
-                    hits.append(dict(id=msg.id, date=msg.date.isoformat(), text=msg.raw_text[:800],
-                                     url=f"https://t.me/c/{dialog.entity.id}/{msg.id}"))
-                print(json.dumps(hits, ensure_ascii=False))
+        async def permitted_channels():
+            wanted = set(saved["channels"]) if args.cmd == "channels" else {args.channel}
+            peers = saved.get("channelPeers", {})
+            if all(str(channel) in peers for channel in wanted):
+                for channel in sorted(wanted):
+                    peer = peers[str(channel)]
+                    reference = InputPeerChannel(peer["id"], peer["accessHash"])
+                    if utils.get_peer_id(reference) != channel:
+                        raise ValueError("Сохранённый канал не совпадает с выбранным. Повторите подключение.")
+                    entity = await c.get_entity(reference)
+                    if getattr(entity, "broadcast", False):
+                        yield channel, entity
                 return
-        if args.cmd=="channels":
-            print(json.dumps(available,ensure_ascii=False))
-            return
+            # v0.1.9 stored only marked IDs. Reconnecting once caches selected peers.
+            async for dialog in c.iter_dialogs():
+                if dialog.id in wanted and getattr(dialog.entity, "broadcast", False):
+                    yield dialog.id, dialog.entity
+                    wanted.remove(dialog.id)
+                    if not wanted:
+                        return
+
+        available = []
+        async for channel, entity in permitted_channels():
+            if args.cmd == "channels":
+                available.append(dict(id=channel, title=entity.title))
+                continue
+            hits = []
+            async for msg in c.iter_messages(entity, search=args.words, limit=args.limit):
+                hits.append(dict(id=msg.id, date=msg.date.isoformat(), text=msg.raw_text[:800],
+                                 url=f"https://t.me/c/{entity.id}/{msg.id}"))
+            return hits
+        if args.cmd == "channels":
+            return available
         raise ValueError("Канал больше недоступен аккаунту.")
     finally:
         await c.disconnect()
@@ -115,6 +150,7 @@ def wizard(expected, port):
     watcher = None
     qr_image = ""
     channels = {}
+    channel_peers = {}
     phase = "new"
     fresh = not ACCOUNT.exists()
     committed = False
@@ -128,8 +164,9 @@ def wizard(expected, port):
                 await c.log_out()
             return
         async for d in c.iter_dialogs():
-            if getattr(d.entity, "broadcast", False):
+            if getattr(d.entity, "broadcast", False) and isinstance(d.entity.access_hash, int):
                 channels[d.id] = d.title
+                channel_peers[d.id] = {"id": d.entity.id, "accessHash": d.entity.access_hash}
         phase = "channels"
 
     async def login():
@@ -155,14 +192,19 @@ def wizard(expected, port):
 
     @contextlib.asynccontextmanager
     async def lifespan(app):
-        nonlocal c, phase, watcher
+        nonlocal c, phase, watcher, fresh
         try:
+            if not fresh:
+                try:
+                    c, _ = await authorized(expected)
+                except RevokedSession:
+                    ACCOUNT.unlink()
+                    fresh = True
             if fresh:
                 c = client()
                 await c.connect()
                 watcher = asyncio.create_task(login())
             else:
-                c, _ = await authorized(expected)
                 await list_channels()
             yield
         finally:
@@ -217,7 +259,9 @@ def wizard(expected, port):
                     return JSONResponse({}, status_code=400)
                 if expected != owner():
                     return JSONResponse({}, status_code=403)
-                write(ACCOUNT, dict(owner=expected,session=c.session.save(),channels=sorted(set(ids))))
+                selected = sorted(set(ids))
+                write(ACCOUNT, dict(owner=expected, session=c.session.save(), channels=selected,
+                                    channelPeers={str(i): channel_peers[i] for i in selected}))
                 committed = True
                 return {"phase":"done"}
             return {"phase":phase, "qr":qr_image if phase=="qr" else "",
@@ -274,38 +318,42 @@ def main():
             raise ValueError("Ссылка не создана. Проверьте доступность сервиса и повторите подключение.")
         print(url)
         return
-    lock = (ROOT / ".lock").open("a")
-    try:
-        fcntl.flock(lock, (fcntl.LOCK_SH if a.cmd in ("search","channels") else fcntl.LOCK_EX) | fcntl.LOCK_NB)
-    except BlockingIOError:
-        raise ValueError("Уже идёт подключение или другая операция с аккаунтом.")
-    if a.cmd=="configure":
-        if ACCOUNT.exists():raise ValueError("Перед заменой приложения отключите прежнюю сессию.")
-        key=int(input("API ID приложения: "))
-        secret=getpass.getpass("API hash приложения: ").strip()
-        if key<=0 or len(secret)!=32 or any(c not in "0123456789abcdefABCDEF" for c in secret):
-            raise ValueError("Некорректные параметры приложения.")
-        origin=a.origin
-        if origin:
-            parsed=urlsplit(origin)
-            if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("","/"):
-                raise ValueError("Укажите выделенный HTTPS origin без пути или параметров.")
-            origin="https://"+parsed.netloc
-        write(APP,dict(id=key,hash=secret,origin=origin))
-    elif a.cmd=="connect":
-        if not APP.is_file():raise ValueError("Сначала выполните configure.")
-        wizard(owner(),a.port)
-    elif a.cmd in ("search","channels"):
-        asyncio.run(search(a))
-    else:
-        async def revoke():
-            c,_=await authorized(owner())
-            try:
-                if not await c.log_out():raise ValueError("Telegram не подтвердил отключение.")
-                ACCOUNT.unlink()
-            finally:
-                await c.disconnect()
-        asyncio.run(revoke())
+    with (ROOT / ".lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, (fcntl.LOCK_SH if a.cmd in ("search","channels") else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("Уже идёт подключение или другая операция с аккаунтом.")
+        if a.cmd=="configure":
+            if ACCOUNT.exists():raise ValueError("Перед заменой приложения отключите прежнюю сессию.")
+            key=int(input("API ID приложения: "))
+            secret=getpass.getpass("API hash приложения: ").strip()
+            if key<=0 or len(secret)!=32 or any(c not in "0123456789abcdefABCDEF" for c in secret):
+                raise ValueError("Некорректные параметры приложения.")
+            origin=a.origin
+            if origin:
+                parsed=urlsplit(origin)
+                if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("","/"):
+                    raise ValueError("Укажите выделенный HTTPS origin без пути или параметров.")
+                origin="https://"+parsed.netloc
+            write(APP,dict(id=key,hash=secret,origin=origin))
+        elif a.cmd=="connect":
+            if not APP.is_file():raise ValueError("Сначала выполните configure.")
+            wizard(owner(),a.port)
+        elif a.cmd in ("search","channels"):
+            asyncio.run(search(a))
+        else:
+            async def revoke():
+                try:
+                    c, _ = await authorized(owner())
+                except RevokedSession:
+                    ACCOUNT.unlink()
+                    return
+                try:
+                    if not await c.log_out():raise ValueError("Telegram не подтвердил отключение.")
+                    ACCOUNT.unlink()
+                finally:
+                    await c.disconnect()
+            asyncio.run(revoke())
 
 
 if __name__=="__main__":

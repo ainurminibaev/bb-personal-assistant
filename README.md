@@ -1,104 +1,45 @@
-# Шаблон личного помощника
+# Personal Agent for BB — a self-hosted AI assistant for Telegram
 
-Распакуй этот комплект в новую папку на машине, где будет работать помощник.
-Оставь её на месте после регистрации в BB. Рабочую память и аккаунты подключай
-отдельно под своим именем.
+English · [Русский](README.ru.md)
 
-Источник постоянных инструкций — `.bb/AGENTS.md`. BB добавляет его при старте сессии. `CLAUDE.md` служит указателем для запуска Claude вне BB. Навык `.bb/skills/dispatch/SKILL.md` описывает делегирование.
+Ask your assistant for a research brief on your phone. It can delegate the work to a Claude Code or Codex thread in the relevant BB project and send the finished PDF back to the same Telegram chat. Open that conversation in BB to inspect the work or continue it at your desk.
 
-До включения заполнить `projects.md` проверенными ID проектов и границами доступа. Пока реестр пуст, разовые исследования выполняются в проекте самого помощника. Изменения инструкций проверять в новой или перезапущенной сессии; не предполагать, что уже работающий процесс перечитал файл.
+## What you can do
 
-История тредов хранится в BB. Для работы с долговременной памятью на Claude и Codex владелец отдельно указывает каталог памяти своего помощника. Для Telegram подключается личный бот владельца и его собственный чат.
+- Send a document with a question and get the result back in Telegram.
+- Continue work in an existing project thread. Keep the project registry and personal instructions on your own machine.
+- Give the assistant a one-off research task without creating another project.
 
-## Подготовка BB
+## Install on your BB host
 
-Если BB уже работает, используй его. Для первого запуска понадобятся Git,
-Node.js (проверено на версии 24) и настроенный у владельца Claude Code или
-Codex. Команда запуска проверенной версии BB из npm — `npx bb-app@0.49.0`.
-Дальнейшие команды выполняются в терминале с доступным `bb`.
+These instructions apply to the 0.2 release line. For the older ZIP, use the [v0.1.9 instructions](https://github.com/ainurminibaev/bb-personal-assistant/blob/v0.1.9/README.md).
 
-## Регистрация в BB
-
-Для быстрой установки из папки комплекта выполни `bb machine list`, найди
-ID машины с этой папкой и запусти:
-
-```sh
-python3 setup.py --machine <ID-машины>
-```
-
-Скрипт подключает папку к BB и устанавливает закреплённый Telegram-форк.
-Повторный запуск использует прежний проект. Если тот же ID плагина уже занят
-другим источником или плагин выключен, скрипт остановится до изменений.
-Сохрани ID проекта из ответа. Команда `bb skill list --project <id> --json`
-должна показать `dispatch` с областью `bb-project` и `telegram-projects`
-с областью `plugin`. Открой основной тред помощника в зарегистрированной папке,
-чтобы BB загрузил её постоянные инструкции.
-
-## Подключение личного Telegram-чата
-
-1. В BB открой зарегистрированный проект и создай основной тред. Назови его
-   «Личный помощник», выбери своего провайдера и отправь первое сообщение.
-2. Если регистрируешь проект вручную, в чистой установке BB установи Telegram-форк командой ниже. При запуске setup.py этот шаг уже выполнен. Если
-   `telegram-projects` уже обслуживает другого бота, используй отдельную
-   установку BB или сначала согласуй перенос существующего подключения.
+1. Start BB 0.49 or later with Git, Python 3 and a configured Claude Code or Codex provider. Get the installer from this assistant's [GitHub Releases](https://github.com/ainurminibaev/bb-personal-assistant/releases) and open the extracted directory on the BB host.
+2. Run `bb machine list` to find the host ID. Choose a separate working directory for your registry, project files and personal instructions. Keep that directory between releases.
 
    ```sh
-   bb plugin install git:https://github.com/ainurminibaev/bb-plugin-telegram-projects.git@82a41268c5f0ed97b8ca24bd198b8729ce6ba5e5 --yes
+   python3 setup.py --machine <host-id> --workspace ~/my-assistant
    ```
 
-3. Этот шаг нужен для первого бота в чистой установке. Если установщик сообщил, что Telegram уже настроен, сохрани действующее подключение. Второй независимый бот требует отдельной установки BB. Для первого подключения создай собственного бота через BotFather. В BB открой **Telegram →
-   Подключение** и введи токен в поле «Проверить и сохранить токен».
-   Включи синхронизацию и чат с BB. Открой ссылку в разделе «Владелец»
-   со своего аккаунта Telegram и нажми «Запустить».
-4. В личном чате отправь `/project`, нажми имя своего проекта, затем
-   **Чаты → Личный помощник → Подключиться**. Проектные темы для этого
-   сценария создавать не требуется.
-5. Напиши боту обычный вопрос. Открой тот же тред в BB и сверь ответ.
+   Review the two release sources at the prompt. Setup installs the assistant and the Telegram bridge and registers the workspace as a BB project.
+3. Open the project in BB and create the personal coordinator thread. Create your bot with BotFather. In BB's Telegram connection settings, save its token, enable sync and chat, and follow the owner pairing link.
+4. Send `/project` in your private Telegram chat, choose the project, then select your coordinator under Chats. Run the same setup command once more so the assistant plugin can find the selected thread. Run `bb personal-assistant doctor` to check the project and thread IDs. Start a fresh provider session in that thread to load the new instructions.
+5. Send the bot a question and open the same conversation in BB to verify delivery. Inside the coordinator, `bb personal-assistant work` lists its open child threads.
 
-## Обновление уже настроенного помощника
+## Privacy and access
 
-Распакуй новый ZIP во временную папку. Рабочую папку оставь по прежнему пути:
-к ней уже привязаны проект BB и треды. Сохрани копию файлов, которые собираешься
-менять. В projects.md у владельца уже есть реестр проектов, а в CLAUDE.md,
-.bb/AGENTS.md и навыке dispatch могут быть личные правила.
+The assistant uses the files and tools available to its agent process. A group topic has a separate conversation history. Running group and personal agents as the same operating-system user can expose personal files and credentials. Use owner-only access on a personal host until you have isolated group execution.
 
-Сравни старый и новый шаблоны, затем перенеси нужные изменения в рабочие файлы.
-Если сохранился предыдущий ZIP, для каждого изменённого текстового файла
-можно проверить трёхстороннее слияние. Например, из рабочей папки:
+Connecting a personal Telegram account for old channel history is optional. Its session key grants account-wide access. Channel selection limits searches in the connector. The server operator controls the machine handling the session and the two-step verification password. For a shared Linux installation, give the coordinator access to the restricted search socket and keep the key under its own unprivileged account. [Private history service setup](telegram-account/PRIVATE-HISTORY.md).
 
-```sh
-git merge-file -p .bb/AGENTS.md /путь/к/старому/шаблону/.bb/AGENTS.md /путь/к/новому/шаблону/.bb/AGENTS.md > /tmp/assistant-instructions-merged.md
-```
+## Updates
 
-Укажи свободное имя выходного файла. Открой результат и проверь личные правила;
-если Git отметил конфликт, выбери формулировку вручную. Только затем замени
-рабочую инструкцию. Если старого ZIP нет, сравни файлы вручную.
+Both plugins track compatible Git release tags. Open **Settings → Updates** in BB or run `bb plugin outdated` to check. Apply the versions you want with the Update button. BB keeps the project directory separate from the plugin install.
 
-Для повторной проверки регистрации запусти setup.py **из рабочей папки**
-с прежним ID машины. Сверь ID проекта и открой прежний тред. Если в новом
-комплекте поменялся SHA Telegram-плагина, установщик сообщит о расхождении.
-Обновление действующего плагина с переносом его приватного состояния —
-отдельная операция. Перепривязка бота для обновления текстов не требуется.
+For an existing v0.1.9 installation, first follow the [bridge migration procedure](BRIDGE-MIGRATION.md), then point the new installer at your existing working directory. Keep the original private chat and BB thread. Review any local overrides in your old project instructions.
 
-## История каналов личного аккаунта
+The [Telegram bridge](https://github.com/ainurminibaev/bb-plugin-telegram-projects) has its own releases. It routes messages between Telegram and BB threads.
 
-Необязательное подключение для Linux и macOS. Администратор каждой установки регистрирует собственное приложение в разделе API development tools на https://my.telegram.org. Каждый владелец подтверждает вход своим Telegram. Параметры приложения и ключ сессии хранятся в приватном каталоге машины за пределами проекта. Используйте доверенную машину и отдельного системного пользователя для личного помощника: произвольный код с правами того же пользователя может прочитать файлы его сессии. Запускайте чужие проекты и групповых агентов под отдельными системными пользователями, если нужна изоляция.
+## License
 
-Сначала привяжите личного бота. На машине с BB установите утилиту qrencode (на Ubuntu пакет qrencode, на macOS формула Homebrew qrencode). В корне распакованного помощника:
-
-    python3 -m venv ~/.local/share/pa-telegram-venv
-    ~/.local/share/pa-telegram-venv/bin/pip install -r telegram-account/requirements.txt
-    ~/.local/share/pa-telegram-venv/bin/python telegram-account/account.py configure
-    ~/.local/share/pa-telegram-venv/bin/python telegram-account/account.py connect
-
-Введите api_id и api_hash в терминале владельца. Откройте временную ссылку, напечатанную последней командой. На удалённой машине перед этим пробросьте порт с компьютера владельца командой ssh -L 18341:127.0.0.1:18341 <сервер>. Страница работает на 127.0.0.1, срок ссылки десять минут. QR сканируется авторизованным Telegram на втором устройстве. При включённой двухэтапной защите пароль вводится в этой странице. Мастер сверяет ваш ID с привязкой владельца в BB. Выберите разрешённые каналы. Повторный connect позволяет изменить выбор без нового входа; disconnect отзывает созданную мастером сессию. Существующая сессия tgparser управляется отдельно.
-
-Из личного треда `search <числовой ID канала> <слова>` возвращает до десяти совпадений. Например:
-
-    ~/.local/share/pa-telegram-venv/bin/python telegram-account/account.py search -1001234567890 Java
-
-Каталог состояния по умолчанию ~/.local/state/personal-assistant/telegram. До завершения QR-входа и выбора каналов поиск недоступен.
-
-Команда `channels` в том же личном треде показывает названия и ID разрешённых каналов.
-
-Чтобы владелец мог начать вход прямо из лички, администратор один раз настраивает выделенное HTTPS-имя на своём reverse proxy с пересылкой на 127.0.0.1:18341 и передаёт это имя в `configure --origin https://<имя-мастера>`. После этого команда `open` из привязанного личного треда запускает мастер на десять минут и возвращает одноразовую ссылку для владельца. После сохранения выбора мастер завершается. При использовании локальной установки или SSH отдельный домен не требуется.
+[MIT](LICENSE)

@@ -1,0 +1,21 @@
+{
+  "name": "bb-plugin-personal-assistant",
+  "version": "0.2.0-rc.1",
+  "type": "module",
+  "engines": {
+    "bb": ">=0.49",
+    "bbPluginSdk": ">=0.6.132"
+  },
+  "bb": {
+    "name": "Personal Agent for BB",
+    "description": "A personal assistant that coordinates project work from a persistent BB conversation.",
+    "server": "./server.ts",
+    "skills": [
+      ".bb/skills"
+    ],
+    "branding": {
+      "icon": "MessageSquare"
+    }
+  },
+  "license": "MIT"
+}
