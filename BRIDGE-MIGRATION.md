@@ -7,6 +7,10 @@ Run the migration once on the **BB server host** as the account that runs BB. Ch
 3. The command pauses both receivers, verifies a local private snapshot, replaces the installation source, restores the state, compares a second export and restores the previous receiver settings. Verify a message sent to your original bot arrives in the original BB conversation.
 4. Future compatible releases appear in BB's plugin updates. Choose **Update** in BB.
 
+## If your plugin came from the original Telegram Projects repository
+
+Check the source for `telegram-projects` in `bb plugin list --json`. The original VKirill repository and the assistant fork use the same plugin ID. BB installs one source for that ID per instance. The original v0.9.0 lacks the private-state export and restore operations used here. Keep a configured installation in place until a migration for its version is available. To try the assistant alongside it, install the release in a separate BB instance, create a new bot in BotFather and pair that bot with the new instance. Keep the original token with its current receiver.
+
 ## Interrupted migration
 
 Keep the receipt and the service user's private `~/.bb-plugin-backups/telegram-projects` directory. Snapshots contain credentials and conversation data. Keep them out of project folders, issue reports and version control.

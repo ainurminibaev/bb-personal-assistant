@@ -36,6 +36,15 @@ def main():
     installed = {p["id"]: p for p in plugins}
     for plugin_id, expected in SOURCES.items():
         plugin = installed.get(plugin_id)
+        if (plugin and plugin_id == "telegram-projects"
+                and plugin["source"].lower().split("@", 1)[0].removesuffix(".git")
+                == "git:https://github.com/vkirill/bb-plugin-telegram-projects"):
+            raise SystemExit(
+                "The original Telegram Projects plugin is installed. Its v0.9.0 has no "
+                "private-state export for this migration. Keep this installation for its existing "
+                "chats. To try the assistant separately, use a separate BB instance and bot token. "
+                "See BRIDGE-MIGRATION.md."
+            )
         if plugin and plugin["source"] == LEGACY and plugin_id == "telegram-projects":
             raise SystemExit("Сначала перенесите прежнюю привязку по BRIDGE-MIGRATION.md.")
         if plugin and (plugin["source"] != expected or not plugin["enabled"]):

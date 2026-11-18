@@ -26,6 +26,16 @@ These instructions apply to the 0.2 release line. For the older ZIP, use the [v0
 4. Send `/project` in your private Telegram chat, choose the project, then select your coordinator under Chats. Run the same setup command once more so the assistant plugin can find the selected thread. Run `bb personal-assistant doctor` to check the project and thread IDs. Start a fresh provider session in that thread to load the new instructions.
 5. Send the bot a question and open the same conversation in BB to verify delivery. Inside the coordinator, `bb personal-assistant work` lists its open child threads.
 
+If you already use the original Telegram Projects plugin, check the [migration guide](BRIDGE-MIGRATION.md) before installation. Both bridges use the same BB plugin ID.
+
+## If the bot stays silent
+
+1. Open the coordinator in BB. Check whether it is waiting for an answer, reporting a provider limit, or already working on the message.
+2. In BB's Telegram settings, check the bot username, owner pairing and both receiver switches. A private chat requires no project topics.
+3. Run `bb personal-assistant doctor` on the BB host. Check the Telegram chat's selected thread against the coordinator, especially after a provider handoff.
+4. Run `bb telegram-projects chat-status --json` locally. Check the pending queue and delivery errors. Keep the output private because it includes binding identifiers.
+5. Check the provider's sign-in and quota on the execution host. When delivery is uncertain, check the original BB thread and the Telegram chat before repeating a task that changes data.
+
 ## Privacy and access
 
 The assistant uses the files and tools available to its agent process. A group topic has a separate conversation history. Running group and personal agents as the same operating-system user can expose personal files and credentials. Use owner-only access on a personal host until you have isolated group execution.
