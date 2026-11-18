@@ -1,0 +1,32 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Подключить Telegram</title>
+<style>body{max-width:34rem;margin:8vh auto;padding:0 1.2rem;font:17px/1.45 system-ui;color:#162e40}button,input{font:inherit}button{padding:.5rem 1rem;margin-top:1rem}label{display:block;padding:.25rem}img{width:220px;height:220px}</style>
+<h1>Подключить Telegram</h1><p id="msg">Проверяю подключение…</p><section id="content"></section>
+<script>
+const key=location.hash.slice(1);history.replaceState(null,"","/");
+const area=document.getElementById("content"),msg=document.getElementById("msg");
+function element(tag,text){const e=document.createElement(tag);if(text)e.textContent=text;return e}
+async function step(data={}){
+ try{
+ const response=await fetch("/step",{method:"POST",headers:{"Content-Type":"application/json","X-Owner-Key":key},body:JSON.stringify(data)});
+ if(!response.ok)throw Error();
+ const state=await response.json();area.replaceChildren();
+ if(state.phase==="new"||state.phase==="qr"){
+ msg.textContent="Открой Telegram на телефоне и отсканируй код в разделе «Устройства».";
+ if(state.qr){const image=element("img");image.src="data:image/png;base64,"+state.qr;image.alt="QR входа в Telegram";area.append(image)}
+ setTimeout(()=>step(),1500);
+ }else if(state.phase==="password"){
+ msg.textContent=state.error||"Telegram запросил пароль двухэтапной защиты.";
+ const form=element("form"),p=element("input");p.type="password";p.autocomplete="current-password";p.required=true;
+ p.setAttribute("aria-label","Пароль двухэтапной защиты");form.append(p,element("button","Продолжить"));area.append(form);
+ form.onsubmit=e=>{e.preventDefault();const password=p.value;p.value="";form.querySelector("button").disabled=true;step({password})};p.focus();
+ }else if(state.phase==="channels"){
+ msg.textContent=state.channels.length?"Выбери каналы, в которых помощник сможет искать сообщения.":"У этого аккаунта нет доступных каналов.";
+ const form=element("form");for(const [id,name] of state.channels){const label=element("label"),box=element("input");box.type="checkbox";box.value=String(id);box.checked=state.selected.includes(id);label.append(box,document.createTextNode(" "+name));form.append(label)}
+ if(state.channels.length){const button=element("button","Разрешить поиск");form.append(button);form.onsubmit=e=>{e.preventDefault();const ids=[...form.querySelectorAll("input:checked")].map(x=>Number(x.value));if(ids.length){button.disabled=true;step({channels:ids})}}}
+ area.append(form);
+ }else if(state.phase==="done"){msg.textContent="Каналы сохранены. Можно закрыть страницу."}
+ else{msg.textContent=state.phase==="wrong-owner"?"Этот аккаунт не совпадает с владельцем бота. Запусти подключение заново.":"Вход не завершён. Запусти подключение заново."}
+ }catch{area.replaceChildren();msg.textContent="Ссылка недоступна. Открой новую ссылку из терминала владельца."}
+}
+step()
+</script></html>
