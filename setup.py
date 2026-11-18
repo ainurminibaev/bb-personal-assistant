@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-SOURCE = "git:https://github.com/ainurminibaev/bb-plugin-telegram-projects.git@170343749b0af0398997268d3f0904ce07e18319"
+SOURCE = "git:https://github.com/ainurminibaev/bb-plugin-telegram-projects.git@37d68a6b538b74f508dd73818c942bdd9f52fbb7"
 
 
 def bb(*args):
