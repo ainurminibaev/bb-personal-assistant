@@ -32,3 +32,16 @@ class CheckpointTest(unittest.TestCase):
                            ("chat:handoff:42", {"phase": "moving"})):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, "Work arrived"):
                 self.verify([{"key": key, "value": value}])
+
+    def test_new_bridge_defaults_preserve_state(self):
+        old = {"settings": {"enabled": False}, "rows": [{"key": "chat", "value": True}]}
+        new = dict(old, settings=dict(old["settings"], isolatedGroupProject="", isolatedFileHost=""))
+        migration.verify_restored_state(old, new)
+        for changed in (
+            dict(new, settings=dict(new["settings"], isolatedGroupProject="unexpected")),
+            dict(new, settings=dict(new["settings"], unexpected="")),
+            dict(new, settings={"isolatedGroupProject": ""}),
+            dict(new, rows=[{"key": "chat", "value": 1}]),
+        ):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                migration.verify_restored_state(old, changed)

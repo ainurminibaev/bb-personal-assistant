@@ -90,6 +90,20 @@ def verify_checkpoint(snapshot, backup):
             raise ValueError("Work arrived before shutdown. Resume the receivers and retry after delivery.")
 
 
+    return state
+
+
+def verify_restored_state(before, after):
+    # personal.28 adds these two empty settings to an otherwise unchanged v0.1.9 installation.
+    settings = dict(after["settings"])
+    for key in ("isolatedGroupProject", "isolatedFileHost"):
+        if key not in before["settings"] and settings.get(key) == "":
+            del settings[key]
+    comparable = dict(after, settings=settings)
+    if json.dumps(before, sort_keys=True) != json.dumps(comparable, sort_keys=True):
+        raise ValueError("Re-export differs from backup. Receivers remain stopped.")
+
+
 def migrate(receipt):
     current = source()
     if current == TRACKING:
@@ -114,7 +128,14 @@ def migrate(receipt):
             receivers(dict(enabled=False, chatEnabled=False))
             backup = rpc("exportPrivateState", confirm=True)
             snapshot = Path.home() / ".bb-plugin-backups" / PLUGIN / (str(UUID(backup["id"])) + ".json")
-            verify_checkpoint(snapshot, backup)
+            before = verify_checkpoint(snapshot, backup)
+            # A stopped receiver omits bindings from its status RPC.
+            threads = {row["value"].get("threadId") for row in before["rows"]
+                       if row["key"].startswith("chat:binding:")}
+            for thread_id in sorted(filter(None, threads)):
+                thread = bb("thread", "show", thread_id)
+                if thread.get("thread", thread)["status"] != "idle":
+                    raise ValueError("Wait for the bound thread to become idle.")
             record("backup", **backup)
             removal_started = True
             bb("plugin", "remove", PLUGIN)
@@ -124,7 +145,8 @@ def migrate(receipt):
                 raise ValueError("Restore receipt differs from backup.")
             verified = rpc("exportPrivateState", confirm=True)
             if verified["sha256"] != backup["sha256"]:
-                raise ValueError("Re-export differs from backup. Receivers remain stopped.")
+                reexport = snapshot.parent / (str(UUID(verified["id"])) + ".json")
+                verify_restored_state(before, verify_checkpoint(reexport, verified))
             record("restored", **restored)
         finally:
             if not removal_started:
