@@ -30,6 +30,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--machine", required=True, help="BB host ID of this folder")
     parser.add_argument("--name", default="Personal Assistant", help="Display name for a newly created BB project")
+    parser.add_argument("--language", choices=("en", "ru"), default="en",
+                        help="Telegram menu language for a newly installed bridge (default: en)")
     parser.add_argument("--yes", action="store_true", help="Approve installation of the displayed release sources")
     parser.add_argument("--workspace", type=Path, required=True,
                         help="Existing assistant project or a new private working directory")
@@ -73,6 +75,8 @@ def main():
             raise SystemExit("Installation requires confirmation. For unattended installation use --yes.")
         for src in missing:
             bb("plugin", "install", src, "--yes")
+            if src == SOURCES["telegram-projects"]:
+                bb("plugin", "config", "telegram-projects", "set", "language", args.language)
     # Existing release-tracking installations can lag behind the newest tag.
     releases = {p["id"]: p["version"] for p in bb("plugin", "list")["plugins"]}
     if stable_version(releases.get("personal-assistant", "")) < (0, 2, 3):

@@ -20,10 +20,12 @@ These instructions apply to the 0.2 release line. For the older ZIP, use the [v0
 2. Run `bb machine list` to find the host ID. Choose a separate working directory for your registry, project files and personal instructions. Keep that directory between releases.
 
    ```sh
-   python3 setup.py --machine <host-id> --workspace ~/my-assistant
+   python3 setup.py --language en --machine <host-id> --workspace ~/my-assistant
    ```
 
    Review the two release sources at the prompt. Setup installs the assistant and the Telegram bridge and registers the workspace as a BB project.
+   The language option sets the Telegram menu on first installation. Running setup again preserves the language you selected in BB.
+
 3. Open the project in BB and create the personal coordinator thread. Create your bot with BotFather. In BB's Telegram connection settings, save its token, enable sync and chat, and follow the owner pairing link.
 4. Send `/project` in your private Telegram chat, choose the project, then select your coordinator under Chats. Run the same setup command once more so the assistant plugin can find the selected thread. Run `bb personal-assistant doctor` to check the project and thread IDs. Start a fresh provider session in that thread to load the new instructions.
 5. Send “What projects can you work in?” from Telegram. With a new registry, the assistant should explain that it can do one-off work here and that you can authorize additional projects. Open the same conversation in BB and check that it contains the question and answer. Inside the coordinator, `bb personal-assistant work` lists its open child threads.
