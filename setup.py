@@ -23,7 +23,7 @@ def stable_version(version):
 
 
 def supports_coordinator_handoff(version):
-    return stable_version(version) >= (0, 9, 20)
+    return stable_version(version) >= (0, 9, 21)
 
 
 def main():
@@ -80,7 +80,7 @@ def main():
                          "Live coordinator settings require stable Personal Agent 0.2.3 or later.")
     if not supports_coordinator_handoff(releases.get("telegram-projects", "")):
         raise SystemExit("Update Telegram Bridge through BB Settings → Updates, then rerun setup. "
-                         "Transferring coordinator instructions requires stable Telegram Bridge 0.9.20 or later.")
+                         "Transferring coordinator instructions requires stable Telegram Bridge 0.9.21 or later.")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         with (root / "projects.md").open("x", encoding="utf-8") as registry:
