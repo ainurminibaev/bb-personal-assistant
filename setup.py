@@ -91,6 +91,18 @@ def main():
             registry.write((package / "projects.md").read_text(encoding="utf-8"))
     except FileExistsError:
         pass
+    local = root / "local"
+    if local.is_symlink():
+        raise SystemExit("Review the linked local instructions directory before setup.")
+    local.mkdir(mode=0o700, exist_ok=True)
+    custom = local / "agents-custom.md"
+    if custom.is_symlink() or (custom.exists() and not custom.is_file()):
+        raise SystemExit("Review the local instructions path before setup.")
+    try:
+        with custom.open("x", encoding="utf-8"):
+            pass
+    except FileExistsError:
+        pass
     project = projects[0] if projects else bb(
         "project", "create", "--name", args.name, "--root", str(root),
         "--machine", args.machine

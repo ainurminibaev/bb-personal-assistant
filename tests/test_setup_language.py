@@ -38,7 +38,11 @@ class SetupLanguageTest(unittest.TestCase):
                 argv = ["setup.py", "--workspace", work, "--machine", "host", "--yes", *requested]
                 with patch.object(sys, "argv", argv), patch.object(setup, "bb", cli):
                     setup.main()
+                    custom = Path(work) / "local" / "agents-custom.md"
+                    self.assertEqual(custom.read_bytes(), b"")
+                    custom.write_bytes(b"local rule\n")
                     self.assertEqual(settings["language"], expected)
                     settings["language"] = "ru" if expected == "en" else "en"
                     setup.main()
+                    self.assertEqual(custom.read_bytes(), b"local rule\n")
                     self.assertNotEqual(settings["language"], expected)

@@ -59,3 +59,5 @@ The [Telegram bridge](https://github.com/ainurminibaev/bb-plugin-telegram-projec
 ## License
 
 [MIT](LICENSE)
+
+Setup creates local/agents-custom.md in the registered workspace only if missing. Keep local instructions there across updates and rollbacks. Before migrating an older installation, compare its files to the original release and preserve local changes. For OS-enforced read-only role files on Linux use an administrator-managed employee installation.
