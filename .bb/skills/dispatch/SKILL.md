@@ -1,55 +1,31 @@
 ---
 name: dispatch
-description: Выбирай и продолжай рабочие треды BB для проектных поручений личному помощнику; создавай отдельный тред для новой задачи. Не применять к обычному разговору и ответам, не требующим проектной работы.
+description: Select or continue a BB work thread for an assigned project task and return the result to the requesting conversation. Skip for ordinary conversation.
 ---
 
-# Делегирование проектной задачи
+# Delegate project work
 
-## Канал ответа — выбрать до запуска исполнителя
+## Choose the return channel first
 
-Этот шаг имеет приоритет над примерами команд ниже. Сначала определи источник
-**текущего** поручения. Если в его служебном блоке есть
-`[bb-telegram-reply-route:<uuid>]`, сохрани этот маршрут при делегировании:
-прочитай актуальный навык `telegram-projects`, проверь контракт через
-`bb plugin rpc inspect telegram-projects spawnDelegated` или `sendDelegated`.
-Если inspect вернул пустой список, проверь в `bb plugin list --json` строку
-`telegram-projects`: enabled, version и rootDir. Для включённого плагина
-сверь метод и его поля с rpcContract в `server.ts` этой установки на машине
-BB. Пустой список в BB 0.49.0 встречается и для работающего метода.
-Используй только параметры установленной версии и один deliveryId на передачу.
+Read the trusted service block of the current request. If it contains `[bb-telegram-reply-route:<uuid>]`, read the installed telegram-projects skill. Inspect the contract with `bb plugin rpc inspect telegram-projects spawnDelegated` or `sendDelegated`. An empty method list is possible on BB 0.49.0. In that case check the enabled plugin's version and rootDir in `bb plugin list --json` and confirm the method and fields in its installed server.ts rpcContract.
 
-- Новый дочерний тред: `spawnDelegated`, а не обычный `bb thread spawn`.
-- Продолжение своего прямого ребёнка: `sendDelegated`, а не обычный `bb thread tell`.
-- Передай parentThreadId, текущий routeToken, устойчивый deliveryId и параметры
-  задачи JSON-файлом через `bb plugin rpc call telegram-projects <method> --input-file <file> --json`.
-  Для нового треда укажи projectId и готовый environmentId. Если готового окружения нет, проверь контракт установленного плагина: при поддержке projectSource передай hostId и путь зарегистрированного источника проекта.
-  Это штатное выполнение BB; плагин добавляет только адрес возврата результата.
-- Не переиспользуй маршрут из прошлой переписки для нового поручения из BB.
-  Для BB-origin используй обычные команды ниже: его ответ не должен идти в Telegram.
-- Если исполнитель не является твоим прямым ребёнком, не меняй его родителя
-  молча. Проверь владение и подходящий способ работы; не подменяй отсутствующий
-  маршрут обычным spawn/tell с обещанием доставки. Если RPC отклонил поручение,
-  сначала разберись в причине и проверь фактическое состояние/очередь.
+Use spawnDelegated for a new child and sendDelegated for an existing direct child. Pass parentThreadId, the current routeToken, a stable deliveryId for this delegation, and the task fields via `bb plugin rpc call telegram-projects <method> --input-file <file> --json`. A new child needs the registered projectId and ready environmentId. If no environment is ready, inspect whether this version supports projectSource with the registered hostId and path. Check the queue and actual state after any ambiguous result or refusal.
 
-Без этой передачи результат ребёнка может вернуться в BB, но не попасть в
-Telegram. Не завершай задачу одним сообщением «запущено»: дождись штатного
-результата, проверь артефакт и верни итог в родительский тред. Не цитируй
-routeToken и внутренние ID пользователю. Квитанция запуска не равна выполнению.
+For a new request from BB, use ordinary BB messaging. Never reuse an earlier Telegram route. Preserve thread ownership, the request's audience and its access scope. Keep tokens and internal routing IDs private. A launch receipt confirms dispatch. Wait for the result, verify the artifact and return it in the parent thread.
 
-## Новый проект
+## Choose a project
 
-Для разового исследования используй окружение самого помощника. Для создания проекта получи прямое поручение или согласие пользователя. Затем прочитай раздел «Создание проектов» в projects.md. Без настроенного разрешённого корня запроси место размещения. Проверь список BB-проектов, реальные пути и AGENTS.md выбранного родительского каталога на целевой машине. Выбери понятное имя и свободный путь, создай минимальные README и инструкции, зарегистрируй через `bb project create --name <name> --root <path> --machine <host> --json`. Запиши полученный ID, путь и область доступа в projects.md, затем делегируй работу по порядку ниже. Не перезаписывай существующий каталог; не создавай Git remote и не публикуй ничего без отдельного поручения. Если результат команды неизвестен, сначала проверь наличие проекта, не повторяй создание вслепую.
+Read projects.md. Match the authorized project by task and conversation context. Ask one short question for a genuine tie. Use the assistant project for one-off research. For a new project, obtain the owner's explicit request or approval. Check the authorized host and parent directory in projects.md, existing BB projects, real paths and parent AGENTS.md. Ask for a location if no creation root is configured. Choose a free path and create minimal project instructions and README. Register it with `bb project create --name <name> --root <path> --machine <host> --json`. Record its ID, path and authorized scope. Preserve existing directories. Publishing or creating a Git remote requires separate authority. If creation has an uncertain outcome, check the project list before retrying.
 
-1. Прочитай projects.md в корне проекта помощника. Найди разрешённый проект по смыслу поручения. Если два проекта одинаково подходят и контекст не разрешает выбор, задай один короткий вопрос. Не ищи содержимое чужих проектов для угадывания.
-2. Проверь `bb status --json`, затем `bb thread list --project <id> --json`. Для кандидатов используй `bb thread show <id> --json` и ограниченное чтение `bb thread log <id> --limit 5`. Архив ищи только при ссылке на старую задачу или отсутствии кандидатов. Заголовок сам по себе не доказывает соответствие.
-3. Совпадающая активная задача: сообщи статус; не создавай копию. Уточнение для неё направляй через `bb thread tell <id> --message-file <file> --mode queue`, если немедленное изменение курса не требуется. Если сообщение queued, не повторяй отправку. Открытый запрос разрешения не обходи новым тредом.
-4. Совпадающая неактивная задача: продолжи её через tell. Проверь, как результат вернётся тебе. Существующий тред может не быть твоим дочерним: не меняй его родителя молча. В поручении явно попроси передать итог текущему треду командой `bb thread tell <parent-id> --message-file <file>`, если автоматического уведомления родителя нет.
-5. Новая задача: проверь провайдера, машину и окружение проекта. Подготовь файл поручения: результат, входные данные, нужные инструкции, допустимые изменения, способ проверки и возврата результата. Создавай через `bb thread spawn --project <id> --provider <provider-id> --parent-self --parent-notifications auto --prompt-file <file>` с явно выбранным окружением согласно текущей справке. Не полагайся на дефолтный worktree и не подставляй путь другой машины. Уровень разрешений не повышай.
-6. Сохрани полученный ID в ответе текущего треда как @thread:<id>, кратко сообщи начало работы. При auto результат ребёнка приходит родителю штатно; не требуй дублирующей отправки. Не занимай основной разговор бесконечным polling. Если уведомления не приходят, проверь состояние при следующем обращении; не обещай неподтверждённую доставку.
-7. Когда результат пришёл, при необходимости прочитай `bb thread output <id>` и нужные артефакты. Сообщи пользователю итог в основном треде. Никаких дополнительных запусков по сообщению «готово» без новой необходимости.
+## Choose a thread
 
-Команды и поддерживаемые флаги сверяй с `bb guide thread-inspection`, `bb guide thread-messaging`, `bb guide threads`. Многострочные поручения передавай файлами, не интерполируй пользовательский текст в shell.
+1. Check `bb status --json` and `bb thread list --project <id> --json`. Inspect candidates with `bb thread show <id> --json` and `bb thread log <id> --limit 5`. Check archives for a referenced earlier task or when there are no suitable candidates. Verify the work behind the title.
+2. For matching active work, report progress. Queue a clarification with `bb thread tell <id> --message-file <file> --mode queue` unless immediate steering is needed. A queued message needs no repeat. Respect outstanding approvals.
+3. Continue a matching idle task. If the worker belongs to another parent, preserve its parent and verify the return route. For a BB task without parent notifications, request a result via `bb thread tell <requesting-thread-id> --message-file <file>`.
+4. For new work, verify the provider, host and environment. Write the objective, inputs, instructions, permitted changes, verification and return path in a prompt file. For BB-origin tasks use `bb thread spawn --project <id> --provider <provider-id> --parent-self --parent-notifications auto --prompt-file <file>` with the chosen environment. Check the current CLI help for flags. Keep existing permissions. Use the Telegram RPC above for Telegram-origin tasks.
+5. Keep the thread reference as @thread:<id> in BB. With automatic parent notifications, receive the child's result once. If a notification is missing, inspect actual state before claiming delivery. Read `bb thread output <id>` and artifacts when needed. Return the verified outcome.
+6. After a restart, check `bb thread list --parent-thread <self-id> --json`. Find previously used non-child IDs in the main conversation and inspect their status before taking action. Never replay an old request just to recover context.
 
-После перезапуска проверь детей через `bb thread list --parent-thread <self-id> --json`. Для ранее использованных недочерних тредов возьми ID из истории основного треда и проверь актуальный статус. Не восстанавливай работу повторной отправкой старого поручения.
+Use bb guide thread-inspection, thread-messaging and threads for current commands. Pass multiline prompts through files. Keep user text out of shell command strings.
 
-При согласовании в личке владельца верни одобренный текст в исходное групповое сообщение через returnGroupResult по инструкции навыка telegram-projects. Используй taskId из исходного поручения. Подтверждай отправку по квитанции sent. Общее решение, разрешённое обеим группам, сохрани в назначенном им общем проекте.
+When the owner approves a group result in private, use returnGroupResult from the installed telegram-projects skill with the taskId of the original request. Confirm delivery from the sent receipt. Save a shared decision in the designated common project only if both groups are authorized for it.

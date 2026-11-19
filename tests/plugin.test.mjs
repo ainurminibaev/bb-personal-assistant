@@ -3,10 +3,10 @@ import { test } from "node:test";
 import plugin from "../dist/server.js";
 
 async function load(binding) {
-  let command, instructions;
+  let command, instructions, changed;
   const queries = [];
   await plugin({
-    settings: { define: () => ({ get: async () => binding }) },
+    settings: { define: () => ({ get: async () => binding, onChange: fn => { changed = fn; } }) },
     agents: { configure: callback => { instructions = callback; } },
     cli: { register: callback => { command = callback; } },
     sdk: { threads: { list: async query => {
@@ -15,7 +15,7 @@ async function load(binding) {
         [{id: "child", title: "PDF", status: "active"}];
     } } },
   });
-  return { command, instructions, queries };
+  return { command, instructions, queries, changeBinding: next => changed(next) };
 }
 
 test("coordinator rules apply only to the configured thread in its own project", async () => {
@@ -23,7 +23,7 @@ test("coordinator rules apply only to the configured thread in its own project",
   const { instructions } = await load(owner);
   const config = (projectId, threadId) => instructions({project: {id: projectId}, thread: {id: threadId}});
   assert.match(config(owner.projectId, owner.threadId).instructions, /projects\.md/);
-  assert.deepEqual(config(owner.projectId, owner.threadId).skills, ["dispatch"]);
+  assert.deepEqual(config(owner.projectId, owner.threadId).skills, ["dispatch", "integrations"]);
   assert.deepEqual(config(owner.projectId, "group"), {skills: [], tools: []});
   assert.deepEqual(config("other", owner.threadId), {skills: [], tools: []});
 });
@@ -43,5 +43,21 @@ test("doctor rejects incomplete and mismatched bindings", async () => {
     assert.equal((await command.run(["doctor"], {})).exitCode, 1);
   }
   const { command } = await load({projectId: "personal", threadId: "owner"});
+  assert.equal((await command.run(["doctor"], {})).exitCode, 0);
+});
+
+test("a settings change transfers rules and task queries without a plugin reload", async () => {
+  const previous = {projectId: "personal", threadId: "old"};
+  const next = {...previous, threadId: "owner"};
+  const {instructions, command, queries, changeBinding} = await load(previous);
+  const rules = id => instructions({project:{id:"personal"},thread:{id}}).instructions;
+  assert.ok(rules("old"));
+  changeBinding(next);
+  assert.ok(rules("owner"));
+  assert.equal(rules("old"), undefined);
+  assert.equal(rules("group"), undefined);
+  assert.equal((await command.run(["work"], previous)).exitCode, 1);
+  assert.equal((await command.run(["work"], next)).exitCode, 0);
+  assert.equal(queries.at(-1).parentThreadId, "owner");
   assert.equal((await command.run(["doctor"], {})).exitCode, 0);
 });

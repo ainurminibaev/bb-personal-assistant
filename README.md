@@ -4,6 +4,8 @@ English · [Русский](README.ru.md)
 
 Ask your assistant for a research brief on your phone. It can delegate the work to a Claude Code or Codex thread in the relevant BB project and send the finished PDF back to the same Telegram chat. Open that conversation in BB to inspect the work or continue it at your desk.
 
+This is an early release for owners of a self-hosted BB instance. Start with a private chat and a test project.
+
 ## What you can do
 
 - Send a document with a question and get the result back in Telegram.
@@ -24,7 +26,7 @@ These instructions apply to the 0.2 release line. For the older ZIP, use the [v0
    Review the two release sources at the prompt. Setup installs the assistant and the Telegram bridge and registers the workspace as a BB project.
 3. Open the project in BB and create the personal coordinator thread. Create your bot with BotFather. In BB's Telegram connection settings, save its token, enable sync and chat, and follow the owner pairing link.
 4. Send `/project` in your private Telegram chat, choose the project, then select your coordinator under Chats. Run the same setup command once more so the assistant plugin can find the selected thread. Run `bb personal-assistant doctor` to check the project and thread IDs. Start a fresh provider session in that thread to load the new instructions.
-5. Send the bot a question and open the same conversation in BB to verify delivery. Inside the coordinator, `bb personal-assistant work` lists its open child threads.
+5. Send “What projects can you work in?” from Telegram. With a new registry, the assistant should explain that it can do one-off work here and that you can authorize additional projects. Open the same conversation in BB and check that it contains the question and answer. Inside the coordinator, `bb personal-assistant work` lists its open child threads.
 
 If you already use the original Telegram Projects plugin, check the [migration guide](BRIDGE-MIGRATION.md) before installation. Both bridges use the same BB plugin ID.
 
@@ -46,7 +48,7 @@ Connecting a personal Telegram account for old channel history is optional. Its 
 
 ## Updates
 
-Both plugins track compatible Git release tags. Open **Settings → Updates** in BB or run `bb plugin outdated` to check. Apply the versions you want with the Update button. BB keeps the project directory separate from the plugin install.
+Both plugins track compatible Git release tags. For provider handoffs, use Personal Agent 0.2.3 or later with Telegram Bridge 0.9.20 or later. Update both components during the same maintenance window. Open **Settings → Updates** in BB or run `bb plugin outdated` to check. Apply the versions you want with the Update button. BB keeps the project directory separate from the plugin install.
 
 For an existing v0.1.9 installation, first follow the [bridge migration procedure](BRIDGE-MIGRATION.md), then point the new installer at your existing working directory. Keep the original private chat and BB thread. Review any local overrides in your old project instructions.
 

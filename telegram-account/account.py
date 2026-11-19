@@ -36,7 +36,7 @@ def read(path):
 def write(path, data):
     ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     if ROOT.stat().st_mode & 0o077:
-        raise SystemExit("Каталог состояния должен иметь права 0700.")
+        raise SystemExit("The state directory requires permissions 0700.")
     with tempfile.NamedTemporaryFile(mode="w", dir=ROOT, delete=False) as f:
         json.dump(data, f)
         f.flush()
@@ -53,13 +53,13 @@ def owner():
     raw = subprocess.check_output(["bb", "plugin", "rpc", "call", "telegram-projects", "status", "--json"])
     value = json.loads(raw).get("owner")
     if type(value) is not int or value <= 0:
-        raise SystemExit("Сначала привяжите владельца к личному Telegram-боту в BB.")
+        raise SystemExit("Pair the owner with the private Telegram bot in BB first.")
     return value
 
 
 def client(session=""):
     app = read(APP)
-    return TelegramClient(StringSession(session), app["id"], app["hash"], device_model="Личный помощник")
+    return TelegramClient(StringSession(session), app["id"], app["hash"], device_model="Personal Assistant")
 
 
 class RevokedSession(ValueError):
@@ -69,19 +69,19 @@ class RevokedSession(ValueError):
 async def authorized(expected):
     saved = read(ACCOUNT)
     if saved["owner"] != expected:
-        raise ValueError("Сохранённая привязка относится к другому владельцу.")
+        raise ValueError("The saved connection belongs to a different owner.")
     c = client(saved["session"])
     try:
         await c.connect()
         me = await c.get_me()
         if me is None:
-            raise RevokedSession("Сессия Telegram отозвана. Подключитесь заново.")
+            raise RevokedSession("Telegram revoked this session. Connect again.")
         if me.id != expected:
-            raise ValueError("Сессия принадлежит другому владельцу.")
+            raise ValueError("This session belongs to another owner.")
         return c, saved
     except (AuthKeyUnregisteredError, SessionRevokedError) as error:
         await c.disconnect()
-        raise RevokedSession("Сессия Telegram отозвана. Подключитесь заново.") from error
+        raise RevokedSession("Telegram revoked this session. Connect again.") from error
     except BaseException:
         await c.disconnect()
         raise
@@ -92,7 +92,7 @@ async def search(args):
         ["bb", "plugin", "rpc", "call", "telegram-projects", "status", "--json"]))
     thread = os.environ.get("BB_THREAD_ID")
     if not thread or not any(b.get("threadId")==thread and b.get("topicId")==0 for b in status.get("chatBindings", [])):
-        raise ValueError("Поиск разрешён из привязанного личного треда.")
+        raise ValueError("Search is available only from the paired private thread.")
     print(json.dumps(await read_channels(args, status["owner"]), ensure_ascii=False))
 
 
@@ -100,7 +100,7 @@ async def read_channels(args, expected_owner):
     c, saved = await authorized(expected_owner)
     try:
         if args.cmd=="search" and args.channel not in saved["channels"]:
-            raise ValueError("Канал не выбран владельцем.")
+            raise ValueError("The owner has not selected this channel.")
         async def permitted_channels():
             wanted = set(saved["channels"]) if args.cmd == "channels" else {args.channel}
             peers = saved.get("channelPeers", {})
@@ -109,7 +109,7 @@ async def read_channels(args, expected_owner):
                     peer = peers[str(channel)]
                     reference = InputPeerChannel(peer["id"], peer["accessHash"])
                     if utils.get_peer_id(reference) != channel:
-                        raise ValueError("Сохранённый канал не совпадает с выбранным. Повторите подключение.")
+                        raise ValueError("The saved channel does not match the selected channel. Reconnect.")
                     entity = await c.get_entity(reference)
                     if getattr(entity, "broadcast", False):
                         yield channel, entity
@@ -134,7 +134,7 @@ async def read_channels(args, expected_owner):
             return hits
         if args.cmd == "channels":
             return available
-        raise ValueError("Канал больше недоступен аккаунту.")
+        raise ValueError("This account no longer has access to the channel.")
     finally:
         await c.disconnect()
 
@@ -142,7 +142,7 @@ async def read_channels(args, expected_owner):
 def wizard(expected, port):
     import shutil
     if not shutil.which("qrencode"):
-        raise ValueError("Установите qrencode на машине мастера.")
+        raise ValueError("Install qrencode on the host running the connection wizard.")
     token = secrets.token_urlsafe(32)
     deadline = time.monotonic() + 600
     lock = asyncio.Lock()
@@ -251,7 +251,7 @@ def wizard(expected, port):
                 try:
                     await c.sign_in(password=data["password"])
                 except Exception:
-                    return {"phase":"password","error":"Telegram не принял пароль."}
+                    return {"phase":"password","error":"Telegram rejected the password."}
                 await list_channels()
             if phase == "channels" and "channels" in data:
                 ids = data["channels"]
@@ -288,7 +288,7 @@ def main():
     os.umask(0o077)
     parser=argparse.ArgumentParser()
     sub=parser.add_subparsers(dest="cmd",required=True)
-    sub.add_parser("configure").add_argument("--origin",help="Выделенный HTTPS-адрес мастера на своём reverse proxy")
+    sub.add_parser("configure").add_argument("--origin",help="Dedicated HTTPS origin for the wizard on your reverse proxy")
     sub.add_parser("open")
     sub.add_parser("channels")
     sub.add_parser("disconnect")
@@ -300,14 +300,14 @@ def main():
     a=parser.parse_args()
     ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
     if ROOT.stat().st_mode & 0o077:
-        raise ValueError("Каталог состояния должен иметь права 0700.")
+        raise ValueError("The state directory requires permissions 0700.")
     if a.cmd=="open":
         status = json.loads(subprocess.check_output(["bb","plugin","rpc","call","telegram-projects","status","--json"]))
         thread = os.environ.get("BB_THREAD_ID")
         if not thread or not any(b.get("topicId")==0 and b.get("threadId")==thread for b in status.get("chatBindings",[])):
-            raise ValueError("Ссылку можно открыть только из привязанного личного треда.")
+            raise ValueError("Open the connection link from the paired private thread.")
         if not APP.exists() or not read(APP).get("origin"):
-            raise ValueError("Администратору нужно настроить HTTPS-адрес мастера либо запустить connect через SSH.")
+            raise ValueError("Configure an HTTPS origin for the wizard or run connect over SSH.")
         import select
         proc=subprocess.Popen([sys.executable,__file__,"connect"],stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,start_new_session=True)
@@ -315,29 +315,29 @@ def main():
         url=proc.stdout.readline().strip() if ready else ""
         if not url.startswith(read(APP)["origin"]+"/#"):
             if proc.poll() is None:proc.terminate()
-            raise ValueError("Ссылка не создана. Проверьте доступность сервиса и повторите подключение.")
+            raise ValueError("The link could not be created. Check the service and connect again.")
         print(url)
         return
     with (ROOT / ".lock").open("a") as lock:
         try:
             fcntl.flock(lock, (fcntl.LOCK_SH if a.cmd in ("search","channels") else fcntl.LOCK_EX) | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise ValueError("Уже идёт подключение или другая операция с аккаунтом.")
+            raise ValueError("Another Telegram account operation is in progress.")
         if a.cmd=="configure":
-            if ACCOUNT.exists():raise ValueError("Перед заменой приложения отключите прежнюю сессию.")
-            key=int(input("API ID приложения: "))
-            secret=getpass.getpass("API hash приложения: ").strip()
+            if ACCOUNT.exists():raise ValueError("Disconnect the current session before replacing the application.")
+            key=int(input("Telegram application API ID: "))
+            secret=getpass.getpass("Telegram application API hash: ").strip()
             if key<=0 or len(secret)!=32 or any(c not in "0123456789abcdefABCDEF" for c in secret):
-                raise ValueError("Некорректные параметры приложения.")
+                raise ValueError("Invalid Telegram application credentials.")
             origin=a.origin
             if origin:
                 parsed=urlsplit(origin)
                 if parsed.scheme!="https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ("","/"):
-                    raise ValueError("Укажите выделенный HTTPS origin без пути или параметров.")
+                    raise ValueError("Enter a dedicated HTTPS origin without a path or query.")
                 origin="https://"+parsed.netloc
             write(APP,dict(id=key,hash=secret,origin=origin))
         elif a.cmd=="connect":
-            if not APP.is_file():raise ValueError("Сначала выполните configure.")
+            if not APP.is_file():raise ValueError("Run configure first.")
             wizard(owner(),a.port)
         elif a.cmd in ("search","channels"):
             asyncio.run(search(a))
@@ -349,7 +349,7 @@ def main():
                     ACCOUNT.unlink()
                     return
                 try:
-                    if not await c.log_out():raise ValueError("Telegram не подтвердил отключение.")
+                    if not await c.log_out():raise ValueError("Telegram did not confirm sign-out.")
                     ACCOUNT.unlink()
                 finally:
                     await c.disconnect()
