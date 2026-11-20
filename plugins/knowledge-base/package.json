@@ -1,0 +1,36 @@
+{
+  "name": "bb-plugin-knowledge-base",
+  "version": "0.2.8",
+  "type": "module",
+  "engines": {
+    "bb": ">=0.49",
+    "bbPluginSdk": ">=0.6.132"
+  },
+  "bb": {
+    "name": "Knowledge Base",
+    "description": "Search, read and add items in a personal knowledge base (a git folder on the BB server) from any project, thread, provider and machine.",
+    "branding": {
+      "icon": "BookOpen"
+    },
+    "server": "./server.ts",
+    "skills": [
+      "skills"
+    ]
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.132",
+    "@types/node": "^22.0.0",
+    "better-sqlite3": "^12.0.0",
+    "cron-parser": "^5.10.6",
+    "hono": "^4.13.18",
+    "typescript": "^5.7.0"
+  },
+  "scripts": {
+    "test": "python3 -m unittest -q test_kb.py",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT"
+}

@@ -1,4 +1,4 @@
-"""Register this assistant workspace and install both release-tracking BB plugins."""
+"""Register this assistant workspace and install the release-tracking BB plugins."""
 import argparse
 import json
 import re
@@ -10,6 +10,8 @@ from migrate_bridge import LEGACY, TRACKING
 
 ASSISTANT = "git:https://github.com/ainurminibaev/bb-personal-assistant.git@semver:^0.2.0-rc.1"
 SOURCES = {"telegram-projects": TRACKING, "personal-assistant": ASSISTANT}
+# The knowledge base ships in this repository and release, as a separate plugin folder.
+KNOWLEDGE_BASE = ("knowledge-base", ASSISTANT, "plugins/knowledge-base")
 
 
 def bb(*args):
@@ -69,14 +71,19 @@ def main():
     if len(projects) > 1:
         raise SystemExit("Multiple BB projects use this folder. Check their workspace bindings.")
     missing = [src for pid, src in SOURCES.items() if pid not in installed]
-    if missing:
-        print("BB release sources:", *missing, sep="\n", flush=True)
+    kb_id, kb_source, kb_folder = KNOWLEDGE_BASE
+    kb_missing = kb_id not in installed
+    if missing or kb_missing:
+        print("BB release sources:", *missing, *([f"{kb_source} (folder {kb_folder})"] if kb_missing else []),
+              sep="\n", flush=True)
         if not args.yes and (not sys.stdin.isatty() or input("Install [y/N]? ").lower() != "y"):
             raise SystemExit("Installation requires confirmation. For unattended installation use --yes.")
         for src in missing:
             bb("plugin", "install", src, "--yes")
             if src == SOURCES["telegram-projects"]:
                 bb("plugin", "config", "telegram-projects", "set", "language", args.language)
+        if kb_missing:
+            bb("plugin", "install", kb_source, "--subdirectory", kb_folder, "--yes")
     # Existing release-tracking installations can lag behind the newest tag.
     releases = {p["id"]: p["version"] for p in bb("plugin", "list")["plugins"]}
     if stable_version(releases.get("personal-assistant", "")) < (0, 2, 3):

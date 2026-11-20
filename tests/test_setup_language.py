@@ -20,7 +20,10 @@ class SetupLanguageTest(unittest.TestCase):
                         return [{"id": "host", "status": "connected"}]
                     if args == ("plugin", "list"):
                         return {"plugins": list(plugins.values())}
-                    if args[:2] == ("plugin", "install"):
+                    if args[:2] == ("plugin", "install") and "--subdirectory" in args:
+                        self.assertEqual(args[2:5], (setup.ASSISTANT, "--subdirectory", "plugins/knowledge-base"))
+                        plugins["knowledge-base"] = dict(id="knowledge-base", source=args[2], enabled=True, version="0.2.8")
+                    elif args[:2] == ("plugin", "install"):
                         key = next(k for k, src in setup.SOURCES.items() if src == args[2])
                         plugins[key] = dict(id=key, source=args[2], enabled=True,
                                             version="0.9.22" if key == "telegram-projects" else "0.2.5")
@@ -38,6 +41,7 @@ class SetupLanguageTest(unittest.TestCase):
                 argv = ["setup.py", "--workspace", work, "--machine", "host", "--yes", *requested]
                 with patch.object(sys, "argv", argv), patch.object(setup, "bb", cli):
                     setup.main()
+                    self.assertIn("knowledge-base", plugins)
                     custom = Path(work) / "local" / "agents-custom.md"
                     self.assertEqual(custom.read_bytes(), b"")
                     custom.write_bytes(b"local rule\n")

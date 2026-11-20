@@ -50,7 +50,9 @@ Connecting a personal Telegram account for old channel history is optional. Its 
 
 ## Updates
 
-Both plugins track compatible Git release tags. For provider handoffs, use Personal Agent 0.2.3 or later with Telegram Bridge 0.9.21 or later. Update both components during the same maintenance window. Open **Settings → Updates** in BB or run `bb plugin outdated` to check. Apply the versions you want with the Update button. BB keeps the project directory separate from the plugin install.
+The installer also adds the **Knowledge Base** plugin from the `plugins/knowledge-base` folder of the same release. Its `root` setting is the base folder on the BB server, `~/knowledge-base` by default; an empty git base is created there on first use. Agents in any project search, read and add items with `kb_search`, `kb_read`, `kb_topics`, `kb_add`, and you can use `bb kb`.
+
+All plugins track compatible Git release tags. For provider handoffs, use Personal Agent 0.2.3 or later with Telegram Bridge 0.9.21 or later. Update both components during the same maintenance window. Open **Settings → Updates** in BB or run `bb plugin outdated` to check. Apply the versions you want with the Update button. BB keeps the project directory separate from the plugin install.
 
 For an existing v0.1.9 installation, first follow the [bridge migration procedure](BRIDGE-MIGRATION.md), then point the new installer at your existing working directory. Keep the original private chat and BB thread. Review any local overrides in your old project instructions.
 
