@@ -46,7 +46,7 @@ A digital employee is the same platform with the `employee` setting: its own ser
    ```
 
    `--provider` and `--model` start one short check in the project; BB remembers them for new conversations. `--allow-guest-guard` allows the guest thread guard in Codex without the BB interface.
-4. Create the bot, pair it and bind your private chat as in the steps above.
+4. Create the bot, pair it and bind your private chat as in the steps above. For commits and PRs under the employee's own name, see [GitHub App](deploy/github-app.md).
 5. Add the bot to a group and make it an administrator: otherwise Telegram shows it only replies and commands, not mentions. You receive a short message with what happens if nothing is changed and a three-step setup.
 
 | Setting | Choices | When |

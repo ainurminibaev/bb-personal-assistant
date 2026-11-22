@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Digital employee: GitHub access as the organization's GitHub App (commits, issues, PRs under the bot's name).
+
+The organization comes from app.json ("org"; EMPLOYEE_GH_ORG at convert time, else the App owner).
+
+Ключ и токены никогда не печатаются. Токен установки живёт 1 час и не сохраняется.
+  employee-gh convert          — обменять код manifest flow (stdin) на App, записать ключ 0600
+  employee-gh check            — App, установка, репозитории, права (без секретов)
+  employee-gh api METHOD PATH [--input FILE]   — запрос REST от имени установки
+  employee-gh setup-git        — автор коммитов и помощник учётных данных git
+  employee-gh git-credential get   — для git (credential helper)
+"""
+import json, os, sys, time, base64, urllib.request, urllib.error
+
+HOME = os.path.expanduser("~")
+SECRET_DIR = os.path.join(HOME, ".secrets", "github-app")
+KEY = os.path.join(SECRET_DIR, "private-key.pem")
+CONF_DIR = os.path.join(HOME, ".config", "github-app")
+CONF = os.path.join(CONF_DIR, "app.json")
+API = "https://api.github.com"
+SELF = os.path.abspath(__file__)
+
+
+def die(msg, code=1):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def req(method, path, token=None, scheme="Bearer", body=None):
+    url = path if path.startswith("http") else API + path
+    data = json.dumps(body).encode() if body is not None else None
+    r = urllib.request.Request(url, data=data, method=method)
+    r.add_header("Accept", "application/vnd.github+json")
+    r.add_header("X-GitHub-Api-Version", "2022-11-28")
+    r.add_header("User-Agent", "employee-gh")
+    if token:
+        r.add_header("Authorization", f"{scheme} {token}")
+    if data is not None:
+        r.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(r, timeout=30) as resp:
+            raw = resp.read()
+            return resp.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {"message": raw[:300].decode("utf-8", "replace")}
+
+
+def load_conf():
+    if not os.path.exists(CONF):
+        die("нет " + CONF + ": App ещё не создан")
+    with open(CONF) as f:
+        return json.load(f)
+
+
+def save_conf(c):
+    os.makedirs(CONF_DIR, mode=0o700, exist_ok=True)
+    tmp = CONF + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(c, f, ensure_ascii=False, indent=2)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, CONF)
+
+
+def b64u(b):
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def jwt(conf):
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+    with open(KEY, "rb") as f:
+        key = serialization.load_pem_private_key(f.read(), password=None)
+    now = int(time.time())
+    head = b64u(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+    payload = b64u(json.dumps({"iat": now - 60, "exp": now + 540, "iss": str(conf["client_id"] or conf["app_id"])}).encode())
+    sig = key.sign(f"{head}.{payload}".encode(), padding.PKCS1v15(), hashes.SHA256())
+    return f"{head}.{payload}.{b64u(sig)}"
+
+
+def installation_id(conf, j):
+    st, data = req("GET", "/app/installations", j)
+    if st != 200:
+        die(f"GET /app/installations: {st} {data.get('message') if isinstance(data, dict) else ''}")
+    org = conf.get("org") or conf.get("owner")
+    ours = [i for i in data if i["account"]["login"] == org]
+    if not ours:
+        die("App не установлен в " + str(org))
+    if conf.get("installation_id") != ours[0]["id"]:
+        conf["installation_id"] = ours[0]["id"]
+        save_conf(conf)
+    return ours[0], data
+
+
+def inst_token(conf):
+    j = jwt(conf)
+    inst, _ = installation_id(conf, j)
+    st, data = req("POST", f"/app/installations/{inst['id']}/access_tokens", j)
+    if st != 201:
+        die(f"access_tokens: {st} {data.get('message')}")
+    return data["token"]
+
+
+def cmd_convert():
+    if os.path.exists(KEY):
+        die("ключ уже есть: App уже создан, повторный обмен не нужен")
+    code = sys.stdin.readline().strip()
+    if not code or not code.isalnum() or len(code) > 100:
+        die("неверный код")
+    st, data = req("POST", f"/app-manifests/{code}/conversions")
+    if st != 201:
+        die(f"conversion: {st} {data.get('message') if isinstance(data, dict) else ''}")
+    owner = data["owner"]["login"]
+    os.makedirs(SECRET_DIR, mode=0o700, exist_ok=True)
+    os.chmod(os.path.dirname(SECRET_DIR), 0o700)
+    fd = os.open(KEY, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(data["pem"])
+    conf = {"app_id": data["id"], "slug": data["slug"], "client_id": data.get("client_id"),
+            "owner": owner, "org": os.environ.get("EMPLOYEE_GH_ORG") or owner, "html_url": data["html_url"], "permissions": data.get("permissions"),
+            "events": data.get("events"), "created_at": data.get("created_at")}
+    st, u = req("GET", f"/users/{data['slug']}%5Bbot%5D")
+    if st == 200:
+        conf["bot_login"], conf["bot_user_id"] = u["login"], u["id"]
+    save_conf(conf)
+    # client_secret и webhook_secret не нужны и не сохраняются
+    print(json.dumps({k: conf.get(k) for k in ("app_id", "slug", "owner", "html_url", "permissions", "events", "bot_login", "bot_user_id")}, ensure_ascii=False))
+    expected = os.environ.get("EMPLOYEE_GH_ORG")
+    if expected and owner != expected:
+        die("ВНИМАНИЕ: владелец App не " + expected, 2)
+
+
+def cmd_check():
+    conf = load_conf()
+    j = jwt(conf)
+    st, app = req("GET", "/app", j)
+    out = {"app": {"id": app.get("id"), "slug": app.get("slug"), "owner": (app.get("owner") or {}).get("login"),
+                   "permissions": app.get("permissions"), "events": app.get("events")}}
+    inst, all_inst = installation_id(conf, j)
+    out["installations_total"] = len(all_inst)
+    out["installation"] = {"id": inst["id"], "account": inst["account"]["login"],
+                           "repository_selection": inst["repository_selection"], "permissions": inst["permissions"]}
+    st, tok = req("POST", f"/app/installations/{inst['id']}/access_tokens", j)
+    t = tok["token"]
+    st, repos = req("GET", "/installation/repositories?per_page=100", t, "token")
+    names = sorted(r["full_name"] for r in repos["repositories"])
+    out["repositories"] = names
+    per = {}
+    for n in names:
+        s1, r = req("GET", f"/repos/{n}", t, "token")
+        s2, _ = req("GET", f"/repos/{n}/issues?per_page=1", t, "token")
+        s3, _ = req("GET", f"/repos/{n}/pulls?per_page=1", t, "token")
+        per[n] = {"repo": s1, "issues": s2, "pulls": s3, "default_branch": r.get("default_branch") if s1 == 200 else None}
+    out["per_repo_http"] = per
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+
+
+def cmd_api(args):
+    if len(args) < 2:
+        die("employee-gh api METHOD PATH [--input FILE]")
+    method, path = args[0].upper(), args[1]
+    body = None
+    if "--input" in args:
+        with open(args[args.index("--input") + 1]) as f:
+            body = json.load(f)
+    st, data = req(method, path, inst_token(load_conf()), "token", body)
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+    sys.exit(0 if st < 400 else 1)
+
+
+def cmd_setup_git():
+    import subprocess
+    conf = load_conf()
+    if not conf.get("bot_user_id"):
+        st, u = req("GET", f"/users/{conf['slug']}%5Bbot%5D")
+        if st != 200:
+            die("не найден пользователь бота")
+        conf["bot_login"], conf["bot_user_id"] = u["login"], u["id"]
+        save_conf(conf)
+    name = conf["bot_login"]
+    email = f"{conf['bot_user_id']}+{name}@users.noreply.github.com"
+    g = ["git", "config", "--global"]
+    subprocess.run(g + ["user.name", name], check=True)
+    subprocess.run(g + ["user.email", email], check=True)
+    subprocess.run(g + ["--replace-all", "credential.https://github.com.helper", ""], check=True)
+    subprocess.run(g + ["--add", "credential.https://github.com.helper", f"!{SELF} git-credential"], check=True)
+    print(json.dumps({"user.name": name, "user.email": email, "credential.helper": f"{SELF} git-credential"}, ensure_ascii=False))
+
+
+def cmd_git_credential(args):
+    if not args or args[0] != "get":
+        return  # store/erase: ничего не сохраняем
+    attrs = dict(l.split("=", 1) for l in sys.stdin.read().splitlines() if "=" in l)
+    if attrs.get("host") != "github.com":
+        return
+    sys.stdout.write(f"username=x-access-token\npassword={inst_token(load_conf())}\n")
+
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        die(__doc__)
+    c = a[0]
+    if c == "convert": cmd_convert()
+    elif c == "check": cmd_check()
+    elif c == "api": cmd_api(a[1:])
+    elif c == "setup-git": cmd_setup_git()
+    elif c == "git-credential": cmd_git_credential(a[1:])
+    else: die(__doc__)
+
+
+if __name__ == "__main__":
+    main()
