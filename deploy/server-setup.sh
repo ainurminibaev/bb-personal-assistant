@@ -18,7 +18,8 @@ id "$USER_NAME" >/dev/null 2>&1 || useradd --system --home-dir "$HOME_DIR" --cre
 install -d -m 0750 -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR" "$HOME_DIR/workspace"
 install -d -m 0700 -o "$USER_NAME" -g "$USER_NAME" "$DATA" "$HOME_DIR/.secrets" "$HOME_DIR/telegram-inbox"
 install -d -m 0755 -o "$USER_NAME" -g "$USER_NAME" "$RUNTIME" "$RUNTIME/tools"
-apt-get install -y --no-install-recommends git python3 bubblewrap curl xz-utils >/dev/null
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 bubblewrap curl xz-utils sudo ca-certificates >/dev/null
 
 if [ ! -x "$RUNTIME/node/bin/node" ]; then
   tmp=$(mktemp -d)
