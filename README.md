@@ -32,6 +32,30 @@ These instructions apply to the 0.2 release line. For the older ZIP, use the [v0
 
 If you already use the original Telegram Projects plugin, check the [migration guide](BRIDGE-MIGRATION.md) before installation. Both bridges use the same BB plugin ID.
 
+## Install a digital employee
+
+A digital employee is the same platform with the `employee` setting: its own server user, bot, accounts and team rules. It answers every member of the groups it is added to and, after your approval, people in private chats.
+
+1. On a fresh Ubuntu server, as root: `deploy/server-setup.sh <user> <port>`. It creates the system user with private folders, installs Node, BB and the agent CLI in the user's runtime and starts BB on localhost as a systemd service.
+2. As that user, log the agent in (Codex or Claude Code).
+3. Run setup with the employee settings. The workspace becomes a git copy of the employee's repository (role, team rules, connections), so changes it makes to itself are commits:
+
+   ```sh
+   python3 setup.py --kind employee --machine <host-id> --workspace ~/workspace/<name> \
+     --workspace-repo <git-url> --provider codex --model <model-id> --inbox ~/telegram-inbox --allow-guest-guard
+   ```
+
+   `--provider` and `--model` start one short check in the project; BB remembers them for new conversations. `--allow-guest-guard` allows the guest thread guard in Codex without the BB interface.
+4. Create the bot, pair it and bind your private chat as in the steps above.
+5. Add the bot to a group and make it an administrator: otherwise Telegram shows it only replies and commands, not mentions. You receive a short message with what happens if nothing is changed and a three-step setup.
+
+| Setting | Choices | When |
+|---|---|---|
+| Who may talk to it in a group | all members / only you and people with access | all members in a team group; only you with outsiders in the group |
+| When it answers | on mention or reply / on anything addressed to it | mention by default; the second in a small group it runs |
+| Group memory | shared / this group only | shared when only you are there; this group only when other people are |
+| Private chats of people | off / on your approval | on when people need to work with it one to one |
+
 ## If the bot stays silent
 
 1. Open the coordinator in BB. Check whether it is waiting for an answer, reporting a provider limit, or already working on the message.

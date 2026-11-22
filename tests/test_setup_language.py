@@ -27,10 +27,14 @@ class SetupLanguageTest(unittest.TestCase):
                         key = next(k for k, src in setup.SOURCES.items() if src == args[2])
                         plugins[key] = dict(id=key, source=args[2], enabled=True,
                                             version="0.9.22" if key == "telegram-projects" else "0.2.5")
-                    elif args[:5] == ("plugin", "config", "telegram-projects", "set", "language"):
-                        settings["language"] = args[5]
+                    elif args[:4] == ("plugin", "config", "telegram-projects", "set"):
+                        settings[args[4]] = args[5]
+                    elif args == ("plugin", "config", "telegram-projects"):
+                        return {"values": dict(settings)}
+                    elif args == ("status",):
+                        return {"dataDir": str(Path(work) / "bb-data")}
                     elif args == ("project", "list"):
-                        return [{"id": "project", "sources": [{"hostId": "host", "path": str(Path(work).resolve())}]}]
+                        return [{"id": "project", "sources": [{"hostId": "host", "path": str((Path(work) / "ws").resolve())}]}]
                     elif args[-1] == "status":
                         return {"chatBindings": []}
                     elif args[-1] == "preferences":
@@ -38,14 +42,16 @@ class SetupLanguageTest(unittest.TestCase):
                     else:
                         self.fail(args)
 
-                argv = ["setup.py", "--workspace", work, "--machine", "host", "--yes", *requested]
+                argv = ["setup.py", "--workspace", str(Path(work) / "ws"), "--machine", "host", "--yes", *requested]
                 with patch.object(sys, "argv", argv), patch.object(setup, "bb", cli):
                     setup.main()
                     self.assertIn("knowledge-base", plugins)
-                    custom = Path(work) / "local" / "agents-custom.md"
+                    custom = Path(work) / "ws" / "local" / "agents-custom.md"
                     self.assertEqual(custom.read_bytes(), b"")
                     custom.write_bytes(b"local rule\n")
                     self.assertEqual(settings["language"], expected)
+                    self.assertEqual(settings["installKind"], "assistant")
+                    self.assertEqual(settings["telegramInboxRoot"], str((Path(work) / "telegram-inbox").resolve()))
                     settings["language"] = "ru" if expected == "en" else "en"
                     setup.main()
                     self.assertEqual(custom.read_bytes(), b"local rule\n")

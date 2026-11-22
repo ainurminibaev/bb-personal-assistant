@@ -31,6 +31,40 @@ def supports_coordinator_handoff(version):
 GUARD = Path("hooks") / "guest-thread-guard.py"
 
 
+def clone_workspace(url, root):
+    """An employee's workspace is a git copy of its repository, so the changes it makes to itself are commits."""
+    if (root / ".git").exists():
+        return
+    if root.exists() and any(root.iterdir()):
+        raise SystemExit("--workspace-repo needs an empty or missing workspace folder.")
+    root.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "clone", url, str(root)], check=True)
+    root.chmod(0o700)
+
+
+def configure_bridge(kind, inbox):
+    """The kind of installation and the folder for received files; existing settings stay."""
+    config = bb("plugin", "config", "telegram-projects")
+    values = config.get("values", config)
+    if values.get("installKind") != kind:
+        bb("plugin", "config", "telegram-projects", "set", "installKind", kind)
+    if not values.get("telegramInboxRoot"):
+        inbox.mkdir(mode=0o700, parents=True, exist_ok=True)
+        bb("plugin", "config", "telegram-projects", "set", "telegramInboxRoot", str(inbox))
+
+
+def remember_agent(project_id, provider, model):
+    """BB remembers the agent and model of the last start in a project; a short check sets both."""
+    args = ["thread", "spawn", "--project", project_id, "--title", "Setup: agent check",
+            "--prompt", "Setup check. Reply with one line: the agent and model you run on. Do not use tools."]
+    if provider:
+        args += ["--provider", provider]
+    if model:
+        args += ["--model", model]
+    thread = bb(*args)
+    print(f"Agent check started in thread {thread.get('id') or thread.get('thread', {}).get('id')}.")
+
+
 def install_guest_guard(package, root, data_dir):
     """Guest thread guard for Codex and Claude Code: threads with groups and other people keep
     every tool but do not manage BB. Codex runs a new or changed hook only after the owner allows it."""
@@ -70,12 +104,23 @@ def main():
                         help="Allow the guest thread guard in Codex now, without the BB interface (only this hook)")
     parser.add_argument("--workspace", type=Path, required=True,
                         help="Existing assistant project or a new private working directory")
+    parser.add_argument("--kind", choices=("assistant", "employee"), default="assistant",
+                        help="assistant: a personal assistant with the owner's files; employee: a digital employee of a team")
+    parser.add_argument("--workspace-repo",
+                        help="Git URL of the employee's repository: the workspace becomes its git copy (role, team rules, connections)")
+    parser.add_argument("--provider", help="Agent for the project, for example codex or claude-code")
+    parser.add_argument("--model", help="Model for the project, for example the provider's current model ID")
+    parser.add_argument("--inbox", type=Path,
+                        help="Folder for received Telegram files (default: telegram-inbox next to the workspace)")
     args = parser.parse_args()
     package = Path(__file__).resolve().parent
     root = args.workspace.expanduser().resolve()
     if root == package or package in root.parents:
         raise SystemExit("Choose a workspace outside the extracted release directory.")
-    if root.exists() and (not root.is_dir() or (any(root.iterdir()) and not (root / "projects.md").is_file())):
+    if args.workspace_repo:
+        clone_workspace(args.workspace_repo, root)
+    cloned = bool(args.workspace_repo) and (root / ".git").exists()
+    if root.exists() and (not root.is_dir() or (any(root.iterdir()) and not (root / "projects.md").is_file() and not cloned)):
         raise SystemExit("Choose an empty directory or an existing assistant workspace containing projects.md.")
     machines = bb("machine", "list")
     if not any(m["id"] == args.machine and m["status"] == "connected" for m in machines):
@@ -126,6 +171,7 @@ def main():
         raise SystemExit("Update Telegram Bridge through BB Settings → Updates, then rerun setup. "
                          "Transferring coordinator instructions requires stable Telegram Bridge 0.9.21 or later.")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    configure_bridge(args.kind, (args.inbox or root.parent / "telegram-inbox").expanduser().resolve())
     try:
         with (root / "projects.md").open("x", encoding="utf-8") as registry:
             registry.write((package / "projects.md").read_text(encoding="utf-8"))
@@ -153,6 +199,8 @@ def main():
         "project", "create", "--name", args.name, "--root", str(root),
         "--machine", args.machine
     )
+    if args.provider or args.model:
+        remember_agent(project["id"], args.provider, args.model)
     status = bb("plugin", "rpc", "call", "telegram-projects", "status")
     preferences = bb("plugin", "rpc", "call", "telegram-projects", "preferences")
     print(f"Workspace registered as BB project {project['id']}.")
