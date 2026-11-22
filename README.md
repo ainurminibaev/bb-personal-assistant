@@ -36,7 +36,7 @@ If you already use the original Telegram Projects plugin, check the [migration g
 
 A digital employee is the same platform with the `employee` setting: its own server user, bot, accounts and team rules. It answers every member of the groups it is added to and, after your approval, people in private chats.
 
-1. On a fresh Ubuntu server, as root: `deploy/server-setup.sh <user> <port>`. Not yet checked on a clean machine; it is not part of a release until it is. It creates the system user with private folders, installs Node, BB and the agent CLI in the user's runtime and starts BB on localhost as a systemd service.
+1. On a fresh Ubuntu server, as root: `deploy/server-setup.sh <user> <port>`. It creates the system user with private folders, installs Node, BB and the agent CLI in the user's runtime and starts BB on localhost as a systemd service.
 2. As that user, log the agent in (Codex or Claude Code).
 3. Run setup with the employee settings. The workspace becomes a git copy of the employee's repository (role, team rules, connections), so changes it makes to itself are commits:
 
@@ -46,6 +46,12 @@ A digital employee is the same platform with the `employee` setting: its own ser
    ```
 
    `--provider` and `--model` start one short check in the project; BB remembers them for new conversations. `--allow-guest-guard` allows the guest thread guard in Codex without the BB interface.
+4. Optional, for files up to 2 GB: one local Telegram server per machine, shared by every bot on it. As root:
+   `deploy/telegram-local.sh install --credentials <file with TELEGRAM_API_ID and TELEGRAM_API_HASH>` (reuses a server
+   that already runs), then for each bot `deploy/telegram-local.sh switch --bb-user <user> --bb-url http://127.0.0.1:<port>
+   --bb-data <data dir> --bb-path <user's runtime PATH> --restart-unit <user>-bb`. Back to api.telegram.org: the same
+   with `--to cloud` (Telegram accepts the bot there about 10 minutes later). Without it the bridge uses api.telegram.org
+   with its usual file limits.
 4. Create the bot, pair it and bind your private chat as in the steps above. For commits and PRs under the employee's own name, see [GitHub App](deploy/github-app.md).
 5. Add the bot to a group and make it an administrator: otherwise Telegram shows it only replies and commands, not mentions. You receive a short message with what happens if nothing is changed and a three-step setup.
 
