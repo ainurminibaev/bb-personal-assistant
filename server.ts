@@ -1,6 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import policy from "./.bb/AGENTS.md" with { type: "text" };
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pickOwnerReply, relayText } from "./owner-relay";
@@ -30,7 +31,10 @@ export default async function personalAssistant(bb: BbPluginApi) {
     const file = (db.prepare("PRAGMA database_list").all() as { name: string; file: string }[]).find(r => r.name === "main")?.file ?? "";
     return dirname(dirname(dirname(file))); // <dataDir>/plugins/<id>/data.db
   };
-  const guard = join(dirname(fileURLToPath(import.meta.url)), "hooks", "guest-thread-guard.py");
+  // The built plugin runs from dist/; the guard ships next to it in the package root.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const guard = [join(here, "hooks", "guest-thread-guard.py"), join(here, "..", "hooks", "guest-thread-guard.py")]
+    .find(path => existsSync(path)) ?? join(here, "hooks", "guest-thread-guard.py");
   const isOwnerThread = (threadId: string) => new Promise<boolean>(resolve =>
     execFile("python3", ["-I", guard, "--thread", threadId, bbDataDir()], { timeout: 20_000 },
       (error, stdout) => resolve(!error && stdout.trim() === "owner")));
