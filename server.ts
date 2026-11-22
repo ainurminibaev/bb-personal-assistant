@@ -62,7 +62,7 @@ export default async function personalAssistant(bb: BbPluginApi) {
         throw Error("invalid_arguments");
       if (args.threadId === threadId) throw Error("relay_to_another_thread");
       if (!await isOwnerThread(threadId)) throw Error("relay_only_from_owner_conversation");
-      const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "300", signal,
+      const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "100", signal,
         types: ["client/turn/requested", "item/completed"] }) as any[];
       const reply = pickOwnerReply(events, Date.now(), args.sequence as number | undefined);
       if ("error" in reply) throw Error(reply.error);
