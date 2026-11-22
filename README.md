@@ -56,6 +56,12 @@ For an existing v0.1.9 installation, first follow the [bridge migration procedur
 
 The [Telegram bridge](https://github.com/ainurminibaev/bb-plugin-telegram-projects) has its own releases. It routes messages between Telegram and BB threads.
 
+## How it is built
+
+One platform, thin installations. A personal assistant and a digital employee are the same platform with different settings. An installation holds only a role, team rules, connections and settings; it has no code of its own.
+
+A requirement raised by one installation is met in the platform: as a change for everyone or as a documented setting. Only what concerns one owner or one team stays in the installation. A manual fix on one host is not done until it is in the installer or the launch guide. A platform change reaches every installation with the same release.
+
 ## License
 
 [MIT](LICENSE)
