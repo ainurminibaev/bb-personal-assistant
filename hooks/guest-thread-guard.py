@@ -22,10 +22,10 @@ import sqlite3
 import sys
 import time
 
-# bb subcommands a guest thread may still run: reading its own context and the bridge archive tool.
-ALLOWED_BB = {("status",), ("voice", "transcribe"), ("telegram-projects", "search-history")}
 CACHE_SECONDS = 60
-BLOCK_REASON = ("This is a guest conversation. It cannot manage BB or read other conversations. "
+ASSISTANT_REASON = ("This is a guest conversation of a personal assistant: no command line and no files outside "
+                    "this conversation's folder. The owner can allow it; tell the person it is not available here.")
+BLOCK_REASON = ("This is a guest conversation: BB only within its own thread, subthreads and schedules; no other conversations. "
                 "Use the conversation archive tool for earlier messages; tell the person that this is not available here otherwise.")
 
 
@@ -62,36 +62,43 @@ def cache_path(key):
 
 
 def is_guest(event):
-    """True for a guest conversation or when it cannot be told apart (only BB control is closed then)."""
+    """(guest?, data dir, calling thread, BB db). Unknown threads count as guests (only BB control closes then)."""
     data_dir = data_dir_setting()
     bb = open_ro(os.path.join(data_dir, "bb.db")) if data_dir else None
-    key = str(os.environ.get("BB_THREAD_ID") or event.get("session_id") or "unknown")
-    path = cache_path(key)
+    # The thread always comes from BB's own record, never from the cache a guest could rewrite.
+    thread = calling_thread(event, bb)
+    if not thread or not bb:
+        return True, data_dir, thread, bb
+    path = cache_path(thread)
     try:
         with open(path) as f:
             cached = json.load(f)
-        # Only "guest" is cached: a guest could rewrite the file, and claiming to be a guest gains nothing.
+        # Only "guest" is cached: claiming to be a guest gains nothing.
         if cached.get("guest") is True and time.time() - cached["at"] < CACHE_SECONDS:
-            return True, data_dir
+            return True, data_dir, thread, bb
     except (OSError, ValueError, KeyError):
         pass
-    thread = calling_thread(event, bb)
-    if not thread or not bb:
-        return True, data_dir
-    bridge = open_ro(os.path.join(data_dir, "plugins", "telegram-projects", "data.db"))
-    guest, current, seen = False, thread, set()
-    while current and current not in seen and len(seen) < 8:
-        seen.add(current)
-        if bridge and bound_as_guest(bridge, current):
-            guest = True
-            break
-        row = bb.execute("select parent_thread_id from threads where id=?", (current,)).fetchone()
-        current = row[0] if row else None
+    guest = guest_thread(thread, data_dir)
     if guest:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump({"at": time.time(), "guest": True}, f)
-    return guest, data_dir
+    return guest, data_dir, thread, bb
+
+
+def assistant_guest_closed(data_dir):
+    """A personal assistant runs with the owner's own files: by default its guest conversations get no command
+    line and no files outside the conversation's folder. The owner may open it ("assistantGuestShell": true)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guest-thread-guard.json")
+    try:
+        with open(path) as f:
+            if json.load(f).get("assistantGuestShell") is True:
+                return False
+    except (OSError, ValueError):
+        pass
+    bridge = open_ro(os.path.join(data_dir, "plugins", "telegram-projects", "data.db")) if data_dir else None
+    row = bridge.execute("select value from state where key='rights:install-kind'").fetchone() if bridge else None
+    return not row or json.loads(row[0]) != "employee"
 
 
 def bound_as_guest(con, thread):
@@ -135,7 +142,7 @@ def paths_of(tool_input):
 
 
 def bb_calls(command):
-    """Yields the argument lists of every bb invocation in a shell command line."""
+    """Yields the full argument lists of every bb invocation in a shell command line."""
     try:
         words = shlex.split(command, posix=True)
     except ValueError:
@@ -145,14 +152,95 @@ def bb_calls(command):
         if name == "bb" or word in ("$BB_CLI", "${BB_CLI}") or word == os.environ.get("BB_CLI"):
             rest = []
             for w in words[i + 1:]:
-                if w in (";", "&&", "||", "|") or w.startswith("-"):
+                if w in (";", "&&", "||", "|"):
                     break
                 rest.append(w)
             yield rest
 
 
-def bb_allowed(args):
-    return any(tuple(args[:len(prefix)]) == prefix for prefix in ALLOWED_BB)
+def flag(args, name):
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
+BARE_FLAGS = ("--json", "--parent-self", "--disabled", "--yes", "--clear-service-tier")
+
+
+def positionals(args):
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a.startswith("--"):
+            skip = "=" not in a and a not in BARE_FLAGS
+            continue
+        out.append(a)
+    return out
+
+
+class Scope:
+    """The guest conversation's own reach: itself and its descendants, its project."""
+    def __init__(self, thread, bb, data_dir):
+        self.thread, self.bb, self.data_dir = thread, bb, data_dir
+        row = bb.execute("select project_id from threads where id=?", (thread,)).fetchone() if bb and thread else None
+        self.project = row[0] if row else None
+
+    def owns(self, other):
+        current, seen = other, set()
+        while self.bb and current and current not in seen and len(seen) < 16:
+            if current == self.thread:
+                return True
+            seen.add(current)
+            row = self.bb.execute("select parent_thread_id from threads where id=?", (current,)).fetchone()
+            current = row[0] if row else None
+        return False
+
+    def owns_automation(self, automation):
+        con = open_ro(os.path.join(self.data_dir, "plugins", "automations", "data.db")) if self.data_dir else None
+        row = con.execute("select target_thread_id from automations where id=?", (automation,)).fetchone() if con else None
+        return bool(row and row[0] and self.owns(row[0]))
+
+
+# A guest uses BB within its own reach: its thread and subthreads, schedules that run in them, its project.
+OWN_THREAD = {"wait", "output", "show", "get", "log", "messages", "stop", "tell", "read", "unread", "context", "history", "queue"}
+ELSEWHERE = ("--environment", "--new-environment", "--new-machine", "--machine", "--host", "--environment-provider")
+RUN_ELSEWHERE = ("--script", "--script-file", "--environment", "--new-environment", "--host", "--working-directory",
+                 "--interpreter", "--env-json", "--base-branch")
+
+
+def guest_bb_allowed(args, scope):
+    head = args[:2]
+    if args[:1] == ["status"] or head in (["voice", "transcribe"], ["telegram-projects", "search-history"],
+                                          ["skill", "list"], ["skill", "show"]):
+        return True
+    if len(head) == 2 and head[0] == "thread":
+        if head[1] in ("spawn", "create"):
+            parent = "--parent-self" in args or scope.owns(flag(args, "--parent-thread") or "")
+            project = flag(args, "--project")
+            elsewhere = any(f in args or flag(args, f) for f in ELSEWHERE)
+            return parent and not elsewhere and (project is None or project == scope.project)
+        if head[1] in OWN_THREAD:
+            targets = [a for a in positionals(args[2:]) if a.startswith("thr_")]
+            return bool(targets) and all(scope.owns(t) for t in targets)
+        return False
+    if len(head) == 2 and head[0] == "automation":
+        # A schedule that spawns a new thread on each run would start outside the guest conversation.
+        if any(f in args or flag(args, f) for f in RUN_ELSEWHERE):
+            return False
+        project = flag(args, "--project")
+        if project is not None and project != scope.project:
+            return False
+        target = flag(args, "--target-thread")
+        if head[1] in ("create", "list"):
+            return bool(target) and scope.owns(target)
+        ids = positionals(args[2:])
+        return bool(ids) and all(scope.owns_automation(a) for a in ids) and (target is None or scope.owns(target))
+    return False
 
 
 def overrides_identity(command):
@@ -193,13 +281,23 @@ def main():
     if not commands and not paths:
         return 0
     try:
-        guest, data_dir = is_guest(event)
+        guest, data_dir, thread, bb = is_guest(event)
     except Exception:
-        guest, data_dir = True, data_dir_setting()
+        guest, data_dir, thread, bb = True, data_dir_setting(), None, None
     if not guest:
         return 0
+    if assistant_guest_closed(data_dir):
+        cwd = os.path.realpath(event.get("cwd") or os.getcwd())
+        outside = [p for p in paths if os.path.isabs(p) and not os.path.realpath(p).startswith(cwd + os.sep)]
+        if commands or outside:
+            print(ASSISTANT_REASON, file=sys.stderr)
+            return 2
+    try:
+        scope = Scope(thread, bb, data_dir)
+    except Exception:
+        scope = Scope(None, None, "")
     for command in commands:
-        if (any(not bb_allowed(args) for args in bb_calls(command)) or touches_data_dir(command, data_dir)
+        if (any(not guest_bb_allowed(args, scope) for args in bb_calls(command)) or touches_data_dir(command, data_dir)
                 or overrides_identity(command)):
             print(BLOCK_REASON, file=sys.stderr)
             return 2
