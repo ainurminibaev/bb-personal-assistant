@@ -201,6 +201,10 @@ def main():
     )
     if args.provider or args.model:
         remember_agent(project["id"], args.provider, args.model)
+    # Voice transcripts through Codex first (С23): BB's "automatic" order would try the BB cloud first once signed in.
+    if args.provider == "codex":
+        subprocess.run(["bb", "settings", "ai-services", "set", "voice", "codex"], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     status = bb("plugin", "rpc", "call", "telegram-projects", "status")
     preferences = bb("plugin", "rpc", "call", "telegram-projects", "preferences")
     print(f"Workspace registered as BB project {project['id']}.")
