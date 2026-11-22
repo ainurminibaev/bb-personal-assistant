@@ -15,12 +15,12 @@ The subthread is the task's whole state: its first message — conditions; its l
 
 ## Returning to the task
 
-For the next step set a one-off schedule on the subthread: `bb automation create --in <time> --target-thread <subthread> --prompt "<what to check>"`. When an answer comes earlier, cancel or move it. On each run read the subthread, compare with the answers received, then act. Never repeat a reminder its journal already shows.
+For the next step set a one-off schedule on the subthread: `bb automation create --project <this project> --name "<task>: <step>" --in <30m|2h|1d> --target-thread <subthread> --reasoning low --prompt "<what to check>"` (`--at <ISO time>` for an exact moment). When an answer comes earlier, cancel or move it. On each run read the subthread, compare with the answers received, then act. Never repeat a reminder its journal already shows.
 
 ## Status
 
 - On request («что с задачей?») — answer at once, in the same place.
-- Every 30 minutes while a task is open longer than 30 minutes: one recurring schedule on **this conversation's thread** (`bb automation create --cron "*/30 * * * *" --target-thread <this thread> …`). Set it when the first task passes 30 minutes; remove it when the last open task closes. With no open task there is no schedule and no turn. One message per run, a summary of all open tasks: done / going on / left / waiting for whom, next step. If nothing changed since the last status, say so in one line.
+- Every 30 minutes while a task is open longer than 30 minutes: one recurring schedule on **this conversation's thread** (`bb automation create --project <this project> --name "Статус поручений" --cron "*/30 * * * *" --timezone <IANA zone> --target-thread <this thread> --reasoning low --prompt "<status of open tasks>"`). Set it when the first task passes 30 minutes; remove it when the last open task closes. With no open task there is no schedule and no turn. One message per run, a summary of all open tasks: done / going on / left / waiting for whom, next step. If nothing changed since the last status, say so in one line.
 - A status run is cheap: read the open subthreads' last statuses only.
 
 ## Reminders to people
