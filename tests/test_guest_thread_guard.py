@@ -13,7 +13,10 @@ class GuestGuard(unittest.TestCase):
         con = sqlite3.connect(os.path.join(data, "plugins", "telegram-projects", "data.db"))
         con.execute("create table state(key text primary key, value text)")
         rows = {"group:thread:thr_group": "group:policy:-100:3", "group:policy:-100:3": {"chatId": -100, "topicId": 3},
-                "group:thread:thr_ownertopic": "group:policy:-200:4", "group:policy:-200:4": {"chatId": -200, "topicId": 4, "ownerTopic": True}}
+                "group:thread:thr_ownertopic": "group:policy:-200:4", "group:policy:-200:4": {"chatId": -200, "topicId": 4, "ownerTopic": True},
+                "group:thread:thr_ownergroup": "group:policy:-300:0", "group:policy:-300:0": {"chatId": -300, "topicId": 0},
+                "rights:5:group:-300": {"memory": "shared"}, "rights:5:group:-100": {"memory": "separate"},
+                "rights:install-kind": "employee"}
         for k, v in rows.items():
             con.execute("insert into state values(?,?)", (k, json.dumps(v)))
         con.commit(); con.close()
@@ -21,7 +24,7 @@ class GuestGuard(unittest.TestCase):
         bb.execute("create table events(thread_id text, provider_thread_id text)")
         bb.execute("create table threads(id text primary key, parent_thread_id text)")
         for thread, session, parent in [("thr_group", "s-group", None), ("thr_child", "s-child", "thr_group"),
-                                        ("thr_owner", "s-owner", None), ("thr_ownertopic", "s-ownertopic", None)]:
+                                        ("thr_owner", "s-owner", None), ("thr_ownertopic", "s-ownertopic", None), ("thr_ownergroup", "s-ownergroup", None)]:
             bb.execute("insert into events values(?,?)", (thread, session))
             bb.execute("insert into threads values(?,?)", (thread, parent))
         bb.commit(); bb.close()
@@ -59,6 +62,9 @@ class GuestGuard(unittest.TestCase):
         with open(os.path.join(self.dir, f"bb-guest-guard-{os.getuid()}-s-group.json"), "w") as f:
             json.dump({"at": 9e12, "guest": False}, f)
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread list"}), 2)
+
+    def test_a_group_with_only_the_owner_is_the_owners_conversation(self):
+        self.assertEqual(self.run_hook("s-ownergroup", {"command": "bb thread list"}), 0)
 
     def test_owner_threads_keep_bb(self):
         self.assertEqual(self.run_hook("s-owner", {"command": "bb thread list"}), 0)

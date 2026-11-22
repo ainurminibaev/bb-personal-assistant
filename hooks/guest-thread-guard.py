@@ -103,7 +103,22 @@ def bound_as_guest(con, thread):
     if not policy:
         return False
     value = json.loads(policy[0])
-    return not (value.get("ownerTopic") or value.get("ownerSharedProject"))
+    if value.get("ownerTopic") or value.get("ownerSharedProject"):
+        return False
+    if value.get("privateChat"):
+        return True
+    # One rule with the bridge: a group with shared memory has only the owner in it. The bridge switches
+    # the memory to "separate" as soon as anyone else appears there.
+    return group_memory(con, value.get("chatId")) != "shared"
+
+
+def group_memory(con, chat):
+    for (raw,) in con.execute("select value from state where key like ?", (f"rights:%:group:{chat}",)):
+        memory = json.loads(raw).get("memory")
+        if memory:
+            return memory
+    kind = con.execute("select value from state where key='rights:install-kind'").fetchone()
+    return "separate" if kind and json.loads(kind[0]) == "employee" else "shared"
 
 
 def commands_of(tool_input):
