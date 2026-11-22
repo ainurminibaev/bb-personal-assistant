@@ -22,8 +22,8 @@ For the next step set a one-off schedule on the subthread: `bb automation create
 ## Status
 
 - On request («что с задачей?») — answer at once, in the same place.
-- Every 30 minutes while a task is open longer than 30 minutes: one recurring schedule on **this conversation's thread** (`bb automation create --project <this project> --name "Статус поручений" --cron "*/30 * * * *" --timezone <IANA zone> --target-thread <this thread> --reasoning low --prompt "<status of open tasks>"`). Set it when the first task passes 30 minutes; remove it when the last open task closes. With no open task there is no schedule and no turn. One message per run, a summary of all open tasks: done / going on / left / waiting for whom, next step. If nothing changed since the last status, say so in one line.
-- A status run is cheap: read the open subthreads' last statuses only.
+- Every 30 minutes while a task is open longer than 30 minutes: one recurring schedule on **the task's subthread**, not on this conversation's thread — a run there reads only the task's own state, a run here would carry the whole conversation (measured: ~125k input tokens against ~25k). `bb automation create --project <project> --name "Статус: <task>" --cron "*/30 * * * *" --timezone <IANA zone> --target-thread <subthread> --reasoning low --prompt "<status of this task>"`. Set it when the task passes 30 minutes; remove it when the task closes. With no open task there is no schedule and no turn.
+- The run posts the status itself where the task was given: `bb telegram-projects send --topic "<topic>" --text "…"` for a group topic, `--person <person>` for a person's chat, and in the owner's chat the subthread's result reaches the owner as usual. One message per run: done / going on / left / waiting for whom, next step. If nothing changed since the last status, say so in one line. Several open tasks in one place: each posts its own short line.
 
 ## Reminders to people
 
