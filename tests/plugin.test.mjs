@@ -7,7 +7,8 @@ async function load(binding) {
   const queries = [];
   await plugin({
     settings: { define: () => ({ get: async () => binding, onChange: fn => { changed = fn; } }) },
-    agents: { configure: callback => { instructions = callback; } },
+    agents: { configure: callback => { instructions = callback; }, registerTool: () => {} },
+    storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => [{ name: "main", file: "/data/plugins/personal-assistant/data.db" }], get() {}, run() {} }) }) },
     cli: { register: callback => { command = callback; } },
     sdk: { threads: { list: async query => {
       queries.push(query);

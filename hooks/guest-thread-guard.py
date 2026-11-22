@@ -151,7 +151,24 @@ def touches_data_dir(text, data_dir):
     return bool(re.search(r"(^|[/\s'\"])(\.bb-[\w.-]+|bb\.db|thread-storage)([/\s'\"]|$)", text))
 
 
+def guest_thread(thread, data_dir):
+    """The same definition for other platform code: is this BB thread a guest conversation?"""
+    bb = open_ro(os.path.join(data_dir, "bb.db"))
+    bridge = open_ro(os.path.join(data_dir, "plugins", "telegram-projects", "data.db"))
+    current, seen = thread, set()
+    while bb and current and current not in seen and len(seen) < 8:
+        seen.add(current)
+        if bridge and bound_as_guest(bridge, current):
+            return True
+        row = bb.execute("select parent_thread_id from threads where id=?", (current,)).fetchone()
+        current = row[0] if row else None
+    return not bb
+
+
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--thread":
+        print("guest" if guest_thread(sys.argv[2], sys.argv[3]) else "owner")
+        return 0
     try:
         event = json.load(sys.stdin)
     except ValueError:

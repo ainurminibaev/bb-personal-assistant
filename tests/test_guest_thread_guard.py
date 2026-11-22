@@ -65,6 +65,10 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-ownertopic", {"command": "bb thread list"}), 0)
         self.assertEqual(self.run_hook(None, {"command": "bb thread list"}, thread="thr_owner"), 0)
 
+    def test_thread_check_mode_for_other_platform_code(self):
+        run = lambda t: subprocess.run([sys.executable, self.hook, "--thread", t, self.data], capture_output=True, text=True).stdout.strip()
+        self.assertEqual([run("thr_owner"), run("thr_group"), run("thr_child")], ["owner", "guest", "guest"])
+
     def test_an_unknown_session_does_not_manage_bb(self):
         self.assertEqual(self.run_hook("s-unknown", {"command": "bb thread list"}), 2)
         self.assertEqual(self.run_hook("s-unknown", {"command": "ls"}), 0)

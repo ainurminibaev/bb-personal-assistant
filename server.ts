@@ -1,5 +1,9 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import policy from "./.bb/AGENTS.md" with { type: "text" };
+import { execFile } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { pickOwnerReply, relayText } from "./owner-relay";
 
 export default async function personalAssistant(bb: BbPluginApi) {
   const settings = bb.settings.define({
@@ -17,6 +21,56 @@ export default async function personalAssistant(bb: BbPluginApi) {
       ? { instructions: policy, skills: ["dispatch", "integrations"], tools: [] }
       : { skills: [], tools: [] }
   );
+
+  // P20: pass the owner's own reply from this thread's BB journal to a worker thread.
+  const db = bb.storage.database();
+  const relays = () => { db.exec("CREATE TABLE IF NOT EXISTS relays (key TEXT PRIMARY KEY, at INTEGER NOT NULL)"); return db; };
+  const bbDataDir = () => {
+    const file = (db.prepare("PRAGMA database_list").all() as { name: string; file: string }[]).find(r => r.name === "main")?.file ?? "";
+    return dirname(dirname(dirname(file))); // <dataDir>/plugins/<id>/data.db
+  };
+  const guard = join(dirname(fileURLToPath(import.meta.url)), "hooks", "guest-thread-guard.py");
+  const isOwnerThread = (threadId: string) => new Promise<boolean>(resolve =>
+    execFile("python3", ["-I", guard, "--thread", threadId, bbDataDir()], { timeout: 20_000 },
+      (error, stdout) => resolve(!error && stdout.trim() === "owner")));
+  bb.agents.registerTool({
+    name: "relay_owner_message",
+    description: "Pass the owner's own reply from this conversation, word for word from BB's journal, to a worker thread that needs " +
+      "the owner's permission (publish, release, delete, send on the owner's behalf). Add, in your words, the one action and its object. " +
+      "By default the owner's latest reply is passed; a short answer goes with your message it answered. You cannot write or edit the owner's words. " +
+      "If the action or object does not follow unambiguously from the owner's words, ask the owner instead.",
+    parameters: {
+      type: "object", additionalProperties: false, required: ["threadId", "action", "object"],
+      properties: {
+        threadId: { type: "string", description: "The worker thread that should receive the owner's words." },
+        action: { type: "string", description: "One action the owner asked for, in your words." },
+        object: { type: "string", description: "What the action applies to." },
+        sequence: { type: "integer", description: "A specific earlier owner reply of this thread; default: the latest." },
+      },
+    },
+    async execute(raw, { threadId, signal }) {
+      const args = raw as { threadId?: unknown; action?: unknown; object?: unknown; sequence?: unknown };
+      if (typeof args.threadId !== "string" || !/^thr_[a-z0-9]{6,40}$/.test(args.threadId) ||
+          typeof args.action !== "string" || args.action.length < 3 || args.action.length > 200 ||
+          typeof args.object !== "string" || args.object.length < 2 || args.object.length > 200 ||
+          (args.sequence !== undefined && !Number.isSafeInteger(args.sequence)))
+        throw Error("invalid_arguments");
+      if (args.threadId === threadId) throw Error("relay_to_another_thread");
+      if (!await isOwnerThread(threadId)) throw Error("relay_only_from_owner_conversation");
+      const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "300", signal,
+        types: ["client/turn/requested", "item/completed"] }) as any[];
+      const reply = pickOwnerReply(events, Date.now(), args.sequence as number | undefined);
+      if ("error" in reply) throw Error(reply.error);
+      const key = `${threadId}:${reply.sequence}:${args.threadId}`;
+      if (relays().prepare("SELECT 1 FROM relays WHERE key=?").get(key)) throw Error("already_relayed_to_this_thread");
+      const target = await bb.sdk.threads.get({ threadId: args.threadId, signal });
+      if (!target?.id || target.archivedAt || target.deletedAt) throw Error("target_thread_unavailable");
+      await bb.sdk.threads.send({ threadId: args.threadId, mode: "queue-if-active",
+        input: [{ type: "text", text: relayText(reply, threadId, args.action, args.object), mentions: [] }] });
+      relays().prepare("INSERT INTO relays(key,at) VALUES(?,?)").run(key, Date.now());
+      return JSON.stringify({ relayed: true, threadId: args.threadId, ownerReply: reply.sequence });
+    },
+  });
 
   bb.cli.register({
     name: "personal-assistant",
