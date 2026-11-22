@@ -26,7 +26,8 @@ CACHE_SECONDS = 60
 ASSISTANT_REASON = ("This is a guest conversation of a personal assistant: no command line and no files outside "
                     "this conversation's folder. The owner can allow it; tell the person it is not available here.")
 BLOCK_REASON = ("This is a guest conversation: BB only within its own thread, subthreads and schedules; no other conversations. "
-                "Use the conversation archive tool for earlier messages; tell the person that this is not available here otherwise.")
+                "Start a subthread with `bb thread spawn --parent-self --prompt …` (its result comes back to this thread). "
+                "Earlier messages: `bb telegram-projects search-history`. Tell the person what is not available here.")
 
 
 def data_dir_setting():
