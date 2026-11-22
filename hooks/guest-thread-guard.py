@@ -244,7 +244,7 @@ class Scope:
 
 
 # A guest uses BB within its own reach: its thread and subthreads, schedules that run in them, its project.
-OWN_THREAD = {"wait", "output", "show", "get", "log", "messages", "stop", "tell", "read", "unread", "context", "history", "queue"}
+OWN_THREAD = {"wait", "output", "show", "get", "log", "messages", "stop", "tell", "read", "unread", "context", "history", "queue", "update"}
 ELSEWHERE = ("--environment", "--new-environment", "--new-machine", "--machine", "--host", "--environment-provider")
 RUN_ELSEWHERE = ("--script", "--script-file", "--environment", "--new-environment", "--host", "--working-directory",
                  "--interpreter", "--env-json", "--base-branch")
@@ -280,6 +280,10 @@ def guest_bb_allowed(args, scope):
             project = flag(args, "--project")
             elsewhere = any(f in args or flag(args, f) for f in ELSEWHERE)
             return parent and not elsewhere and (project is None or project == scope.project)
+        if head[1] == "update" and (flag(args, "--parent-thread") or "--clear-parent-thread" in args):
+            # A guest may rename its own threads, never move them out of its conversation.
+            return scope.owns(flag(args, "--parent-thread") or "") and "--clear-parent-thread" not in args and \
+                all(scope.owns(t) for t in positionals(args[2:]) if t.startswith("thr_"))
         if head[1] in OWN_THREAD:
             targets = [a for a in positionals(args[2:]) if a.startswith("thr_")]
             named = flag(args, "--thread")

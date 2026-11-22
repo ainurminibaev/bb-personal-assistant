@@ -74,6 +74,11 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-group", {"command": "python3 -c 'print(\"bb telegram-projects send\")'"}), 0)
         self.assertEqual(self.run_hook("s-group", {"command": "grep -rn 'bb thread' README.md"}), 2, "an over-wide match only refuses")
 
+    def test_guest_renames_its_subthread_but_cannot_move_it_out(self):
+        self.assertEqual(self.run_hook("s-group", {"command": "bb thread update thr_child --title 'готово'"}), 0)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb thread update thr_owner --title x"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb thread update thr_child --clear-parent-thread"}), 2)
+
     def test_guest_may_read_help_and_its_own_thread(self):
         for cmd in ("bb thread spawn --help", "bb thread show --json", "bb thread context --self --json",
                     "bb skill list", "bb help"):
