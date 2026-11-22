@@ -172,6 +172,20 @@ def bb_calls(command):
             yield rest
 
 
+# bb called from code (python subprocess, node child_process, os.system): the shell parser does not see it.
+EMBEDDED_BB = re.compile(r"""(?<![\w/.-])bb["']?\s*[,\s]\s*["']?([a-z][\w-]*)["']?(?:\s*[,\s]\s*["']?([a-z][\w-]*)["']?)?""")
+
+
+SHELL_BB = re.compile(r"(?m)(^|[;&|(]\s*)(?:\S*/)?bb(?:\s[^;&|\n]*)?")
+
+
+def embedded_bb_calls(command):
+    """Yields [subcommand, action] for bb named inside code; shell-level calls are checked in full elsewhere.
+    An over-wide match only refuses."""
+    for m in EMBEDDED_BB.finditer(SHELL_BB.sub(r"\1", command)):
+        yield [w for w in m.groups() if w]
+
+
 def flag(args, name):
     for i, a in enumerate(args):
         if a == name and i + 1 < len(args):
@@ -370,7 +384,9 @@ def main():
     except Exception:
         scope = Scope(None, None, "")
     for command in commands:
-        if (any(not guest_bb_allowed(args, scope) for args in bb_calls(command)) or touches_data_dir(command, data_dir)
+        if (any(not guest_bb_allowed(args, scope) for args in bb_calls(command))
+                or any(not guest_bb_allowed(args, scope) for args in embedded_bb_calls(command))
+                or touches_data_dir(command, data_dir)
                 or overrides_identity(command)):
             print(BLOCK_REASON, file=sys.stderr)
             return 2

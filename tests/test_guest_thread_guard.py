@@ -66,6 +66,14 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-group", {"command": ["/usr/bin/bash", "-lc", "bb thread list"]}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "/usr/bin/bash -lc 'bb thread list'"}), 2)
 
+    def test_bb_called_from_code_is_checked_too(self):
+        py = "python3 - <<'PY'\nimport subprocess\nsubprocess.run([\"bb\", \"thread\", \"list\"])\nPY"
+        self.assertEqual(self.run_hook("s-group", {"command": py}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "python3 -c 'import os; os.system(\"bb thread list\")'"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "node -e 'require(\"child_process\").execSync(\"bb telegram-projects search-history x\")'"}), 0)
+        self.assertEqual(self.run_hook("s-group", {"command": "python3 -c 'print(\"bb telegram-projects send\")'"}), 0)
+        self.assertEqual(self.run_hook("s-group", {"command": "grep -rn 'bb thread' README.md"}), 2, "an over-wide match only refuses")
+
     def test_guest_may_read_help_and_its_own_thread(self):
         for cmd in ("bb thread spawn --help", "bb thread show --json", "bb thread context --self --json",
                     "bb skill list", "bb help"):
