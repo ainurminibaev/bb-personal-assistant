@@ -36,7 +36,7 @@ If you already use the original Telegram Projects plugin, check the [migration g
 
 A digital employee is the same platform with the `employee` setting: its own server user, bot, accounts and team rules. It answers every member of the groups it is added to and, after your approval, people in private chats.
 
-1. On a fresh Ubuntu server, as root: `deploy/server-setup.sh <user> <port>`. It creates the system user with private folders, installs Node, BB and the agent CLI in the user's runtime and starts BB on localhost as a systemd service.
+1. On a fresh Ubuntu server, as root: `deploy/server-setup.sh <user> <port>`. Not yet checked on a clean machine; it is not part of a release until it is. It creates the system user with private folders, installs Node, BB and the agent CLI in the user's runtime and starts BB on localhost as a systemd service.
 2. As that user, log the agent in (Codex or Claude Code).
 3. Run setup with the employee settings. The workspace becomes a git copy of the employee's repository (role, team rules, connections), so changes it makes to itself are commits:
 
