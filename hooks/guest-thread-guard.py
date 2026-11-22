@@ -128,11 +128,24 @@ def group_memory(con, chat):
     return "separate" if kind and json.loads(kind[0]) == "employee" else "shared"
 
 
+def unwrap_shell(words):
+    """Codex runs commands as [bash, -lc, SCRIPT]: the guard checks SCRIPT itself."""
+    if len(words) == 3 and os.path.basename(str(words[0])) in ("bash", "sh", "zsh") and words[1] in ("-c", "-lc"):
+        return str(words[2])
+    return None
+
+
 def commands_of(tool_input):
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if isinstance(command, list):
-        return [" ".join(map(str, command))]
-    return [command] if isinstance(command, str) else []
+        return [unwrap_shell(command) or shlex.join(map(str, command))]
+    if isinstance(command, str):
+        try:
+            inner = unwrap_shell(shlex.split(command, posix=True))
+        except ValueError:
+            inner = None
+        return [inner or command]
+    return []
 
 
 def paths_of(tool_input):
@@ -278,9 +291,29 @@ def overrides_identity(command):
     return bool(re.search(r"\bBB_(THREAD|PROJECT|ENVIRONMENT)_ID\b\s*=|\benv\b[^|;&]*\s-u\s*BB_|\bunset\s+BB_", command))
 
 
+READERS = {"cat", "head", "tail", "sed", "rg", "grep", "ls", "wc"}
+
+
+def reads_skills_only(text, data_dir):
+    """BB skills are instructions for every agent: a guest may read them, nothing else in the data folder."""
+    try:
+        words = shlex.split(text, posix=True)
+    except ValueError:
+        return text, False
+    if not words or os.path.basename(words[0]) not in READERS or ".." in text or any(
+            w.startswith(("-i", "--in-place")) or ">" in w or w in ("|", ";", "&&", "||", "&") or "$(" in w or "`" in w
+            for w in words[1:]):
+        return text, False
+    skills = re.compile(re.escape(data_dir.rstrip("/")) + r"/runtime/global-skills/[0-9a-f]{16,}/skills/[\w.-]+(?:/[\w.*-]+)*/?")
+    return skills.sub("", text), True
+
+
 def touches_data_dir(text, data_dir):
     if data_dir and data_dir.rstrip("/") in text:
-        return True
+        rest, reader = reads_skills_only(text, data_dir)
+        if not reader or data_dir.rstrip("/") in rest:
+            return True
+        text = rest
     return bool(re.search(r"(^|[/\s'\"])(\.bb-[\w.-]+|bb\.db|thread-storage)([/\s'\"]|$)", text))
 
 

@@ -53,6 +53,19 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-group", {"command": f"sqlite3 {self.data}/bb.db .dump"}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": ["cat", "/var/lib/x/.bb-mr/thread-storage/a"]}), 2)
 
+    def test_guest_reads_bb_skills_and_nothing_else_in_the_data_folder(self):
+        skill = f"{self.data}/runtime/global-skills/{'a1'*32}/skills/telegram-projects/SKILL.md"
+        self.assertEqual(self.run_hook("s-group", {"command": f"cat {skill}"}), 0)
+        self.assertEqual(self.run_hook("s-group", {"command": ["/usr/bin/bash", "-lc", f"sed -n '1,80p' {skill}"]}), 0)
+        self.assertEqual(self.run_hook("s-group", {"command": f"rg -n send {skill}"}), 0)
+        self.assertEqual(self.run_hook("s-group", {"command": f"cat {skill} {self.data}/bb.db"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": f"cat {skill}/../../../../../bb.db"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": f"sed -i s/a/b/ {skill}"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": f"cat {skill} > {skill}"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": f"cat {skill}; cat {self.data}/plugins/x"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": ["/usr/bin/bash", "-lc", "bb thread list"]}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "/usr/bin/bash -lc 'bb thread list'"}), 2)
+
     def test_guest_uses_bb_within_its_own_reach(self):
         ok = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 0, c)
         no = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 2, c)
