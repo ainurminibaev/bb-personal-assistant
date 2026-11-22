@@ -8,7 +8,7 @@ import sys
 
 from migrate_bridge import LEGACY, TRACKING
 
-ASSISTANT = "git:https://github.com/ainurminibaev/bb-personal-assistant.git@semver:^0.2.0-rc.1"
+ASSISTANT = "git:https://github.com/ainurminibaev/bb-personal-assistant.git@semver:^0.3.0"
 SOURCES = {"telegram-projects": TRACKING, "personal-assistant": ASSISTANT}
 # The knowledge base ships in this repository and release, as a separate plugin folder.
 KNOWLEDGE_BASE = ("knowledge-base", ASSISTANT, "plugins/knowledge-base")
