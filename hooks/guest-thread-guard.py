@@ -19,7 +19,6 @@ import os
 import re
 import shlex
 import sqlite3
-import subprocess
 import sys
 import time
 
@@ -30,47 +29,68 @@ BLOCK_REASON = ("This is a guest conversation. It cannot manage BB or read other
                 "Use the conversation archive tool for earlier messages; tell the person that this is not available here otherwise.")
 
 
-def bb_cli():
-    return os.environ.get("BB_CLI") or "bb"
+def data_dir_setting():
+    """The BB data directory, written next to the hook by setup.py. Agents start hooks without BB variables."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guest-thread-guard.json")
+    try:
+        with open(path) as f:
+            return json.load(f).get("dataDir") or ""
+    except (OSError, ValueError):
+        return ""
 
 
-def run_json(*args):
-    out = subprocess.run([bb_cli(), *args, "--json"], capture_output=True, text=True, timeout=20, check=True).stdout
-    return json.loads(out)
+def open_ro(path):
+    return sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5) if os.path.exists(path) else None
 
 
-def cache_path(thread):
+def calling_thread(event, bb):
+    """The BB thread of this tool call: BB_THREAD_ID when the agent has it, else the agent session ID
+    (Codex and Claude Code pass it to hooks) looked up in BB's own record of provider sessions."""
+    thread = os.environ.get("BB_THREAD_ID")
+    if thread:
+        return thread
+    session = event.get("session_id") or event.get("thread_id") or event.get("conversation_id")
+    if not session or not bb:
+        return None
+    row = bb.execute("select thread_id from events where provider_thread_id=? limit 1", (str(session),)).fetchone()
+    return row[0] if row else None
+
+
+def cache_path(key):
     base = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
-    return os.path.join(base, f"bb-guest-guard-{os.getuid()}-{thread}.json")
+    return os.path.join(base, f"bb-guest-guard-{os.getuid()}-{re.sub(r'[^A-Za-z0-9_.-]', '_', key)[:80]}.json")
 
 
-def thread_info(thread):
-    """Returns (is_guest, data_dir). Cached briefly: the hook runs before every tool call."""
-    path = cache_path(thread)
+def is_guest(event):
+    """True for a guest conversation or when it cannot be told apart (only BB control is closed then)."""
+    data_dir = data_dir_setting()
+    bb = open_ro(os.path.join(data_dir, "bb.db")) if data_dir else None
+    key = str(os.environ.get("BB_THREAD_ID") or event.get("session_id") or "unknown")
+    path = cache_path(key)
     try:
         with open(path) as f:
             cached = json.load(f)
         # Only "guest" is cached: a guest could rewrite the file, and claiming to be a guest gains nothing.
         if cached.get("guest") is True and time.time() - cached["at"] < CACHE_SECONDS:
-            return True, cached["dataDir"]
+            return True, data_dir
     except (OSError, ValueError, KeyError):
         pass
-    data_dir = run_json("status").get("dataDir") or ""
-    guest = False
-    db = os.path.join(data_dir, "plugins", "telegram-projects", "data.db")
-    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True) if os.path.exists(db) else None
-    current, seen = thread, set()
+    thread = calling_thread(event, bb)
+    if not thread or not bb:
+        return True, data_dir
+    bridge = open_ro(os.path.join(data_dir, "plugins", "telegram-projects", "data.db"))
+    guest, current, seen = False, thread, set()
     while current and current not in seen and len(seen) < 8:
         seen.add(current)
-        if con and bound_as_guest(con, current):
+        if bridge and bound_as_guest(bridge, current):
             guest = True
             break
-        shown = run_json("thread", "show", current)
-        current = (shown.get("thread") or shown).get("parentThreadId")
+        row = bb.execute("select parent_thread_id from threads where id=?", (current,)).fetchone()
+        current = row[0] if row else None
     if guest:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
-            json.dump({"at": time.time(), "guest": True, "dataDir": data_dir}, f)
+            json.dump({"at": time.time(), "guest": True}, f)
     return guest, data_dir
 
 
@@ -132,27 +152,26 @@ def touches_data_dir(text, data_dir):
 
 
 def main():
-    thread = os.environ.get("BB_THREAD_ID")
-    if not thread:
-        return 0
     try:
         event = json.load(sys.stdin)
     except ValueError:
         return 0
     tool_input = event.get("tool_input") or {}
+    commands, paths = commands_of(tool_input), paths_of(tool_input)
+    if not commands and not paths:
+        return 0
     try:
-        guest, data_dir = thread_info(thread)
+        guest, data_dir = is_guest(event)
     except Exception:
-        # Without BB the hook cannot tell a guest from the owner. Fail closed only for BB itself.
-        guest, data_dir = True, ""
+        guest, data_dir = True, data_dir_setting()
     if not guest:
         return 0
-    for command in commands_of(tool_input):
+    for command in commands:
         if (any(not bb_allowed(args) for args in bb_calls(command)) or touches_data_dir(command, data_dir)
                 or overrides_identity(command)):
             print(BLOCK_REASON, file=sys.stderr)
             return 2
-    for path in paths_of(tool_input):
+    for path in paths:
         if touches_data_dir(path, data_dir):
             print(BLOCK_REASON, file=sys.stderr)
             return 2

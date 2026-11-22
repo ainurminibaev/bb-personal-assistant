@@ -31,7 +31,7 @@ def supports_coordinator_handoff(version):
 GUARD = Path("hooks") / "guest-thread-guard.py"
 
 
-def install_guest_guard(package, root):
+def install_guest_guard(package, root, data_dir):
     """Guest thread guard for Codex and Claude Code: threads with groups and other people keep
     every tool but do not manage BB. Codex runs a new or changed hook only after the owner allows it."""
     target = root / ".bb" / "hooks" / GUARD.name
@@ -40,6 +40,11 @@ def install_guest_guard(package, root):
     if not target.exists() or target.read_bytes() != source:
         target.write_bytes(source)
         target.chmod(0o755)
+    # Agents start hooks without BB variables: the hook finds BB's data here.
+    settings = target.with_name("guest-thread-guard.json")
+    wanted = json.dumps({"dataDir": str(data_dir)}) + "\n"
+    if not settings.exists() or settings.read_text(encoding="utf-8") != wanted:
+        settings.write_text(wanted, encoding="utf-8")
     command = f"python3 {target}"
     entry = {"matcher": "*", "hooks": [{"type": "command", "command": command, "timeout": 30}]}
     for config in (root / ".codex" / "hooks.json", root / ".claude" / "settings.json"):
@@ -136,7 +141,7 @@ def main():
             pass
     except FileExistsError:
         pass
-    install_guest_guard(package, root)
+    install_guest_guard(package, root, bb("status")["dataDir"])
     print("Guest thread guard installed. Codex asks the owner to allow it once: the \"Codex hooks\" card in BB.")
     project = projects[0] if projects else bb(
         "project", "create", "--name", args.name, "--root", str(root),
