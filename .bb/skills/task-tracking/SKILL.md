@@ -9,9 +9,11 @@ description: Keep a task you were given until its result is checked and handed o
 
 Answer in the same turn when you can. Only a request that **waits** (for a person, a file, a decision), **has a deadline** or is **delegated** becomes a tracked task. Before opening one, check your subthreads (`bb thread list --parent-self`): a request with the same goal continues the open task, a finished one is reopened in its own subthread.
 
-Open it as a subthread of this conversation (`bb thread spawn --parent-self`). Its first message holds the conditions: expected result, how to check it is done, deadline if known, who asked and where statuses go (by default this chat or topic). Ask about the deadline only if it changes priority or promises; suggest a realistic one. Title the subthread with its state in plain words — «ждём ответа Георгия до 18:00», «готово, проверено». No codes.
+First run `bb status`: it shows this thread's and project's IDs used below. Open the task as a subthread of this conversation: `bb thread spawn --parent-self --project <project> --title "<state in plain words>" --prompt "<conditions>"`. Its first message holds the conditions: expected result, how to check it is done, deadline if known, who asked and where statuses go (by default this chat or topic). Ask about the deadline only if it changes priority or promises; suggest a realistic one. Title the subthread with its state in plain words — «ждём ответа Георгия до 18:00», «готово, проверено». No codes.
 
 The subthread is the task's whole state: its first message — conditions; its last status — what is done, what goes on, what is left, who we wait for and the next step; its journal — what was already sent. Read only it when you return to the task, not the whole conversation.
+
+Never promise a status, a reminder or a return you have not scheduled: create the schedule first, check it with `bb automation list --project <project>`, then tell the person when to expect it. If a command fails, read its error and run it again corrected.
 
 ## Returning to the task
 
