@@ -93,10 +93,16 @@ class GuestGuard(unittest.TestCase):
         no("bb automation delete auto_owner")
         no("bb plugin list")
 
-    def test_guest_schedules_are_off_by_default(self):
-        with open(os.path.join(os.path.dirname(self.hook), "guest-thread-guard.json"), "w") as f:
+    def test_guest_schedules_are_on_by_default_and_can_be_turned_off(self):
+        cfg = os.path.join(os.path.dirname(self.hook), "guest-thread-guard.json")
+        create = "bb automation create --project proj_team --name x --in 5m --target-thread thr_group --prompt p"
+        with open(cfg, "w") as f:
             json.dump({"dataDir": self.data}, f)
-        self.assertEqual(self.run_hook("s-group", {"command": "bb automation create --project proj_team --name x --in 5m --target-thread thr_group --prompt p"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": create}), 0)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb telegram-projects topic rename --topic x --name y"}), 0)
+        with open(cfg, "w") as f:
+            json.dump({"dataDir": self.data, "guestSchedules": False}, f)
+        self.assertEqual(self.run_hook("s-group", {"command": create}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "bb automation list --target-thread thr_group"}), 0)
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread spawn --parent-self --prompt x"}), 0)
 

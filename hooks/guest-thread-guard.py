@@ -255,7 +255,7 @@ def guest_bb_allowed(args, scope):
     if "--help" in args or "-h" in args or args[:1] == ["help"]:
         return True
     # The bridge itself checks where a guest conversation may send.
-    if args[:1] == ["status"] or head in (["voice", "transcribe"], ["telegram-projects", "search-history"], ["telegram-projects", "send"],
+    if args[:1] == ["status"] or head in (["voice", "transcribe"], ["telegram-projects", "search-history"], ["telegram-projects", "send"], ["telegram-projects", "topic"],
                                           ["skill", "list"], ["skill", "show"]):
         return True
     if len(head) == 2 and head[0] == "thread":
@@ -284,8 +284,8 @@ def guest_bb_allowed(args, scope):
         if project is not None and project != scope.project:
             return False
         target = flag(args, "--target-thread")
-        # Off by default until schedule results are delivered back to the group: "guestSchedules": true turns them on.
-        if head[1] in ("create", "resume", "run") and limit("guestSchedules", 0) != 1:
+        # The bridge delivers a schedule's result back to the topic or chat where it was set; "guestSchedules": false turns them off.
+        if head[1] in ("create", "resume", "run") and limit("guestSchedules", 1) != 1:
             return False
         if head[1] == "create" and scope.schedules() >= limit("maxSchedules", 5):
             return False
