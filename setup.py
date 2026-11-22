@@ -66,6 +66,8 @@ def main():
     parser.add_argument("--language", choices=("en", "ru"), default="en",
                         help="Telegram menu language for a newly installed bridge (default: en)")
     parser.add_argument("--yes", action="store_true", help="Approve installation of the displayed release sources")
+    parser.add_argument("--allow-guest-guard", action="store_true",
+                        help="Allow the guest thread guard in Codex now, without the BB interface (only this hook)")
     parser.add_argument("--workspace", type=Path, required=True,
                         help="Existing assistant project or a new private working directory")
     args = parser.parse_args()
@@ -142,7 +144,11 @@ def main():
     except FileExistsError:
         pass
     install_guest_guard(package, root, bb("status")["dataDir"])
-    print("Guest thread guard installed. Codex asks the owner to allow it once: the \"Codex hooks\" card in BB.")
+    if args.allow_guest_guard:
+        subprocess.run([sys.executable, str(package / "hooks" / "approve-guest-guard.py"), str(root)], check=True)
+        print("Guest thread guard installed and allowed in Codex.")
+    else:
+        print("Guest thread guard installed. Allow it once: the \"Codex hooks\" card in BB, or run setup.py again with --allow-guest-guard.")
     project = projects[0] if projects else bb(
         "project", "create", "--name", args.name, "--root", str(root),
         "--machine", args.machine
