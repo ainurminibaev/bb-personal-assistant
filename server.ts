@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pickOwnerReply, relayText } from "./owner-relay";
+import { refreshGuardCopies } from "./guard-refresh";
 
 export default async function personalAssistant(bb: BbPluginApi) {
   const settings = bb.settings.define({
@@ -35,6 +36,10 @@ export default async function personalAssistant(bb: BbPluginApi) {
   const here = dirname(fileURLToPath(import.meta.url));
   const guard = [join(here, "hooks", "guest-thread-guard.py"), join(here, "..", "hooks", "guest-thread-guard.py")]
     .find(path => existsSync(path)) ?? join(here, "hooks", "guest-thread-guard.py");
+  void bb.sdk.projects.list({}).then(projects => {
+    const roots = projects.flatMap(p => (p as { sources?: { path?: string }[] }).sources ?? []).flatMap(s => s.path ? [s.path] : []);
+    refreshGuardCopies(guard, roots);
+  }).catch(() => { /* an unreadable workspace keeps its copy; setup.py refreshes it too */ });
   const isOwnerThread = (threadId: string) => new Promise<boolean>(resolve =>
     execFile("python3", ["-I", guard, "--thread", threadId, bbDataDir()], { timeout: 20_000 },
       (error, stdout) => resolve(!error && stdout.trim() === "owner")));
