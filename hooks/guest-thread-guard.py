@@ -237,7 +237,8 @@ def limit(name, default):
 
 def guest_bb_allowed(args, scope):
     head = args[:2]
-    if args[:1] == ["status"] or head in (["voice", "transcribe"], ["telegram-projects", "search-history"],
+    # The bridge itself checks where a guest conversation may send.
+    if args[:1] == ["status"] or head in (["voice", "transcribe"], ["telegram-projects", "search-history"], ["telegram-projects", "send"],
                                           ["skill", "list"], ["skill", "show"]):
         return True
     if len(head) == 2 and head[0] == "thread":
