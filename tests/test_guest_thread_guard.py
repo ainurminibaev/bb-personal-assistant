@@ -45,6 +45,10 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("thr_group", {"command": "bb telegram-projects search-history срок"}), 0)
         self.assertEqual(self.run_hook("thr_group", {"file_path": "docs/plan.md"}), 0)
 
+    def test_a_guest_cannot_pose_as_another_thread(self):
+        self.assertEqual(self.run_hook("thr_group", {"command": "BB_THREAD_ID=thr_owner bb telegram-projects search-history x"}), 2)
+        self.assertEqual(self.run_hook("thr_group", {"command": "export BB_THREAD_ID=thr_owner; bb status"}), 2)
+
     def test_children_of_a_guest_are_guests(self):
         self.assertEqual(self.run_hook("thr_child", {"command": "bb thread list"}), 2)
 

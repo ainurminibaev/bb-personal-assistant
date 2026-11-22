@@ -120,6 +120,11 @@ def bb_allowed(args):
     return any(tuple(args[:len(prefix)]) == prefix for prefix in ALLOWED_BB)
 
 
+def overrides_identity(command):
+    """BB tools learn the calling conversation from BB_THREAD_ID; a guest may not pose as another thread."""
+    return bool(re.search(r"\bBB_(THREAD|PROJECT|ENVIRONMENT)_ID\b\s*=|\benv\b[^|;&]*\s-u\s*BB_|\bunset\s+BB_", command))
+
+
 def touches_data_dir(text, data_dir):
     if data_dir and data_dir.rstrip("/") in text:
         return True
@@ -143,7 +148,8 @@ def main():
     if not guest:
         return 0
     for command in commands_of(tool_input):
-        if any(not bb_allowed(args) for args in bb_calls(command)) or touches_data_dir(command, data_dir):
+        if (any(not bb_allowed(args) for args in bb_calls(command)) or touches_data_dir(command, data_dir)
+                or overrides_identity(command)):
             print(BLOCK_REASON, file=sys.stderr)
             return 2
     for path in paths_of(tool_input):
