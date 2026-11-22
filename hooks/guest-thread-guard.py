@@ -250,6 +250,9 @@ def limit(name, default):
 
 def guest_bb_allowed(args, scope):
     head = args[:2]
+    # Help only describes commands; it changes nothing.
+    if "--help" in args or "-h" in args or args[:1] == ["help"]:
+        return True
     # The bridge itself checks where a guest conversation may send.
     if args[:1] == ["status"] or head in (["voice", "transcribe"], ["telegram-projects", "search-history"], ["telegram-projects", "send"],
                                           ["skill", "list"], ["skill", "show"]):
@@ -264,6 +267,12 @@ def guest_bb_allowed(args, scope):
             return parent and not elsewhere and (project is None or project == scope.project)
         if head[1] in OWN_THREAD:
             targets = [a for a in positionals(args[2:]) if a.startswith("thr_")]
+            named = flag(args, "--thread")
+            if named:
+                targets.append(named)
+            # Without a thread ID the command acts on the calling thread itself.
+            if not targets and not positionals(args[2:]):
+                return True
             return bool(targets) and all(scope.owns(t) for t in targets)
         return False
     if len(head) == 2 and head[0] == "automation":

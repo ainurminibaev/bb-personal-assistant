@@ -66,6 +66,14 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-group", {"command": ["/usr/bin/bash", "-lc", "bb thread list"]}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "/usr/bin/bash -lc 'bb thread list'"}), 2)
 
+    def test_guest_may_read_help_and_its_own_thread(self):
+        for cmd in ("bb thread spawn --help", "bb thread show --json", "bb thread context --self --json",
+                    "bb skill list", "bb help"):
+            self.assertEqual(self.run_hook("s-group", {"command": cmd}), 0, cmd)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb thread show --thread thr_owner"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb thread list"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb thread spawn --prompt x"}), 2)
+
     def test_guest_uses_bb_within_its_own_reach(self):
         ok = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 0, c)
         no = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 2, c)
