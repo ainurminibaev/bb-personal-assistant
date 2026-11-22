@@ -82,6 +82,9 @@ switch_bot() {
     done
     rm -f "$input"
     setting telegramApiRoot "$URL"; setting telegramLocalRoot "$ROOT/data"
+    # Received files land on this machine: the bridge hands them only to threads running here.
+    local host; host=$(bb_as machine list 2>/dev/null | awk '$2=="server"{for(i=1;i<=NF;i++) if($i ~ /^host_/) print $i}' | head -1)
+    [ -n "$host" ] && setting telegramFileHostId "$host"
     echo "Bot @$username uses the local Telegram server."
     if [ -n "${opt[restart-unit]:-}" ]; then
       trap - EXIT; setting enabled "$WAS_ENABLED"; setting chatEnabled "$WAS_CHAT"
