@@ -25,8 +25,8 @@ test("coordinator rules apply only to the configured thread in its own project",
   const config = (projectId, threadId) => instructions({project: {id: projectId}, thread: {id: threadId}});
   assert.match(config(owner.projectId, owner.threadId).instructions, /projects\.md/);
   assert.deepEqual(config(owner.projectId, owner.threadId).skills, ["dispatch", "integrations"]);
-  assert.deepEqual(config(owner.projectId, "group"), {skills: [], tools: []});
-  assert.deepEqual(config("other", owner.threadId), {skills: [], tools: []});
+  assert.deepEqual(config(owner.projectId, "group"), {skills: [], tools: ["relay_owner_message"]});
+  assert.deepEqual(config("other", owner.threadId), {skills: [], tools: ["relay_owner_message"]});
 });
 
 test("work from a group cannot query personal task names through this command", async () => {

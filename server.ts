@@ -18,8 +18,9 @@ export default async function personalAssistant(bb: BbPluginApi) {
 
   bb.agents.configure(({project, thread}) =>
     matches(project.id, thread.id)
-      ? { instructions: policy, skills: ["dispatch", "integrations"], tools: [] }
-      : { skills: [], tools: [] }
+      ? { instructions: policy, skills: ["dispatch", "integrations"], tools: ["relay_owner_message"] }
+      // The relay tool checks the owner's conversation itself, by the guest thread guard's rule.
+      : { skills: [], tools: ["relay_owner_message"] }
   );
 
   // P20: pass the owner's own reply from this thread's BB journal to a worker thread.
