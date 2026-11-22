@@ -11,13 +11,19 @@ export type OwnerReply = { sequence: number; at: number; source: "bb" | "telegra
 const BRIDGE = "telegram-projects";
 const DAY = 24 * 3600 * 1000;
 const ms = (v: unknown) => typeof v === "number" ? v : Date.parse(String(v));
-const textOf = (data: any) => (Array.isArray(data?.input) ? data.input : [])
-  .filter((i: any) => i?.type === "text" && typeof i.text === "string").map((i: any) => i.text).join("\n").trim();
+const items = (data: any) => Array.isArray(data?.input) ? data.input : [];
+// Only what the person sees; hidden transport items are not the owner's words.
+const textOf = (data: any) => items(data)
+  .filter((i: any) => i?.type === "text" && typeof i.text === "string" && i.visibility !== "agent-only")
+  .map((i: any) => i.text).join("\n").trim();
+// The bridge also posts its own notices into the owner's thread; the owner's Telegram messages carry its reply route.
+const telegramOwnerMessage = (data: any) => items(data).some((i: any) =>
+  i?.visibility === "agent-only" && typeof i.text === "string" && i.text.startsWith("[bb-telegram-reply-route:"));
 
 export function ownerSource(data: any): "bb" | "telegram" | undefined {
   if (data?.initiator !== "user" || data?.senderThreadId) return;
   if (!data?.originPluginId) return "bb";
-  if (data.originPluginId === BRIDGE) return "telegram";
+  if (data.originPluginId === BRIDGE && telegramOwnerMessage(data)) return "telegram";
 }
 
 /** The owner reply to pass (the latest, or the one with this sequence) with the assistant's message it answers. */

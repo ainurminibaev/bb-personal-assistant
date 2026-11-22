@@ -9,7 +9,10 @@ const text = t => [{ type: "text", text: t }];
 
 test("BB records the source; only typed-in-BB and Telegram replies are the owner's", () => {
   assert.equal(ownerSource({ initiator: "user", input: [] }), "bb");
-  assert.equal(ownerSource({ initiator: "user", originPluginId: "telegram-projects" }), "telegram");
+  const route = { type: "text", visibility: "agent-only", text: "[bb-telegram-reply-route:abc]\nTransport metadata only" };
+  assert.equal(ownerSource({ initiator: "user", originPluginId: "telegram-projects", input: [...text("опубликуй"), route] }), "telegram");
+  assert.equal(ownerSource({ initiator: "user", originPluginId: "telegram-projects", input: text("Для итогового ответа проверь ход") }), undefined,
+    "the bridge's own notice in the owner's thread is not the owner's");
   assert.equal(ownerSource({ initiator: "user", originPluginId: "automations" }), undefined);
   assert.equal(ownerSource({ initiator: "user", senderThreadId: "thr_other1" }), undefined);
   assert.equal(ownerSource({ initiator: "agent" }), undefined);
@@ -33,4 +36,11 @@ test("another agent's or a plugin's text is never the owner's; old replies are r
   assert.equal(pickOwnerReply(events, NOW).error, "no_owner_reply_in_this_thread");
   assert.equal(pickOwnerReply([req(1, { initiator: "user", input: text("опубликуй") }, 2 * 86400)], NOW).error, "owner_reply_too_old");
   assert.equal(pickOwnerReply([req(1, { initiator: "user", input: text("опубликуй") })], NOW, 7).error, "not_an_owner_reply");
+});
+
+test("hidden transport items never become the owner's words", () => {
+  const route = { type: "text", visibility: "agent-only", text: "[bb-telegram-reply-route:abc]\nTransport metadata only" };
+  const r = pickOwnerReply([req(1, { initiator: "user", originPluginId: "telegram-projects", input: [...text("опубликуй выпуск 0.9.52"), route] })], NOW);
+  assert.equal(r.text, "опубликуй выпуск 0.9.52");
+  assert.equal(r.source, "telegram");
 });
