@@ -200,6 +200,15 @@ class Scope:
             current = row[0] if row else None
         return False
 
+    def schedules(self):
+        con = open_ro(os.path.join(self.data_dir, "plugins", "automations", "data.db")) if self.data_dir else None
+        rows = con.execute("select target_thread_id from automations where enabled=1").fetchall() if con else []
+        return sum(1 for (t,) in rows if t and self.owns(t))
+
+    def running_children(self):
+        rows = self.bb.execute("select id from threads where parent_thread_id=? and status='active'", (self.thread,)).fetchall() if self.bb else []
+        return len(rows)
+
     def owns_automation(self, automation):
         con = open_ro(os.path.join(self.data_dir, "plugins", "automations", "data.db")) if self.data_dir else None
         row = con.execute("select target_thread_id from automations where id=?", (automation,)).fetchone() if con else None
@@ -213,6 +222,17 @@ RUN_ELSEWHERE = ("--script", "--script-file", "--environment", "--new-environmen
                  "--interpreter", "--env-json", "--base-branch")
 
 
+def limit(name, default):
+    """Per-conversation limits, set next to the hook in guest-thread-guard.json."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guest-thread-guard.json")
+    try:
+        with open(path) as f:
+            value = json.load(f).get(name)
+        return value if isinstance(value, int) and value >= 0 else default
+    except (OSError, ValueError):
+        return default
+
+
 def guest_bb_allowed(args, scope):
     head = args[:2]
     if args[:1] == ["status"] or head in (["voice", "transcribe"], ["telegram-projects", "search-history"],
@@ -220,6 +240,8 @@ def guest_bb_allowed(args, scope):
         return True
     if len(head) == 2 and head[0] == "thread":
         if head[1] in ("spawn", "create"):
+            if scope.running_children() >= limit("maxRunningSubthreads", 3):
+                return False
             parent = "--parent-self" in args or scope.owns(flag(args, "--parent-thread") or "")
             project = flag(args, "--project")
             elsewhere = any(f in args or flag(args, f) for f in ELSEWHERE)
@@ -236,6 +258,8 @@ def guest_bb_allowed(args, scope):
         if project is not None and project != scope.project:
             return False
         target = flag(args, "--target-thread")
+        if head[1] == "create" and scope.schedules() >= limit("maxSchedules", 5):
+            return False
         if head[1] in ("create", "list"):
             return bool(target) and scope.owns(target)
         ids = positionals(args[2:])

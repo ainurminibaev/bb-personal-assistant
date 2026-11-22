@@ -22,16 +22,16 @@ class GuestGuard(unittest.TestCase):
         con.commit(); con.close()
         bb = sqlite3.connect(os.path.join(data, "bb.db"))
         bb.execute("create table events(thread_id text, provider_thread_id text)")
-        bb.execute("create table threads(id text primary key, parent_thread_id text, project_id text)")
+        bb.execute("create table threads(id text primary key, parent_thread_id text, project_id text, status text)")
         for thread, session, parent in [("thr_group", "s-group", None), ("thr_child", "s-child", "thr_group"),
                                         ("thr_owner", "s-owner", None), ("thr_ownertopic", "s-ownertopic", None), ("thr_ownergroup", "s-ownergroup", None)]:
             bb.execute("insert into events values(?,?)", (thread, session))
-            bb.execute("insert into threads values(?,?,?)", (thread, parent, "proj_team"))
+            bb.execute("insert into threads values(?,?,?,?)", (thread, parent, "proj_team", "idle"))
         bb.commit(); bb.close()
         os.makedirs(os.path.join(data, "plugins", "automations"))
         au = sqlite3.connect(os.path.join(data, "plugins", "automations", "data.db"))
-        au.execute("create table automations(id text primary key, target_thread_id text)")
-        au.executemany("insert into automations values(?,?)", [("auto_mine", "thr_group"), ("auto_owner", "thr_owner")])
+        au.execute("create table automations(id text primary key, target_thread_id text, enabled integer)")
+        au.executemany("insert into automations values(?,?,1)", [("auto_mine", "thr_group"), ("auto_owner", "thr_owner")])
         au.commit(); au.close()
         self.data = data
         hooks = os.path.join(self.dir, "hooks"); os.makedirs(hooks)
@@ -71,6 +71,12 @@ class GuestGuard(unittest.TestCase):
         no("bb automation create --project proj_team --name x --in 5m --target-thread thr_group --script 'rm -rf /'")
         no("bb automation delete auto_owner")
         no("bb plugin list")
+
+    def test_limits_per_conversation(self):
+        with open(os.path.join(os.path.dirname(self.hook), "guest-thread-guard.json"), "w") as f:
+            json.dump({"dataDir": self.data, "maxSchedules": 1, "maxRunningSubthreads": 0}, f)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb automation create --project proj_team --name x --in 5m --target-thread thr_group --prompt p"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb thread spawn --parent-self --prompt x"}), 2)
 
     def test_personal_assistant_guest_has_no_command_line_by_default(self):
         con = sqlite3.connect(os.path.join(self.data, "plugins", "telegram-projects", "data.db"))
