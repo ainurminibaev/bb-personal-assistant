@@ -228,6 +228,8 @@ def limit(name, default):
     try:
         with open(path) as f:
             value = json.load(f).get(name)
+        if isinstance(value, bool):
+            return int(value)
         return value if isinstance(value, int) and value >= 0 else default
     except (OSError, ValueError):
         return default
@@ -258,6 +260,9 @@ def guest_bb_allowed(args, scope):
         if project is not None and project != scope.project:
             return False
         target = flag(args, "--target-thread")
+        # Off by default until schedule results are delivered back to the group: "guestSchedules": true turns them on.
+        if head[1] in ("create", "resume", "run") and limit("guestSchedules", 0) != 1:
+            return False
         if head[1] == "create" and scope.schedules() >= limit("maxSchedules", 5):
             return False
         if head[1] in ("create", "list"):

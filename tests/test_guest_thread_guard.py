@@ -38,7 +38,7 @@ class GuestGuard(unittest.TestCase):
         self.hook = os.path.join(hooks, "guest-thread-guard.py")
         shutil.copy(HOOK, self.hook)
         with open(os.path.join(hooks, "guest-thread-guard.json"), "w") as f:
-            json.dump({"dataDir": data}, f)
+            json.dump({"dataDir": data, "guestSchedules": True}, f)
 
     def run_hook(self, session, tool_input, thread=None):
         env = {k: v for k, v in os.environ.items() if not k.startswith("BB_")}
@@ -72,9 +72,16 @@ class GuestGuard(unittest.TestCase):
         no("bb automation delete auto_owner")
         no("bb plugin list")
 
+    def test_guest_schedules_are_off_by_default(self):
+        with open(os.path.join(os.path.dirname(self.hook), "guest-thread-guard.json"), "w") as f:
+            json.dump({"dataDir": self.data}, f)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb automation create --project proj_team --name x --in 5m --target-thread thr_group --prompt p"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb automation list --target-thread thr_group"}), 0)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb thread spawn --parent-self --prompt x"}), 0)
+
     def test_limits_per_conversation(self):
         with open(os.path.join(os.path.dirname(self.hook), "guest-thread-guard.json"), "w") as f:
-            json.dump({"dataDir": self.data, "maxSchedules": 1, "maxRunningSubthreads": 0}, f)
+            json.dump({"dataDir": self.data, "guestSchedules": True, "maxSchedules": 1, "maxRunningSubthreads": 0}, f)
         self.assertEqual(self.run_hook("s-group", {"command": "bb automation create --project proj_team --name x --in 5m --target-thread thr_group --prompt p"}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread spawn --parent-self --prompt x"}), 2)
 
