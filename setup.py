@@ -28,6 +28,32 @@ def supports_coordinator_handoff(version):
     return stable_version(version) >= (0, 9, 21)
 
 
+GUARD = Path("hooks") / "guest-thread-guard.py"
+
+
+def install_guest_guard(package, root):
+    """Guest thread guard for Codex and Claude Code: threads with groups and other people keep
+    every tool but do not manage BB. Codex runs a new or changed hook only after the owner allows it."""
+    target = root / ".bb" / "hooks" / GUARD.name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source = (package / GUARD).read_bytes()
+    if not target.exists() or target.read_bytes() != source:
+        target.write_bytes(source)
+        target.chmod(0o755)
+    command = f"python3 {target}"
+    entry = {"matcher": "*", "hooks": [{"type": "command", "command": command, "timeout": 30}]}
+    for config in (root / ".codex" / "hooks.json", root / ".claude" / "settings.json"):
+        if config.is_symlink():
+            raise SystemExit(f"Review the linked {config} before setup.")
+        config.parent.mkdir(exist_ok=True)
+        data = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
+        hooks = data.setdefault("hooks", {}).setdefault("PreToolUse", [])
+        if not any(h.get("command") == command for group in hooks for h in group.get("hooks", [])):
+            hooks.append(entry)
+            config.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return target
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--machine", required=True, help="BB host ID of this folder")
@@ -110,6 +136,8 @@ def main():
             pass
     except FileExistsError:
         pass
+    install_guest_guard(package, root)
+    print("Guest thread guard installed. Codex asks the owner to allow it once: the \"Codex hooks\" card in BB.")
     project = projects[0] if projects else bb(
         "project", "create", "--name", args.name, "--root", str(root),
         "--machine", args.machine
