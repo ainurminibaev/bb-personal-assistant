@@ -209,6 +209,18 @@ function formatRun(r: RunResult, verbose: boolean): string {
   return [head, ...kept, ...(list.length ? ["кандидаты:", ...list] : []), ...(att.length ? ["нужен взгляд:", ...att] : [])].join("\n");
 }
 
+/** Digest of the running module file; "" when it cannot be read (then the source alone decides). */
+async function ownCode(): Promise<string> {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const { createHash } = await import("node:crypto");
+    const { fileURLToPath } = await import("node:url");
+    return createHash("sha256").update(await readFile(fileURLToPath(import.meta.url))).digest("hex").slice(0, 16);
+  } catch {
+    return "";
+  }
+}
+
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define({
     subthreadHours: { type: "string", label: "Срок для подтредов, часов", description: "Подтред и скрытая ветка без движения дольше срока могут уйти в архив, если работа закончена и итог забран.", default: "24" },
@@ -238,7 +250,7 @@ export default async function plugin(bb: BbPluginApi) {
   /** Identity of this installed copy; changes on reinstall and on every update. */
   async function installation(): Promise<string | null> {
     const source = await bb.sdk.plugins.getSource({ pluginId: bb.pluginId }).catch(() => null);
-    return installationKey(source as Parameters<typeof installationKey>[0]);
+    return installationKey(source as Parameters<typeof installationKey>[0], await ownCode());
   }
 
   // Daily, server-local time. The first scheduled run after every install,

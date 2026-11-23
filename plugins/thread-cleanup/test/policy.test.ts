@@ -127,6 +127,9 @@ test("first scheduled run after every install or update is dry, then the same in
   assert.equal(scheduledMode(false, v1, again).dry, true, "reinstall of the same version");
   assert.deepEqual(scheduledMode(false, v1, null), { dry: true, reason: "unknown installation", remember: null });
   assert.equal(scheduledMode(true, v1, v1).dry, true, "setting wins");
+  const sameSource = { installedAt: 1, resolved: "path:/x", history: [{ version: "aaa", activatedAt: 1 }] };
+  assert.notEqual(installationKey(sameSource, "code1"), installationKey(sameSource, "code2"), "changed code in the same folder");
+  assert.equal(installationKey(sameSource, "code1"), installationKey(sameSource, "code1"), "same code over itself: not new");
   assert.equal(installationKey(null), null);
   assert.equal(installationKey({ resolved: "x" }), null);
 });
