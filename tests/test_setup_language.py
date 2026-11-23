@@ -54,9 +54,13 @@ class SetupLanguageTest(unittest.TestCase):
 
                 argv = ["setup.py", "--workspace", str(Path(work) / "ws"), "--machine", "host", "--yes", *requested]
                 # Account tools (context-mode, skills, hooks) are tested in test_tools.py without a network.
+                browsers = []
                 with patch.object(sys, "argv", argv), patch.object(setup, "bb", cli), \
-                        patch.object(setup, "REGISTRY", PLUGINS):
+                        patch.object(setup, "REGISTRY", PLUGINS), \
+                        patch.object(setup.tools, "install_browser", lambda tool, data: browsers.append(data)):
                     setup.main()
+                    # The browser is put into the data folder of this BB, also when the plugin came with BB.
+                    self.assertEqual(browsers[-1], Path(work) / "bb-data")
                     self.assertIn("knowledge-base", plugins)
                     self.assertIn("image-gen", plugins)  # general plugins of the list come with the first run
                     custom = Path(work) / "ws" / "local" / "agents-custom.md"

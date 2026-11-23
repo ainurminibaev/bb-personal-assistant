@@ -101,6 +101,19 @@ tools:
     plugin_id: browser-automation
     installs: [assistant, employee, agents]
     login: входы на сайты у каждого агента свои, общих нет
+    # Сам браузер плагин ищет в <папка данных BB>/plugins/browser-automation/host-data/runtime/chrome.
+    # Установщик кладёт туда официальную сборку Chrome for Testing (Google; sha256 закреплён, md5 сверен с
+    # x-goog-hash хранилища) и недостающие библиотеки из пакетов Ubuntu (apt-get download, в систему не ставятся).
+    # «Стоит» — только если браузер запускается.
+    runtime:
+      chrome_for_testing:
+        version: 158.0.8127.36
+        url: https://storage.googleapis.com/chrome-for-testing-public/{version}/linux64/chrome-linux64.zip
+        sha256: dba9cc838e1ce269c33ea68170881127bd15d078fc3ca5891c90802819a4d7c7
+      libraries: [libnss3, libnspr4, libatk1.0-0t64|libatk1.0-0, libatk-bridge2.0-0t64|libatk-bridge2.0-0,
+                  libcups2t64|libcups2, libatspi2.0-0t64|libatspi2.0-0, libxcomposite1, libxdamage1, libxext6,
+                  libxfixes3, libxrandr2, libxkbcommon0, libgbm1, libdrm2, libpango-1.0-0, libcairo2,
+                  libasound2t64|libasound2, libx11-6, libxcb1, libglib2.0-0t64|libglib2.0-0, libdbus-1-3, libexpat1]
 
   speech:
     what: Расшифровка речи каскадом — выбор исполнителя, русская и татарская модели, Codex; одна служба на сервер

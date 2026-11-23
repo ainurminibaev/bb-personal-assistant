@@ -332,13 +332,186 @@ def _hook_state(name, tool, level, account):
                 RERUN)
 
 
-def tool_state(name, tool, decision, account, plugins, bb_home, errors):
+# --- browser runtime of the browser-automation plugin -----------------------------------------------------
+# The plugin looks for <BB data dir>/plugins/browser-automation/host-data/runtime/chrome first (an executable;
+# a link or a wrapper script will do), then google-chrome, google-chrome-stable, chromium, chromium-browser on
+# PATH. Installed means: that executable starts. A file that cannot load its libraries is not a browser.
+
+BROWSER_HOST_DATA = Path("plugins") / "browser-automation" / "host-data"
+BROWSER_NAMES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
+
+
+def bb_data_dir(bb):
+    """Data folder of the BB the plugins belong to (for the agents' BB: of its own account)."""
+    data = (bb("status") or {}).get("dataDir") if bb else None
+    return Path(data) if data else None
+
+
+def find_browser(data_dir):
+    """The executable the plugin would launch, or None."""
+    if data_dir:
+        link = data_dir / BROWSER_HOST_DATA / "runtime" / "chrome"
+        if os.access(link, os.X_OK) and link.resolve().is_file():
+            return link
+    for name in BROWSER_NAMES:
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    return None
+
+
+def browser_starts(path, timeout=60):
+    """(True, version) when the browser runs headless, else (False, the loader's or browser's own words)."""
+    try:
+        done = subprocess.run([str(path), "--headless=new", "--no-sandbox", "--version"], text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, _err(error)
+    if done.returncode == 0 and done.stdout.strip():
+        return True, done.stdout.strip()
+    missing = sorted(set(re.findall(r"(lib[\w.+-]+\.so[\w.]*)", done.stderr)))
+    return False, ("missing libraries: " + ", ".join(missing)) if missing else (done.stderr.strip()[:200] or f"exit {done.returncode}")
+
+
+def _browser_state(name, tool, level, data_dir):
+    path = find_browser(data_dir)
+    if not path:
+        return _row(name, tool, level, "needs_setup", "no browser on this server", RERUN)
+    ok, said = browser_starts(path)
+    if not ok:
+        return _row(name, tool, level, "needs_setup", f"the browser does not start: {said}", RERUN)
+    return None
+
+
+def _sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _apt_packages(wanted):
+    """Packages to bring next to the browser: the wanted ones (first known alternative) and what they need,
+    except what the system already has. Nothing is installed into the system."""
+    def known(name):
+        return subprocess.run(["apt-cache", "show", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    roots = []
+    for spec in wanted:
+        choice = next((n for n in spec.split("|") if known(n)), None)
+        if choice:
+            roots.append(choice)
+    if not roots:
+        return []
+    deps = subprocess.run(["apt-cache", "depends", "--recurse", "--no-recommends", "--no-suggests", "--no-conflicts",
+                           "--no-breaks", "--no-replaces", "--no-enhances", *roots],
+                          text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+    names = {l.strip() for l in deps.splitlines() if l and not l.startswith(" ") and not l.startswith("<")}
+    def installed(n):
+        q = subprocess.run(["dpkg-query", "-W", "-f=${Status}", n], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        return "install ok installed" in q.stdout
+    # Only libraries: the dependency tree also offers fonts and tools the headless browser does not load.
+    return sorted(n for n in names | set(roots) if n.startswith("lib") and not installed(n))
+
+
+def install_browser(tool, data_dir, fetch=None):
+    """Put the pinned Chrome for Testing and the libraries it lacks into the plugin's data folder, behind
+    runtime/chrome. A browser that already starts there is kept. Returns an error text or None."""
+    import platform
+    runtime_spec = tool.get("runtime") or {}
+    cft = runtime_spec.get("chrome_for_testing")
+    if not cft or not data_dir:
+        return None
+    current = find_browser(data_dir)
+    if current and browser_starts(current)[0]:
+        return None
+    if platform.system() != "Linux" or platform.machine() not in ("x86_64", "AMD64"):
+        return "the pinned browser build is for Linux x86-64 only; install Chrome on this host"
+    runtime = data_dir / BROWSER_HOST_DATA / "runtime"
+    home = runtime / "chrome-for-testing" / cft["version"]
+    runtime.mkdir(parents=True, exist_ok=True)
+    owner = runtime.parent.stat()
+    with tempfile.TemporaryDirectory(dir=runtime) as tmp:
+        tmp = Path(tmp)
+        archive = tmp / "chrome-linux64.zip"
+        url = cft["url"].format(version=cft["version"])
+        try:
+            (fetch or _download)(url, archive)
+        except Exception as error:
+            return f"download of {url} failed: {_err(error)}"
+        if _sha256(archive) != cft["sha256"]:
+            return f"checksum of {url} does not match the pinned one; nothing installed"
+        _unzip(archive, tmp / "unpacked")
+        libs = tmp / "unpacked" / "libs"
+        libs.mkdir()
+        packages = _apt_packages(runtime_spec.get("libraries", []))
+        if packages:
+            debs = tmp / "debs"
+            debs.mkdir()
+            got = subprocess.run(["apt-get", "download", *packages], cwd=debs, text=True,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if got.returncode != 0:
+                return f"apt-get download failed: {got.stderr.strip()[:200]}"
+            for deb in debs.glob("*.deb"):
+                subprocess.run(["dpkg-deb", "-x", str(deb), str(tmp / "unpacked" / "root")], check=True)
+            for lib in (tmp / "unpacked" / "root").glob("**/*.so*"):
+                if lib.is_file() or lib.is_symlink():
+                    target = libs / lib.name
+                    if not target.exists():
+                        shutil.copy2(lib, target, follow_symlinks=True)
+            shutil.rmtree(tmp / "unpacked" / "root", ignore_errors=True)
+        if home.exists():
+            shutil.rmtree(home)
+        home.parent.mkdir(parents=True, exist_ok=True)
+        (tmp / "unpacked").rename(home)
+    binary = home / "chrome-linux64" / "chrome"
+    wrapper = home / "chrome"
+    wrapper.write_text("#!/bin/sh\n# Chrome for Testing with its own libraries; put by the platform installer.\n"
+                       f'export LD_LIBRARY_PATH="{home / "libs"}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}"\n'
+                       f'exec "{binary}" "$@"\n')
+    wrapper.chmod(0o755)
+    ok, said = browser_starts(wrapper)
+    if not ok:
+        return f"the browser was put in place but does not start: {said}"
+    link = runtime / "chrome"
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(wrapper)
+    for path in [runtime, *runtime.rglob("*")]:
+        try:
+            os.lchown(path, owner.st_uid, owner.st_gid)
+        except PermissionError:
+            pass
+    return None
+
+
+def _unzip(archive, target):
+    """Unpack keeping the executable bits (zipfile alone drops them)."""
+    import zipfile
+    with zipfile.ZipFile(archive) as z:
+        for info in z.infolist():
+            path = Path(z.extract(info, target))
+            mode = info.external_attr >> 16
+            if mode and not info.is_dir():
+                path.chmod(mode & 0o777)
+
+
+def _download(url, path):
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=600) as answer, open(path, "wb") as out:
+        shutil.copyfileobj(answer, out)
+
+
+def tool_state(name, tool, decision, account, plugins, bb_home, errors, data_dir=None):
     selected, level, reason = decision
     if not selected:
         return _row(name, tool, level, "excluded", reason)
     try:
         if tool["kind"] == "plugin":
             row = _plugin_state(name, tool, level, plugins, bb_home, errors)
+            if row["state"] == "installed" and tool.get("runtime", {}).get("chrome_for_testing"):
+                row = _browser_state(name, tool, level, data_dir) or row
         elif tool["kind"] == "service":
             row = _service_state(name, tool, level, account)
         elif tool["kind"] == "npm":
@@ -368,7 +541,7 @@ def install_tool(name, tool, account, plugins, bb, cache, source=None):
         return None  # one per server, the services installer puts it; the state says what is missing
     if kind == "plugin":
         if plugin_id(name, tool) in plugins:
-            return None
+            return install_browser(tool, bb_data_dir(bb)) if tool.get("runtime") else None
         args = ["plugin", "install", source or tool["source"]]
         if tool.get("subdirectory") and not source:
             args += ["--subdirectory", tool["subdirectory"]]
@@ -378,7 +551,7 @@ def install_tool(name, tool, account, plugins, bb, cache, source=None):
             bb(*args, "--yes")
         except subprocess.CalledProcessError as error:
             return f"bb plugin install failed: {_err(error)} (is the source readable from this server?)"
-        return None
+        return install_browser(tool, bb_data_dir(bb)) if tool.get("runtime") else None
     if kind == "npm":
         package = f"{tool['package']}@{tool['version']}"
         binary = account.which(tool["package"])
@@ -558,8 +731,8 @@ def print_report(data, stream=sys.stdout):
         print(f"  ! {line}", file=stream)
 
 
-def states(registry, decisions, account, plugins, bb_home, errors, root=None, servers=None, mcp_errors=None):
-    rows = [tool_state(n, t, decisions[n], account, plugins, bb_home, errors) for n, t in registry.items()]
+def states(registry, decisions, account, plugins, bb_home, errors, root=None, servers=None, mcp_errors=None, data_dir=None):
+    rows = [tool_state(n, t, decisions[n], account, plugins, bb_home, errors, data_dir) for n, t in registry.items()]
     if root is not None and servers:
         rows += mcp_state(root, servers, mcp_errors or {})
     return rows
@@ -639,7 +812,7 @@ def main(argv=None):
         if not bb:
             problems.append("BB plugins are not checked: pass --bb-user, --bb-cli and --bb-url of the agents' BB")
         errors = read_errors(state_file)["tools"]
-        rows = states(registry, decisions, account, plugins, bb_home, errors)
+        rows = states(registry, decisions, account, plugins, bb_home, errors, data_dir=bb_data_dir(bb) if bb else None)
         if not bb:
             rows = [r for r in rows if r["kind"] != "plugin" or r["state"] == "excluded"] + [
                 _row(n, t, decisions[n][1], "error", "the agents' BB was not given", "pass --bb-user, --bb-cli, --bb-url")
@@ -659,7 +832,7 @@ def main(argv=None):
         account = Account()
         errors = read_errors(root / STATE_FILE)
         rows = states(registry, decisions, account, plugin_list(bb), account.home, errors["tools"],
-                      root, servers, errors["mcp"])
+                      root, servers, errors["mcp"], bb_data_dir(bb))
         data = report(kind, rows, problems + more + mcp_problems, name)
     if args.json:
         json.dump(data, sys.stdout, ensure_ascii=False, indent=2)

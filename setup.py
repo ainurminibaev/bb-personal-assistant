@@ -258,6 +258,16 @@ def main():
                 tool_errors[name] = error
     for folder in cache.values():
         shutil.rmtree(folder, ignore_errors=True)
+    # A plugin that needs a program on the host (the browser): put it next to the plugin, also when the
+    # plugin itself was already there (browser-automation comes with BB).
+    data_dir = tools.bb_data_dir(bb)
+    for name, tool in REGISTRY.items():
+        if tool.get("runtime") and decisions[name][0] and name not in tool_errors:
+            print(f"{name}: checking the browser on this server (first time downloads it, a few minutes)", flush=True)
+            error = tools.install_browser(tool, data_dir)
+            if error:
+                print(f"{name}: {error}. Setup goes on; the tools list at the end says what to do.", flush=True)
+                tool_errors[name] = error
     servers, mcp_problems = tools.mcp_servers(description, employee, args.employee) if clone is not None else ({}, [])
     mcp_errors = tools.write_mcp(root, servers) if clone is not None else {}
     tools.save_errors(root / tools.STATE_FILE, tool_errors, mcp_errors)
@@ -271,7 +281,7 @@ def main():
         if organization.not_compared(employee):
             print("  Not compared by this version: " + ", ".join(organization.not_compared(employee)) + ".")
     rows = tools.states(REGISTRY, decisions, account, {p["id"]: p for p in bb("plugin", "list")["plugins"]},
-                        account.home, tool_errors, root, servers, mcp_errors)
+                        account.home, tool_errors, root, servers, mcp_errors, data_dir)
     tools.print_report(tools.report(args.kind, rows, tool_problems + mcp_problems, args.employee))
     print("The same list later: python3 setup.py tools status [--json] --workspace " + str(root))
     status = bb("plugin", "rpc", "call", "telegram-projects", "status")

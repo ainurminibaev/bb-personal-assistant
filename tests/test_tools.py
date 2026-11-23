@@ -148,10 +148,49 @@ class States(unittest.TestCase):
         self.assertEqual(self.state("image-gen", disabled)["action"], "bb plugin enable image-gen")
         self.assertEqual(self.state("image-gen", decision=(False, "organization", "excluded"))["state"], "excluded")
 
-    def test_plugin_called_otherwise(self):
-        self.assertEqual(self.state("browser")["state"], "needs_setup")
+    def browser(self, data_dir, script=None):
+        """runtime/chrome in a fake BB data folder: a script standing in for the browser."""
+        runtime = data_dir / tools.BROWSER_HOST_DATA / "runtime"
+        runtime.mkdir(parents=True, exist_ok=True)
+        if script is not None:
+            (runtime / "chrome").write_text("#!/bin/sh\n" + script)
+            (runtime / "chrome").chmod(0o755)
+        return runtime
+
+    def browser_state(self, plugins, data_dir):
+        with patch.object(tools, "BROWSER_NAMES", ()):
+            return tools.tool_state("browser", REGISTRY["browser"], (True, "platform", ""), self.account,
+                                    plugins, self.home, {}, data_dir)
+
+    def test_plugin_called_otherwise_and_its_browser_must_start(self):
         running = {"browser-automation": {"id": "browser-automation", "enabled": True}}
-        self.assertEqual(self.state("browser", running)["state"], "installed")
+        data = self.home / "bb-data"
+        self.assertEqual(self.browser_state({}, data)["state"], "needs_setup")  # no plugin
+        row = self.browser_state(running, data)
+        self.assertEqual((row["state"], row["reason"]), ("needs_setup", "no browser on this server"))
+        self.browser(data, "echo 'chrome: error while loading shared libraries: libnss3.so: cannot open' >&2; exit 127\n")
+        row = self.browser_state(running, data)
+        self.assertEqual(row["state"], "needs_setup")
+        self.assertIn("missing libraries: libnss3.so", row["reason"])
+        self.browser(data, "echo 'Google Chrome for Testing 158.0.8127.36'\n")
+        self.assertEqual(self.browser_state(running, data)["state"], "installed")
+
+    def test_browser_install_checks_the_sum_and_keeps_a_working_browser(self):
+        tool = REGISTRY["browser"]
+        data = self.home / "bb-data"
+        self.browser(data)
+        def fetch(url, path):
+            self.assertIn(tool["runtime"]["chrome_for_testing"]["version"], url)
+            Path(path).write_bytes(b"not the pinned archive")
+        with patch.object(tools, "BROWSER_NAMES", ()), patch("platform.machine", return_value="x86_64"), \
+                patch("platform.system", return_value="Linux"):
+            error = tools.install_browser(tool, data, fetch=fetch)
+            self.assertIn("checksum", error)
+            self.assertFalse((data / tools.BROWSER_HOST_DATA / "runtime" / "chrome").exists())
+            self.assertFalse((data / tools.BROWSER_HOST_DATA / "runtime" / "chrome-for-testing").exists())
+            self.browser(data, "echo 'Chromium 141'\n")  # one already put by hand (another build) is recognised
+            self.assertIsNone(tools.install_browser(tool, data, fetch=lambda *a: self.fail("downloaded again")))
+        self.assertIsNone(tools.install_browser({"kind": "plugin"}, data))  # a line without a runtime
 
     def test_skill_and_hook(self):
         self.assertEqual(self.state("agent-compat")["state"], "needs_setup")
