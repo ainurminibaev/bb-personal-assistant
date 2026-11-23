@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { render, clean } from "../tools-status.ts";
+import { render, clean, toolsReport } from "../tools-status.ts";
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const report = {
   tools: [
@@ -28,4 +31,19 @@ test("guest view: only what a guest can apply, accesses by name and purpose", ()
 
 test("long tokens and paths are cut", () => {
   assert.equal(clean("key abcdefghijklmnopqrstuvwxyz0123456789ABCD in /home/a/b"), "key … in …");
+});
+
+test("a report made before this plugin version was loaded is checked again; a fresh one is read as is", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "tools-"));
+  mkdirSync(join(folder, "local"));
+  const file = join(folder, "local", "tools-report.json");
+  writeFileSync(file, JSON.stringify({ tools: [{ id: "speech", state: "installed" }] }));
+  utimesSync(file, new Date(0), new Date(0));                   // made long before the update
+  let refreshed = 0;
+  const refresh = async () => { refreshed++; writeFileSync(file, JSON.stringify({ tools: [{ id: "pdf", state: "installed" }] })); };
+  const first = await toolsReport(folder, false, refresh);
+  assert.equal(refreshed, 1);
+  assert.match(first.stdout, /pdf: работает/);
+  await toolsReport(folder, false, refresh);                     // now fresh: no second check
+  assert.equal(refreshed, 1);
 });
