@@ -231,6 +231,8 @@ class Base:
         self.assertEqual(done.returncode, 1)
         self.assertIn("SITE_PASSWORD found in a.txt", done.stdout)
         self.assertNotIn(CANARY, done.stdout + done.stderr)
+        staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=repo, capture_output=True, text=True)
+        self.assertEqual(staged.stdout, "", "the leaking file is taken out of the commit")
 
     def test_grant_to_named_and_receive(self):
         to = self.tmp / "to.recipients"
@@ -250,6 +252,12 @@ class Base:
         # not named: cannot take it
         done = self.call(self.beta, "receive", str(out))
         self.assertNotEqual(done.returncode, 0)
+        self.assertIn("not granted to this account", done.stderr)
+        fresh = dict(self.beta["env"], VALLIS_AGE_KEY=str(self.tmp / "none.key"),
+                     VALLIS_SECRETS_DIR=str(self.tmp / "none-store"))
+        done = self.call(fresh, "receive", str(out))
+        self.assertIn("run vallis-secret init", done.stderr)
+        self.assertNotIn("Traceback", done.stderr)
         self.assertFalse((self.store(self.beta) / "org" / "TASKS_TOKEN.json").exists())
         # an own key is not an organization key
         self.put_canary(self.beta, "OWN_KEY")

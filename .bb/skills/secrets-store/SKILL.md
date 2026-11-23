@@ -1,6 +1,6 @@
 ---
 name: secrets-store
-description: Keep and use your own passwords, API keys and logins in the platform's credentials store (vallis-secret) without ever seeing or printing the values — after you register an account or mailbox, when a person hands you a key, when a command needs a key, or to see what credentials you have.
+description: Keep and use your own passwords, API keys and logins in the platform's credentials store (vallis-secret) without ever seeing or printing the values — after you register an account or mailbox, when a person hands you a key, when a command needs a key. Also whenever someone asks what accesses, accounts, logins or keys you have — answer from `vallis-secret list`.
 ---
 
 # Your credentials store
@@ -10,6 +10,9 @@ or one a person handed you — goes into your store with `vallis-secret`. The st
 own key and the administrator's, outside any repository. Organization keys meant for you are already there.
 
 ## Rules
+
+- **Asked what accesses, accounts, logins or keys you have?** Run `vallis-secret list` first and answer with its
+  names and purposes (never values), then add the connections you know of. Do not answer from memory.
 
 - **Never print a value.** No `cat`, `echo`, `env`, `printenv` of a secret, no value in chat, Telegram, a file
   in a repository, a commit, a thread message or a command argument. Use it through `run` or `file` only.

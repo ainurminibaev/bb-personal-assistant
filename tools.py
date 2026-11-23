@@ -390,8 +390,9 @@ def _cli_state(name, tool, level, account):
     program = _cli_name(tool)
     if not account.which(program):
         return _row(name, tool, level, "needs_setup", f"{program} is not on the PATH of {account.name}", RERUN)
+    key = account.home / ".config" / "vallis" / "age.key"
     missing = [p for p in tool.get("requires", []) if not account.which(p)]
-    if missing:
+    if missing and not key.is_file():  # age-keygen makes the account's key; afterwards sops alone does the work
         return _row(name, tool, level, "needs_setup", f"not installed: {', '.join(missing)}",
                     "apt-get install age (as root), then " + RERUN)
     missing = [p for p in tool.get("download", {}) if not account.which(p)]
@@ -403,7 +404,6 @@ def _cli_state(name, tool, level, account):
     except (ValueError, KeyError, TypeError):
         return _row(name, tool, level, "needs_setup", f"{program} list: {(listed.stderr or listed.stdout).strip()[-200:]}",
                     f"{program} init, or {RERUN}")
-    key = account.home / ".config" / "vallis" / "age.key"
     if not key.is_file() and not os.environ.get("VALLIS_AGE_KEY"):
         return _row(name, tool, level, "needs_setup", "no age key of the account", f"{program} init")
     return _row(name, tool, level, "installed", f"keys in the store: {count}")
@@ -769,7 +769,10 @@ def install_cli(tool, account, admins=()):
 
 LEAK_CHECK = """#!/bin/sh
 # vallis: values of the credentials store never go into a commit (managed by setup.py)
-command -v vallis-secret >/dev/null 2>&1 || exit 0
+if ! command -v vallis-secret >/dev/null 2>&1; then
+  echo "vallis: vallis-secret is not on the PATH here, the commit is not checked for stored values" >&2
+  exit 0
+fi
 exec vallis-secret leaks --git-staged
 """
 

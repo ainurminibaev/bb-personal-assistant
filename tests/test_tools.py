@@ -336,6 +336,11 @@ class Secrets(unittest.TestCase):
             self.assertTrue((bin_dir / "vallis-secret").is_file() and (bin_dir / "sops").is_file())
             self.assertIn("age1qqq", (home / ".config/vallis/admin.recipients").read_text())
             (home / ".config/vallis/admin.recipients").unlink()
+            # once the account has its key, age is not needed to work: the state does not ask for it
+            no_age = self.account(home, bin_dir)
+            no_age.which = lambda p, w=account.which: None if p in ("age", "age-keygen") else w(p)
+            row = tools.tool_state("secrets-store", tool, (True, "platform", ""), no_age, {}, home, {})
+            self.assertEqual(row["state"], "installed", row)
             row = tools.tool_state("secrets-store", tool, (True, "platform", ""), account, {}, home, {})
             self.assertEqual((row["state"], row["reason"]), ("installed", "keys in the store: 0"))
             put = account.run("vallis-secret", "put", "SITE_KEY", "--generate", "--what", "сайт")
