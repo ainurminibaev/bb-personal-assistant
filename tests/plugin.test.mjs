@@ -2,21 +2,44 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import plugin from "../dist/server.js";
 
-async function load(binding) {
-  let command, instructions, changed;
+// The bridge as other plugins see it: its settings and its status (the private chat is topic 0).
+function bridge({kind = "assistant", owner = "assistant-main", off = false} = {}) {
+  const state = {kind, owner, off, calls: 0};
+  state.plugins = {
+    getSettings: async ({pluginId}) => {
+      if (state.off || pluginId !== "telegram-projects") throw Error("plugin_not_found");
+      return {ok: true, values: {installKind: state.kind}};
+    },
+    callRpc: async ({pluginId, method, outputSchema}) => {
+      state.calls++;
+      if (state.off || pluginId !== "telegram-projects" || method !== "status") throw Error("plugin_not_found");
+      return outputSchema.parse({chatBindings: [{topicId: 5, threadId: "group-topic"},
+        ...(state.owner ? [{topicId: 0, threadId: state.owner, projectId: "personal"}] : [])]});
+    },
+  };
+  return state;
+}
+
+const settle = () => new Promise(resolve => setTimeout(resolve, 10));
+
+async function load(binding, telegram = bridge()) {
+  let command, instructions, changed, contributed;
   const queries = [];
   await plugin({
     settings: { define: () => ({ get: async () => binding, onChange: fn => { changed = fn; } }) },
-    agents: { configure: callback => { instructions = callback; }, registerTool: () => {} },
+    agents: { configure: callback => { instructions = callback; }, registerTool: () => {},
+              contributeInstructions: provider => { contributed = provider; } },
     storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => [{ name: "main", file: "/data/plugins/personal-assistant/data.db" }], get() {}, run() {} }) }) },
     cli: { register: callback => { command = callback; } },
-    sdk: { threads: { list: async query => {
+    sdk: { plugins: telegram.plugins, threads: { list: async query => {
       queries.push(query);
       return query.threadIds ? [{id: "owner", projectId: "personal"}] :
         [{id: "child", title: "PDF", status: "active"}];
     } } },
   });
-  return { command, instructions, queries, changeBinding: next => changed(next) };
+  await settle();
+  return { command, instructions, queries, changeBinding: next => changed(next),
+           contact: threadId => contributed({threadId, projectId: "any"}) };
 }
 
 test("coordinator rules apply only to the configured thread in its own project", async () => {
@@ -61,4 +84,27 @@ test("a settings change transfers rules and task queries without a plugin reload
   assert.equal((await command.run(["work"], next)).exitCode, 0);
   assert.equal(queries.at(-1).parentThreadId, "owner");
   assert.equal((await command.run(["doctor"], {})).exitCode, 0);
+});
+
+test("an assistant installation tells every other thread the active assistant conversation", async () => {
+  const telegram = bridge();
+  const { contact, command } = await load({projectId: "personal", threadId: "owner"}, telegram);
+  const text = contact("new-thread-of-another-project");
+  assert.match(text, /bb thread tell assistant-main/);
+  assert.match(text, /Владельцу в Telegram от/);
+  assert.equal(contact("assistant-main"), null); // the assistant itself needs no detour
+  telegram.owner = "assistant-reserve";            // the pair switched to the reserve thread
+  contact("x"); await settle();
+  assert.match(contact("y"), /bb thread tell assistant-reserve/);
+  assert.equal((await command.run(["owner-thread"], {})).stdout, "assistant-reserve");
+});
+
+test("no instruction for an employee, without the bridge, or when switched off", async () => {
+  for (const telegram of [bridge({kind: "employee"}), bridge({off: true}), bridge({owner: null})]) {
+    const { contact, command } = await load({}, telegram);
+    assert.equal(contact("t"), null);
+    assert.equal((await command.run(["owner-thread"], {})).exitCode, 1);
+  }
+  const { contact } = await load({ownerContact: false});
+  assert.equal(contact("t"), null);
 });

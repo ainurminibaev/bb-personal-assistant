@@ -17,5 +17,8 @@
       "icon": "MessageSquare"
     }
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "zod": "^4.0.0"
+  }
 }

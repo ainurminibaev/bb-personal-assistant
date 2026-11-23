@@ -4,17 +4,23 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { refreshGuardCopies } from "./guard-refresh";
+import { ownerContact } from "./owner-contact";
 
 export default async function personalAssistant(bb: BbPluginApi) {
   const settings = bb.settings.define({
     projectId: { type: "string", label: "Personal assistant project ID", default: "" },
     threadId: { type: "string", label: "Personal coordinator thread ID", default: "" },
+    ownerContact: { type: "boolean", label: "Tell every thread of this BB how to reach the owner through the assistant (assistant installation only)", default: true },
   });
   let binding = await settings.get();
   settings.onChange(next => { binding = next; });
   const matches = (project?: string, thread?: string) =>
     Boolean(binding.projectId && binding.threadId &&
       binding.projectId === project && binding.threadId === thread);
+
+  // An assistant installation tells every thread how to reach the owner; an employee and the agents' BB do not.
+  const contact = ownerContact(bb, () => binding.ownerContact !== false);
+  bb.agents.contributeInstructions(({threadId}) => contact.instructions(threadId));
 
   bb.agents.configure(({project, thread}) =>
     matches(project.id, thread.id)
@@ -37,10 +43,17 @@ export default async function personalAssistant(bb: BbPluginApi) {
     commands: [
       { name: "doctor", usage: "bb personal-assistant doctor", summary: "Check the configured coordinator thread and project." },
       { name: "work", usage: "bb personal-assistant work", summary: "List open child tasks from the personal coordinator." },
+      { name: "owner-thread", usage: "bb personal-assistant owner-thread", summary: "The assistant conversation that reaches the owner in Telegram now." },
     ],
     async run(argv, ctx) {
-      if (argv.length !== 1 || !["doctor", "work"].includes(argv[0]))
-        return { exitCode: 2, stderr: "Usage: bb personal-assistant doctor | work" };
+      if (argv.length !== 1 || !["doctor", "work", "owner-thread"].includes(argv[0]))
+        return { exitCode: 2, stderr: "Usage: bb personal-assistant doctor | work | owner-thread" };
+      if (argv[0] === "owner-thread") {
+        const id = await contact.refresh();
+        return id ? { exitCode: 0, stdout: id }
+          : { exitCode: 1, stderr: "No assistant conversation reaches the owner here: not an assistant installation, "
+              + "the bridge is off, the private chat is not paired, or ownerContact is off." };
+      }
       if (!binding.projectId || !binding.threadId)
         return { exitCode: 1, stderr: "Set projectId and threadId in the plugin settings." };
       if (argv[0] === "doctor") {
