@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /**
  * `bb personal-assistant tools` (С43): what this agent can use, from the installer's last check
- * (`.bb/tools-report.json` in the project folder). Names, states and reasons in words — no paths, addresses or keys.
+ * (`local/tools-report.json` in the project folder, next to its state file). Names, states and reasons in words — no paths, addresses or keys.
  * A guest conversation sees only what it can apply there (`--guest`, enforced by the guest thread guard).
  */
 type Row = { id: string; state: string; reason?: string; action?: string; level?: string };
@@ -51,7 +51,7 @@ export function render(report: Report, guest: boolean, age?: string) {
 
 export async function toolsReport(folder: string | undefined, guest: boolean) {
   if (!folder) return { exitCode: 1, stderr: "No project folder for this thread." };
-  const path = join(folder, ".bb", "tools-report.json");
+  const path = join(folder, "local", "tools-report.json");
   try {
     const [text, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
     const age = info.mtime.toISOString().slice(0, 16).replace("T", " ") + " UTC";

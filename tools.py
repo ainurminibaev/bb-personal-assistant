@@ -962,7 +962,7 @@ def report(kind, rows, problems, who=None, accesses=None):
     return {"format": FORMAT, "kind": kind, "for": who, "tools": rows, "accesses": accesses or [], "problems": problems}
 
 
-REPORT_FILE = Path(".bb") / "tools-report.json"
+REPORT_FILE = STATE_FILE.parent / "tools-report.json"
 
 
 def save_report(root, data):
