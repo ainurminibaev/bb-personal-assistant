@@ -139,3 +139,12 @@ tools:
     state_file: /var/lib/bb-speech/state.json   # пишет установщик службы: state, reason, profiles
     install: служба сервера — ставится установщиком общих служб сервера
     installs: [assistant, employee, agents]
+
+  decide:
+    what: Быстрое решение — выбор из списка, да/нет, оценка за секунды (реакции моста и др.); одна служба на сервер, провайдер в самой службе
+    kind: service
+    check_commands: [/usr/local/bin/vallis-decide]
+    check_units: [bb-decide.socket]
+    state_file: /var/lib/bb-decide/state.json   # пишет служба: state, reason (какой провайдер действует или чего нет)
+    install: служба сервера — deploy/decide/install.sh; провайдеру нужен ключ OpenAI или собственный вход службы
+    installs: [assistant, employee, agents]

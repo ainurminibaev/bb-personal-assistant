@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""vallis-decide [--timeout N] [--status] — quick decision by the server's decide service.
+
+stdin: a Decisions-shaped request {"input": ..., "questions": [{"type": "choice"|"predicate"|"score", ...}]}
+stdout: {"answers": [...], "provider": ..., "ms": ...}. No answer (service absent, no provider, timeout) —
+exit code 1 and the reason on stderr. --status prints the service state (which provider answers).
+The caller does not know the provider and needs no login of its own.
+"""
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+CONFIG = os.environ.get("DECIDE_CONFIG", "/etc/bb-decide/decide.env")
+
+
+def url():
+    port = "9014"
+    try:
+        with open(CONFIG) as f:
+            for line in f:
+                k, _, v = line.strip().partition("=")
+                if k == "DECIDE_PORT" and v.strip():
+                    port = v.strip()
+    except OSError:
+        pass
+    return os.environ.get("DECIDE_URL", f"http://127.0.0.1:{port}")
+
+
+def call(path, payload=None, timeout=10.0):
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(url() + path, data=data, method="POST" if data else "GET",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            reason = json.loads(e.read()).get("error")
+        except Exception:
+            reason = f"http {e.code}"
+        raise SystemExit(f"vallis-decide: {reason}")
+    except Exception as e:
+        raise SystemExit(f"vallis-decide: service unavailable ({type(e).__name__})")
+
+
+def main(argv):
+    timeout = 8.0
+    if "--timeout" in argv:
+        i = argv.index("--timeout")
+        timeout = float(argv[i + 1])
+        del argv[i:i + 2]
+    if argv == ["--status"]:
+        print(json.dumps(call("/health"), ensure_ascii=False))
+        return 0
+    if argv:
+        print(__doc__, file=sys.stderr)
+        return 2
+    try:
+        request = json.loads(sys.stdin.read())
+    except ValueError:
+        print("vallis-decide: stdin is not JSON", file=sys.stderr)
+        return 2
+    print(json.dumps(call("/decide", {"request": request, "timeout": timeout}, timeout + 2), ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except SystemExit as e:
+        if isinstance(e.code, str):
+            print(e.code, file=sys.stderr)
+            sys.exit(1)
+        raise

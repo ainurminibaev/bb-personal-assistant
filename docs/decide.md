@@ -1,0 +1,42 @@
+# Quick decision service
+
+One service per server answers short questions about a text in seconds: a choice from a list, yes/no, a score.
+Agents, the Telegram bridge (message reactions) and plugins call one command; none of them knows the provider or
+needs a login of its own.
+
+```sh
+echo '{"input":"…","questions":[{"type":"choice","name":"reaction","instructions":"…",
+  "choices":[{"value":"👍","description":"agreed"},{"value":"😁","description":"funny"}]}]}' | vallis-decide --timeout 6
+# {"answers":[{"name":"reaction","type":"choice","choice":"😁"}],"provider":"openai-decisions","ms":420}
+```
+
+The request has the shape of the OpenAI Decisions API (`predicate`, `choice`, `score` questions). No answer
+(no service, no provider ready, timeout) — exit code 1: the caller keeps its default.
+
+## Providers
+
+Cascade in the order of the organization file; the first ready provider answers, an error or a timeout moves on.
+
+| Provider | Model | Credential — of the service itself |
+|---|---|---|
+| `openai-decisions` (default) | `gpt-6-luna` via `POST /v1/decisions` | API key: `install -m 600 -o bb-decide <file> /var/lib/bb-decide/openai.key` |
+| `claude` | `claude-haiku-5-5` via `claude -p` | own login: `sudo -u bb-decide -H claude` |
+| `codex` | `gpt-6-luna` via `codex exec` | own login: `sudo -u bb-decide -H codex login --device-auth` |
+
+Logins of the owner, employees or agents are never copied to the service. Without any credential the state is
+`needs_setup`.
+
+```yaml
+decide:
+  providers: [openai-decisions, claude, codex]
+```
+
+## Install
+
+```sh
+deploy/decide/install.sh --organization <organization repository>/organization.yml
+```
+
+A loopback socket (port 9014 by default) starts the service on the first request; it exits after 5 idle minutes.
+The service never stores or logs the request text: the log keeps the provider, the duration and the outcome.
+State: `/var/lib/bb-decide/state.json` and `setup.py tools status`. `install.sh remove [--purge]` removes it.
