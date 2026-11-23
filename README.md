@@ -62,6 +62,13 @@ A digital employee is the same platform with the `employee` setting: its own ser
 | Group memory | shared / this group only | shared when only you are there; this group only when other people are |
 | Private chats of people | off / on your approval | on when people need to work with it one to one |
 
+## Organizations
+
+Several employees of one organization are described in one private repository: `organization.yml`, shared rules and
+skills in `shared/`, one folder per employee. See [docs/organization.md](docs/organization.md),
+[docs/install.md](docs/install.md), [docs/migration.md](docs/migration.md) and the deployment schemes in
+[docs/roadmap.md](docs/roadmap.md).
+
 ## If the bot stays silent
 
 1. Open the coordinator in BB. Check whether it is waiting for an answer, reporting a provider limit, or already working on the message.
