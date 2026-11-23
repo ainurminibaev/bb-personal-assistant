@@ -24,7 +24,13 @@ Cascade in the order of the organization file; the first ready provider answers,
 | `codex` | `gpt-6-luna` via `codex exec` | own login: `sudo -u bb-decide -H codex login --device-auth` |
 
 The service learns the calling account from the kernel (Unix socket, SO_PEERCRED); the key is used only for the
-accounts listed in `--openai-consumers`. Logins of the owner, employees or agents are never copied to the service. Without any credential the state is
+accounts listed in `--openai-consumers`. Logins of the owner, employees or agents are never copied to the service.
+
+The service keeps its own spending limit for the key (the provider's hard limit may not be available): input tokens
+per month at the configured price (`DECIDE_OPENAI_MONTH_USD`, default $10; `DECIDE_OPENAI_PRICE_PER_MTOK`, default
+$0.10) and calls per day (`DECIDE_OPENAI_DAY_CALLS`, default 5000) in `/etc/bb-decide/decide.env`. Over a limit the
+provider is off until the period ends and the cascade goes on; the state says "monthly spending limit reached" or
+"daily call limit reached". The counter (`/var/lib/bb-decide/usage.json`) holds numbers only. Without any credential the state is
 `needs_setup`.
 
 ```yaml

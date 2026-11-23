@@ -77,7 +77,7 @@ class DecideTest(unittest.TestCase):
         return str(path)
 
     def start(self, providers, openai=None, claude=None, codex=None, key=False, claude_login=False, codex_login=False,
-              consumers=None):
+              consumers=None, extra=None):
         if key:
             (self.home / "openai.key").write_text("sk-test")
         if claude_login:
@@ -92,6 +92,7 @@ class DecideTest(unittest.TestCase):
                "DECIDE_OPENAI_URL": openai.url if openai else "http://127.0.0.1:9/v1/decisions",
                "DECIDE_CLAUDE_BIN": claude or "/nonexistent", "DECIDE_CODEX_BIN": codex or "/nonexistent"}
         env.pop("CODEX_HOME", None)
+        env.update(extra or {})
         self.log = open(self.home / "log.txt", "w")
         p = subprocess.Popen([sys.executable, str(D / "server.py")], env=env, stderr=self.log)
         self.procs.append(p)
@@ -131,6 +132,35 @@ class DecideTest(unittest.TestCase):
                               "m=runpy.run_path(sys.argv[0] if False else %r, run_name='m');print(m['OPENAI_URL'])"
                               % str(D / "server.py")], env=env, capture_output=True, text=True).stdout.strip()
         self.assertEqual(out, "https://api.openai.com/v1/decisions")
+
+    def test_daily_call_limit_turns_openai_off_and_the_cascade_goes_on(self):
+        fake = FakeOpenAI(200, {"name": "reaction", "type": "choice", "choice": "😁"})
+        self.fakes.append(fake)
+        self.start("openai-decisions,claude", openai=fake, key=True, extra={"DECIDE_OPENAI_DAY_CALLS": "1"},
+                   claude=self.cli("claude", '{"reaction": "👍"}'), claude_login=True)
+        self.assertEqual(self.ask()[1]["provider"], "openai-decisions")
+        self.assertEqual(self.ask()[1]["provider"], "claude")
+        self.assertEqual(len(fake.calls), 1)
+        subprocess.run([sys.executable, str(D / "vallis-decide"), "--status"], capture_output=True, env=self.env)
+        state = json.loads((self.home / "state.json").read_text())
+        self.assertIn("openai-decisions: daily call limit reached", state["reason"])
+        self.assertEqual(state["openai_spend"]["calls"], 1)
+
+    def test_monthly_spend_limit_and_no_text_in_the_counter(self):
+        fake = FakeOpenAI(200, {"name": "reaction", "type": "choice", "choice": "😁"})
+        self.fakes.append(fake)
+        self.start("openai-decisions", openai=fake, key=True, extra={"DECIDE_OPENAI_MONTH_USD": "0.0000001"})
+        self.assertEqual(self.ask()[0], 0)                   # the first call is made and counted
+        rc, out, err = self.ask()
+        self.assertEqual((rc, out), (1, None))              # over the limit: no provider left
+        self.assertEqual(len(fake.calls), 1)
+        subprocess.run([sys.executable, str(D / "vallis-decide"), "--status"], capture_output=True, env=self.env)
+        state = json.loads((self.home / "state.json").read_text())
+        self.assertEqual(state["state"], "needs_setup")
+        self.assertIn("monthly spending limit reached", state["reason"])
+        counter = (self.home / "usage.json").read_text()
+        self.assertNotIn("пицц", counter)
+        self.assertGreater(json.loads(counter)["input_tokens"], 0)
 
     def test_cascade_openai_fails_then_claude(self):
         fake = FakeOpenAI(500)

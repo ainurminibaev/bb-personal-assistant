@@ -71,6 +71,10 @@ DECIDE_PROVIDERS=$providers
 DECIDE_SOCKET=$sock
 # Accounts allowed to use the OpenAI key (the caller's account comes from the kernel).
 DECIDE_OPENAI_CONSUMERS=$consumers
+# Our own spending limit for the key: by input tokens per month (USD at the price below) and by calls per day.
+DECIDE_OPENAI_MONTH_USD=${DECIDE_OPENAI_MONTH_USD:-10}
+DECIDE_OPENAI_PRICE_PER_MTOK=${DECIDE_OPENAI_PRICE_PER_MTOK:-0.10}
+DECIDE_OPENAI_DAY_CALLS=${DECIDE_OPENAI_DAY_CALLS:-5000}
 EOF
 chmod 644 "$conf_dir/decide.env"
 

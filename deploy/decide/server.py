@@ -41,6 +41,12 @@ if os.environ.get("DECIDE_OPENAI_URL", "").startswith("http://127.0.0.1:"):   # 
     OPENAI_URL = os.environ["DECIDE_OPENAI_URL"]
 OPENAI_CONSUMERS = {u.strip() for u in os.environ.get("DECIDE_OPENAI_CONSUMERS", "").split(",") if u.strip()}
 SOCKET_PATH = os.environ.get("DECIDE_SOCKET", "/run/bb-decide.sock")
+# Our own spending limit for the key (the provider's hard limit may be unavailable): by input tokens per month and
+# by calls per day. Over a limit the provider is off until the period ends; the cascade goes on.
+OPENAI_MONTH_USD = float(os.environ.get("DECIDE_OPENAI_MONTH_USD", "10"))
+OPENAI_PRICE_PER_MTOK = float(os.environ.get("DECIDE_OPENAI_PRICE_PER_MTOK", "0.10"))   # input; output is free
+OPENAI_DAY_CALLS = int(os.environ.get("DECIDE_OPENAI_DAY_CALLS", "5000"))
+USAGE_FILE = os.environ.get("DECIDE_USAGE_FILE", os.path.join(HOME, "usage.json"))
 OPENAI_MODEL = os.environ.get("DECIDE_OPENAI_MODEL", "gpt-6-luna")
 CLAUDE_BIN = os.environ.get("DECIDE_CLAUDE_BIN", "claude")
 CLAUDE_MODEL = os.environ.get("DECIDE_CLAUDE_MODEL", "claude-haiku-5-5")
@@ -58,6 +64,44 @@ def log(*a):
     print("[bb-decide]", *a, file=sys.stderr, flush=True)
 
 
+USAGE_LOCK = threading.Lock()
+
+
+def usage(now=None):
+    """The OpenAI spending counter of this month and the call counter of today (UTC); numbers only, no text."""
+    t = time.gmtime(now)
+    month, day = time.strftime("%Y-%m", t), time.strftime("%Y-%m-%d", t)
+    try:
+        with open(USAGE_FILE) as f:
+            u = json.load(f)
+    except (OSError, ValueError):
+        u = {}
+    if u.get("month") != month:
+        u.update(month=month, input_tokens=0, usd=0.0)
+    if u.get("day") != day:
+        u.update(day=day, calls=0)
+    return u
+
+
+def save_usage(u):
+    try:
+        tmp = USAGE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(u, f)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, USAGE_FILE)
+    except OSError:
+        pass
+
+
+def spend_exhausted(u):
+    if u.get("usd", 0) >= OPENAI_MONTH_USD:
+        return "monthly spending limit reached"
+    if u.get("calls", 0) >= OPENAI_DAY_CALLS:
+        return "daily call limit reached"
+    return None
+
+
 def ready():
     """Which providers can answer: each needs its own credential of this service, never anyone else's."""
     def exists(path):
@@ -66,7 +110,7 @@ def ready():
         except OSError:
             return False
     return {
-        "openai-decisions": exists(OPENAI_KEY_FILE),
+        "openai-decisions": exists(OPENAI_KEY_FILE) and not spend_exhausted(usage()),
         "claude": exists(os.path.join(HOME, ".claude", ".credentials.json")),
         "codex": exists(os.path.join(os.environ.get("CODEX_HOME", os.path.join(HOME, ".codex")), "auth.json")),
     }
@@ -75,10 +119,16 @@ def ready():
 def write_state():
     r = ready()
     active = [p for p in PROVIDERS if r.get(p)]
+    u = usage()
+    limit = spend_exhausted(u) if os.path.exists(OPENAI_KEY_FILE) and "openai-decisions" in PROVIDERS else None
+    note = f"; openai-decisions: {limit}" if limit else ""
     state = {"state": "installed" if active else "needs_setup",
-             "reason": f"provider: {active[0]}" if active else
-             "no provider: an OpenAI API key or the service's own Claude/Codex login is needed",
-             "providers": {p: bool(r.get(p)) for p in PROVIDERS}}
+             "reason": (f"provider: {active[0]}" + note) if active else
+             (f"openai-decisions: {limit}" if limit else
+              "no provider: an OpenAI API key or the service's own Claude/Codex login is needed"),
+             "providers": {p: bool(r.get(p)) for p in PROVIDERS},
+             "openai_spend": {"month": u.get("month"), "usd": round(u.get("usd", 0.0), 6), "month_limit_usd": OPENAI_MONTH_USD,
+                              "day": u.get("day"), "calls": u.get("calls", 0), "day_limit_calls": OPENAI_DAY_CALLS}}
     try:
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w") as f:
@@ -117,6 +167,13 @@ def openai_decisions(req, deadline):
                 break
     if not key:
         raise Fail("no key")
+    with USAGE_LOCK:
+        u = usage()
+        limit = spend_exhausted(u)
+        if limit:
+            raise Fail(limit)
+        u["calls"] = u.get("calls", 0) + 1          # counted before the call: a failed call still counts
+        save_usage(u)
     body = json.dumps({"model": OPENAI_MODEL, **{k: req[k] for k in ("input", "questions")}}).encode()
     request = urllib.request.Request(OPENAI_URL, data=body, method="POST",
                                      headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
@@ -127,6 +184,13 @@ def openai_decisions(req, deadline):
         raise Fail(f"http {e.code}")
     except Exception as e:
         raise Fail(type(e).__name__)
+    tokens = int((data.get("usage") or {}).get("input_tokens") or max(1, len(body) // 4))
+    with USAGE_LOCK:
+        u = usage()
+        u["input_tokens"] = u.get("input_tokens", 0) + tokens
+        u["usd"] = u.get("usd", 0.0) + tokens * OPENAI_PRICE_PER_MTOK / 1_000_000
+        save_usage(u)
+    write_state()
     return data.get("answers") or []
 
 
