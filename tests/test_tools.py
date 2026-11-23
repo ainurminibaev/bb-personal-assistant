@@ -304,7 +304,9 @@ class Secrets(unittest.TestCase):
 
     def account(self, home, bin_dir):
         account = FakeAccount(home)
-        env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}",
+        # a sops already on this machine's PATH would be kept by install_cli: the test downloads its own
+        rest = ":".join(d for d in os.environ["PATH"].split(":") if d and not os.path.exists(os.path.join(d, "sops")))
+        env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{rest}",
                    VALLIS_AGE_KEY=str(home / ".config/vallis/age.key"),
                    VALLIS_SECRETS_DIR=str(home / ".local/share/vallis/secrets"),
                    VALLIS_ADMIN_RECIPIENTS=str(home / ".config/vallis/admin.recipients"))
