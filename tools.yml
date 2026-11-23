@@ -150,6 +150,8 @@ tools:
     secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET]   # приложение Google организации, из хранилища
     env:
       WORKSPACE_MCP_CREDENTIALS_DIR: ~/.secrets/google-workspace
+      WORKSPACE_MCP_PORT: "8000"               # постоянный порт входа: его открывает проброс BB на время входа
+      WORKSPACE_MCP_PORT_FALLBACK_COUNT: "0"
     login:
       what: свой Google-аккаунт агента (навык google-workspace, с «да» владельца)
       dir: ~/.secrets/google-workspace
