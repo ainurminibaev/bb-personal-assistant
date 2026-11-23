@@ -77,10 +77,16 @@ def install_guest_guard(package, root, data_dir):
         target.write_bytes(source)
         target.chmod(0o755)
     # Agents start hooks without BB variables: the hook finds BB's data here.
+    # Only dataDir is the installer's; limits set next to it by hand (maxSchedules, guestSchedules...) stay.
     settings = target.with_name("guest-thread-guard.json")
-    wanted = json.dumps({"dataDir": str(data_dir)}) + "\n"
-    if not settings.exists() or settings.read_text(encoding="utf-8") != wanted:
-        settings.write_text(wanted, encoding="utf-8")
+    try:
+        current = json.loads(settings.read_text(encoding="utf-8")) if settings.exists() else {}
+    except ValueError:
+        raise SystemExit(f"{settings} is not valid JSON; fix or remove it, then run setup again.")
+    if not isinstance(current, dict):
+        raise SystemExit(f"{settings} must hold a JSON object; fix or remove it, then run setup again.")
+    if current.get("dataDir") != str(data_dir) or not settings.exists():
+        settings.write_text(json.dumps({**current, "dataDir": str(data_dir)}, ensure_ascii=False) + "\n", encoding="utf-8")
     command = f"python3 {target}"
     entry = {"matcher": "*", "hooks": [{"type": "command", "command": command, "timeout": 30}]}
     for config in (root / ".codex" / "hooks.json", root / ".claude" / "settings.json"):

@@ -24,6 +24,19 @@ class SetupGuard(unittest.TestCase):
             self.assertEqual(len(groups), 1)
             self.assertIn(str(target), groups[0]["hooks"][0]["command"])
 
+    def test_a_rerun_keeps_the_limits_set_next_to_the_guard(self):
+        package = Path(__file__).resolve().parent.parent
+        root = Path(tempfile.mkdtemp())
+        target = install_guest_guard(package, root, "/data/bb")
+        settings = target.with_name("guest-thread-guard.json")
+        settings.write_text(json.dumps({"dataDir": "/data/bb", "maxSchedules": 20, "guestSchedules": False}))
+        install_guest_guard(package, root, "/data/bb-moved")
+        self.assertEqual(json.loads(settings.read_text()),
+                         {"dataDir": "/data/bb-moved", "maxSchedules": 20, "guestSchedules": False})
+        settings.write_text("{broken")
+        with self.assertRaises(SystemExit):
+            install_guest_guard(package, root, "/data/bb")
+
 
 if __name__ == "__main__":
     unittest.main()
