@@ -962,6 +962,20 @@ def report(kind, rows, problems, who=None, accesses=None):
     return {"format": FORMAT, "kind": kind, "for": who, "tools": rows, "accesses": accesses or [], "problems": problems}
 
 
+REPORT_FILE = Path(".bb") / "tools-report.json"
+
+
+def save_report(root, data):
+    """The last state for the agent's own command `bb personal-assistant tools` (С43): no values, no new secrets."""
+    try:
+        path = Path(root) / REPORT_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        path.chmod(0o640)
+    except OSError:
+        pass  # an unwritable folder keeps the previous report; the command says how old it is
+
+
 def print_report(data, stream=sys.stdout):
     width = max((len(r["id"]) for r in data["tools"]), default=0)
     print("Tools:", file=stream)
@@ -1084,6 +1098,7 @@ def main(argv=None):
                       root, servers, errors["mcp"], bb_data_dir(bb), keys=keys)
         data = report(kind, rows, problems + more + mcp_problems + secret_problems, name,
                       accesses=access_rows(account))
+        save_report(root, data)
     if args.json:
         json.dump(data, sys.stdout, ensure_ascii=False, indent=2)
         print()

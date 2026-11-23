@@ -293,8 +293,10 @@ def main():
             print("  Not compared by this version: " + ", ".join(organization.not_compared(employee)) + ".")
     rows = tools.states(REGISTRY, decisions, account, {p["id"]: p for p in bb("plugin", "list")["plugins"]},
                         account.home, tool_errors, root, servers, mcp_errors, data_dir, keys=keys)
-    tools.print_report(tools.report(args.kind, rows, tool_problems + mcp_problems + secret_problems, args.employee,
-                                    accesses=tools.access_rows(account)))
+    report = tools.report(args.kind, rows, tool_problems + mcp_problems + secret_problems, args.employee,
+                          accesses=tools.access_rows(account))
+    tools.save_report(root, report)
+    tools.print_report(report)
     print("The same list later: python3 setup.py tools status [--json] --workspace " + str(root))
     status = bb("plugin", "rpc", "call", "telegram-projects", "status")
     preferences = bb("plugin", "rpc", "call", "telegram-projects", "preferences")

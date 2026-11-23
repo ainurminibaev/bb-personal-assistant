@@ -106,6 +106,14 @@ class GuestGuard(unittest.TestCase):
         no("bb thread-cleanup run")
         no("bb thread-cleanup restore --last-run")
 
+    def test_guest_sees_only_its_own_view_of_tools(self):
+        ok = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 0, c)
+        no = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 2, c)
+        ok("bb personal-assistant tools --guest")
+        no("bb personal-assistant tools")
+        no("bb personal-assistant tools --guest --all")
+        no("bb personal-assistant alerts")
+
     def test_guest_may_read_help_and_its_own_thread(self):
         for cmd in ("bb thread spawn --help", "bb thread show --json", "bb thread context --self --json",
                     "bb skill list", "bb help"):

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { refreshGuardCopies } from "./guard-refresh";
 import { deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
+import { toolsReport } from "./tools-status";
 
 export default async function personalAssistant(bb: BbPluginApi) {
   const settings = bb.settings.define({
@@ -28,8 +29,15 @@ export default async function personalAssistant(bb: BbPluginApi) {
   const accessLine = () => storeSkills().length
     ? "О своих доступах (учётки, входы, ключи) отвечай по списку хранилища: `vallis-secret list` — названия и назначение, без значений."
     : null;
+  // Rules for every conversation of both kinds (С43, С44, С49, С61): short, the details live in the skills.
+  const common = [
+    "О своих возможностях, подключениях и памяти отвечай по действующим настройкам, а не по старой переписке: `bb personal-assistant tools` (в гостевом разговоре — `--guest`) и справка места; утвердительно и с действием для человека (С43).",
+    "Поручение владельца выполняешь там, где оно дано, и не просишь повторить его в другом месте. Ответ, отчёт и напоминание — туда, где дана просьба, если явно не сказано иное; сам место не меняешь (С44).",
+    "Работу дольше нескольких минут уводишь в подтред и остаёшься доступным; итог подтреда, запущенного по просьбе человека, всегда передаёшь в тот же разговор одним сообщением (С49).",
+    "Расписание ставишь только под названную надобность и в том же сообщении говоришь, что поставил; повторяющееся — одно с повтором и сроком окончания; название человеческими словами; поручение закрыто — его расписания снимаешь (С61).",
+  ].join("\n");
   bb.agents.contributeInstructions(({threadId}) =>
-    [contact.instructions(threadId), accessLine()].filter(Boolean).join("\n\n") || null);
+    [contact.instructions(threadId), accessLine(), common].filter(Boolean).join("\n\n") || null);
 
   // The credentials store (С37): its skill only where the installer put vallis-secret on the PATH of this BB.
   bb.agents.configure(({project, thread}) =>
@@ -61,10 +69,17 @@ export default async function personalAssistant(bb: BbPluginApi) {
       { name: "work", usage: "bb personal-assistant work", summary: "List open child tasks from the personal coordinator." },
       { name: "owner-thread", usage: "bb personal-assistant owner-thread", summary: "The assistant conversation that reaches the owner in Telegram now." },
       { name: "alerts", usage: "bb personal-assistant alerts", summary: "Warnings about many schedules in guest conversations sent to the owner." },
+      { name: "tools", usage: "bb personal-assistant tools [--guest]", summary: "What this agent can use: tools and accesses from the installer's last check, in words, without values." },
     ],
     async run(argv, ctx) {
-      if (argv.length !== 1 || !["doctor", "work", "owner-thread"].includes(argv[0]))
-        return { exitCode: 2, stderr: "Usage: bb personal-assistant doctor | work | owner-thread" };
+      if (argv[0] === "tools" && argv.slice(1).every(a => a === "--guest")) {
+        const project = ctx.projectId ? await bb.sdk.projects.get({ projectId: ctx.projectId }).catch(() => undefined) : undefined;
+        const sources = (project as { sources?: { path?: string; isDefault?: boolean }[] } | undefined)?.sources ?? [];
+        const folder = (sources.find(s => s.isDefault) ?? sources[0])?.path;
+        return toolsReport(folder, argv.includes("--guest"));
+      }
+      if (argv.length !== 1 || !["doctor", "work", "owner-thread", "alerts"].includes(argv[0]))
+        return { exitCode: 2, stderr: "Usage: bb personal-assistant doctor | work | owner-thread | alerts | tools [--guest]" };
       if (argv[0] === "alerts") {
         const sent = (await bb.storage.kv.get<{ at: number; conversation: string; via: string; text: string }[]>("schedule-alerts:sent")) ?? [];
         return { exitCode: 0, stdout: sent.map(e => `${new Date(e.at).toISOString()} ${e.via}: ${e.text}`).join("\n") || "no warnings sent" };

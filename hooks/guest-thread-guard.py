@@ -326,6 +326,9 @@ def guest_bb_allowed(args, scope):
                 return True
             return bool(targets) and all(scope.owns(t) for t in targets)
         return False
+    if head == ["personal-assistant", "tools"]:
+        # С43: a guest sees what it can apply here — only the guest view, no installation details.
+        return args[2:] == ["--guest"]
     if head == ["thread-cleanup", "task"]:
         # A guest marks only its own task sub-threads open or closed.
         targets = [a for a in positionals(args[2:]) if a.startswith("thr_")]
