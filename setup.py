@@ -276,7 +276,7 @@ def main():
             if error:
                 print(f"{name}: {error}. Setup goes on; the tools list at the end says what to do.", flush=True)
                 tool_errors[name] = error
-    note = tools.install_leak_check(clone if clone is not None else root)
+    note = tools.install_leak_check(clone if clone is not None else root, tools._cli_dir(account) / "vallis-secret")
     if note:
         secret_problems.append(note)
     servers, mcp_problems = tools.mcp_servers(description, employee, args.employee) if clone is not None else ({}, [])
@@ -293,7 +293,8 @@ def main():
             print("  Not compared by this version: " + ", ".join(organization.not_compared(employee)) + ".")
     rows = tools.states(REGISTRY, decisions, account, {p["id"]: p for p in bb("plugin", "list")["plugins"]},
                         account.home, tool_errors, root, servers, mcp_errors, data_dir, keys=keys)
-    tools.print_report(tools.report(args.kind, rows, tool_problems + mcp_problems + secret_problems, args.employee))
+    tools.print_report(tools.report(args.kind, rows, tool_problems + mcp_problems + secret_problems, args.employee,
+                                    accesses=tools.access_rows(account)))
     print("The same list later: python3 setup.py tools status [--json] --workspace " + str(root))
     status = bb("plugin", "rpc", "call", "telegram-projects", "status")
     preferences = bb("plugin", "rpc", "call", "telegram-projects", "preferences")

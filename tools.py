@@ -769,15 +769,15 @@ def install_cli(tool, account, admins=()):
 
 LEAK_CHECK = """#!/bin/sh
 # vallis: values of the credentials store never go into a commit (managed by setup.py)
-if ! command -v vallis-secret >/dev/null 2>&1; then
-  echo "vallis: vallis-secret is not on the PATH here, the commit is not checked for stored values" >&2
-  exit 0
-fi
-exec vallis-secret leaks --git-staged
+for program in "$(command -v vallis-secret 2>/dev/null)" {installed} "$HOME/.local/bin/vallis-secret" /usr/local/bin/vallis-secret; do
+  [ -n "$program" ] && [ -x "$program" ] && exec "$program" leaks --git-staged
+done
+echo "vallis: WARNING — vallis-secret is not found, this commit is NOT checked for values of the credentials store" >&2
+exit 0
 """
 
 
-def install_leak_check(repo):
+def install_leak_check(repo, program=None):
     """A pre-commit hook of the workspace's git copy; someone's own pre-commit hook is left alone (returns a note)."""
     git = repo / ".git"
     if not git.is_dir():
@@ -786,9 +786,27 @@ def install_leak_check(repo):
     if hook.exists() and "vallis: values of the credentials store" not in hook.read_text(encoding="utf-8", errors="replace"):
         return f"{hook} is someone's own: add `vallis-secret leaks --git-staged` to it"
     hook.parent.mkdir(exist_ok=True)
-    hook.write_text(LEAK_CHECK, encoding="utf-8")
+    hook.write_text(LEAK_CHECK.replace("{installed}", shlex_quote(str(program or ""))), encoding="utf-8")
     hook.chmod(0o755)
     return None
+
+
+def shlex_quote(text):
+    import shlex
+    return shlex.quote(text) if text else "''"
+
+
+def access_rows(account, program="vallis-secret"):
+    """The agent's own accesses for its self-awareness (С43): names and purpose, never values."""
+    if not account.which(program):
+        return []
+    listed = account.run(program, "list", "--json")
+    try:
+        rows = json.loads(listed.stdout)["secrets"]
+    except (ValueError, KeyError, TypeError):
+        return []
+    return [{"name": r.get("name"), "what": r.get("what") or "", "level": r.get("level") or "",
+             "source": r.get("source") or "", "state": r.get("state") or ""} for r in rows]
 
 
 def secret_rows(account, keys, program="vallis-secret"):
@@ -940,8 +958,8 @@ def save_errors(path, tools_errors, mcp_errors=None):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def report(kind, rows, problems, who=None):
-    return {"format": FORMAT, "kind": kind, "for": who, "tools": rows, "problems": problems}
+def report(kind, rows, problems, who=None, accesses=None):
+    return {"format": FORMAT, "kind": kind, "for": who, "tools": rows, "accesses": accesses or [], "problems": problems}
 
 
 def print_report(data, stream=sys.stdout):
@@ -951,6 +969,10 @@ def print_report(data, stream=sys.stdout):
         text = f"  {row['id']:<{width}}  {row['state']:<11}  {row['level']}"
         details = "; ".join(x for x in (row["reason"], f"to do: {row['action']}" if row["action"] else "") if x)
         print(text + (f"  — {details}" if details else ""), file=stream)
+    if data.get("accesses"):
+        print("Accesses (names and purpose, no values):", file=stream)
+        for row in data["accesses"]:
+            print(f"  {row['name']}  {row['level']}  {row['what']}", file=stream)
     for line in data["problems"]:
         print(f"  ! {line}", file=stream)
 
@@ -1043,7 +1065,7 @@ def main(argv=None):
             rows = [r for r in rows if r["kind"] != "plugin" or r["state"] == "excluded"] + [
                 _row(n, t, decisions[n][1], "error", "the agents' BB was not given", "pass --bb-user, --bb-cli, --bb-url")
                 for n, t in registry.items() if t["kind"] == "plugin" and decisions[n][0]]
-        data = report("agents", rows, problems, account.name)
+        data = report("agents", rows, problems, account.name, accesses=access_rows(account))
     else:
         if args.action == "install":
             raise SystemExit("An assistant or an employee is installed by setup.py.")
@@ -1060,7 +1082,8 @@ def main(argv=None):
         errors = read_errors(root / STATE_FILE)
         rows = states(registry, decisions, account, plugin_list(bb), account.home, errors["tools"],
                       root, servers, errors["mcp"], bb_data_dir(bb), keys=keys)
-        data = report(kind, rows, problems + more + mcp_problems + secret_problems, name)
+        data = report(kind, rows, problems + more + mcp_problems + secret_problems, name,
+                      accesses=access_rows(account))
     if args.json:
         json.dump(data, sys.stdout, ensure_ascii=False, indent=2)
         print()

@@ -360,3 +360,35 @@ class Secrets(unittest.TestCase):
         self.assertEqual(sorted(sops["sha256"]), ["amd64", "arm64"])
         self.assertTrue(sops["url"].startswith("https://github.com/getsops/sops/releases/download/"))
         self.assertIn(sops["version"], sops["url"])
+
+
+class LeakCheck(unittest.TestCase):
+    def test_the_hook_finds_the_installed_command_and_warns_without_it(self):
+        repo = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        program = repo / "bin" / "vallis-secret"
+        program.parent.mkdir()
+        program.write_text("#!/bin/sh\necho checked \"$@\"\n")
+        program.chmod(0o755)
+        self.assertIsNone(tools.install_leak_check(repo, program))
+        hook = repo / ".git" / "hooks" / "pre-commit"
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(repo)}
+        done = subprocess.run(["sh", str(hook)], env=env, capture_output=True, text=True)
+        self.assertEqual(done.stdout.strip(), "checked leaks --git-staged")
+        program.unlink()
+        done = subprocess.run(["sh", str(hook)], env=env, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0)
+        self.assertIn("NOT checked", done.stderr)
+        (repo / ".git" / "hooks" / "pre-commit").write_text("#!/bin/sh\nmy own\n")
+        self.assertIn("someone's own", tools.install_leak_check(repo, program))
+
+    def test_accesses_for_self_awareness(self):
+        account = FakeAccount(tempfile.mkdtemp(), programs={"vallis-secret"})
+        listed = {"secrets": [{"name": "SITE_PASSWORD", "what": "вход на сайт", "level": "agent", "source": "agent",
+                               "state": "present", "created": "2026-11-23"}]}
+        account.run = lambda *a, **k: subprocess.CompletedProcess(a, 0, json.dumps(listed), "")
+        rows = tools.access_rows(account)
+        self.assertEqual(rows, [{"name": "SITE_PASSWORD", "what": "вход на сайт", "level": "agent",
+                                 "source": "agent", "state": "present"}])
+        self.assertEqual(tools.report("employee", [], [], "alpha", accesses=rows)["accesses"], rows)
+        self.assertEqual(tools.access_rows(FakeAccount(tempfile.mkdtemp())), [])

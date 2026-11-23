@@ -62,10 +62,11 @@ test("the credentials store skill comes only where vallis-secret is on the PATH"
   process.env.PATH = `${dir}:${path}`;
   try {
     const owner = {projectId: "personal", threadId: "owner"};
-    const { instructions } = await load(owner);
+    const { instructions, contact } = await load(owner);
     const config = (projectId, threadId) => instructions({project: {id: projectId}, thread: {id: threadId}});
     assert.ok(config(owner.projectId, owner.threadId).skills.includes("secrets-store"));
     assert.deepEqual(config("other", "group").skills, ["task-tracking", "agent-mail", "secrets-store"]);
+    assert.match(contact("any-thread") ?? "", /vallis-secret list/);
   } finally {
     process.env.PATH = path;
   }

@@ -111,6 +111,9 @@ python3 tools.py status [--json] --kind agents --account <agent> \
 }
 ```
 
+`"accesses"` lists the agent's own credentials from its store (`vallis-secret list`): `name`, `what`, `level`,
+`source`, `state` — never values. It is what the agent answers «what accesses do you have» with (С43).
+
 Every line of `tools.yml` is listed, then every MCP connection of the description, then every described key
 (`secret:<NAME>`: `installed` — in the store and decryptable, `needs_setup` — not there yet, `error` — does not open). `state` is one of:
 

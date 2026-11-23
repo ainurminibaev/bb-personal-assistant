@@ -40,6 +40,12 @@ class Base:
                    VALLIS_SECRETS_DIR=str(home / ".local/share/vallis/secrets"),
                    VALLIS_ADMIN_RECIPIENTS=str(home / ".config/vallis/admin.recipients"))
         env.pop("SOPS_AGE_KEY_FILE", None)
+        # no test may open a real BB form: bb is a stand-in that fails if a test forgets its own
+        guard = self.tmp / "bb-not-in-tests"
+        if not guard.exists():
+            guard.write_text("#!/bin/sh\necho 'bb called' >&2\nexit 99\n")
+            guard.chmod(0o755)
+        env["BB_CLI"] = str(guard)
         done = self.call(env, "init")
         self.assertEqual(done.returncode, 0, done.stderr)
         return {"env": env, "home": home, "public": done.stdout.strip()}
@@ -226,6 +232,7 @@ class Base:
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
         (repo / "a.txt").write_text("key=" + CANARY + "\n")
         subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
+        blob = subprocess.run(["git", "ls-files", "-s", "a.txt"], cwd=repo, capture_output=True, text=True).stdout.split()[1]
         done = subprocess.run([sys.executable, str(TOOL), "leaks", "--git-staged"], cwd=repo, env=self.alpha["env"],
                               capture_output=True, text=True)
         self.assertEqual(done.returncode, 1)
@@ -233,6 +240,26 @@ class Base:
         self.assertNotIn(CANARY, done.stdout + done.stderr)
         staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=repo, capture_output=True, text=True)
         self.assertEqual(staged.stdout, "", "the leaking file is taken out of the commit")
+        gone = subprocess.run(["git", "cat-file", "-e", blob], cwd=repo, capture_output=True)
+        self.assertNotEqual(gone.returncode, 0, "its staged copy is not left in .git")
+        found = subprocess.run(["grep", "-r", "-l", CANARY, str(repo / ".git")], capture_output=True, text=True)
+        self.assertEqual(found.stdout, "")
+
+    def test_an_account_without_a_store_is_told_what_to_do(self):
+        # never a real BB form from a test: bb is a stand-in that fails if it is ever called
+        fake = self.tmp / "bb-must-not-run"
+        fake.write_text("#!/bin/sh\necho 'bb called' >&2\nexit 99\n")
+        fake.chmod(0o755)
+        fresh = dict(self.alpha["env"], VALLIS_AGE_KEY=str(self.tmp / "none.key"),
+                     VALLIS_SECRETS_DIR=str(self.tmp / "none-store"), BB_CLI=str(fake))
+        for args, stdin in ((["put", "A_KEY", "--generate", "--what", "x"], None), (["run", "A_KEY", "--", "true"], None),
+                            (["ask", "A_KEY", "--what", "x"], None), (["file", "A_KEY", str(self.tmp / "x")], None),
+                            (["leaks", str(self.tmp)], None), (["header", "A_KEY"], None)):
+            done = self.call(fresh, *args, stdin=stdin)
+            self.assertNotIn("Traceback", done.stderr, args)
+            self.assertNotIn("bb called", done.stderr, args)
+        done = self.call(fresh, "put", "A_KEY", "--generate", "--what", "x")
+        self.assertIn("vallis-secret init", done.stderr)
 
     def test_grant_to_named_and_receive(self):
         to = self.tmp / "to.recipients"
@@ -252,7 +279,7 @@ class Base:
         # not named: cannot take it
         done = self.call(self.beta, "receive", str(out))
         self.assertNotEqual(done.returncode, 0)
-        self.assertIn("not granted to this account", done.stderr)
+        self.assertIn("this access is not granted to you", done.stderr)
         fresh = dict(self.beta["env"], VALLIS_AGE_KEY=str(self.tmp / "none.key"),
                      VALLIS_SECRETS_DIR=str(self.tmp / "none-store"))
         done = self.call(fresh, "receive", str(out))

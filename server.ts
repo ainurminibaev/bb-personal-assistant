@@ -21,12 +21,17 @@ export default async function personalAssistant(bb: BbPluginApi) {
 
   // An assistant installation tells every thread how to reach the owner; an employee and the agents' BB do not.
   const contact = ownerContact(bb, () => binding.ownerContact !== false);
-  bb.agents.contributeInstructions(({threadId}) => contact.instructions(threadId));
-
-  // The credentials store (С37): its skill only where the installer put vallis-secret on the PATH of this BB.
   // Checked at every start of a thread: the installer may put vallis-secret after the plugin loaded.
   const storeSkills = () => (process.env.PATH ?? "").split(":").some(dir => dir && existsSync(join(dir, "vallis-secret")))
     ? ["secrets-store"] : [];
+  // The credentials store (С37, С43): an agent answers about its own accesses from the store's list, never from memory.
+  const accessLine = () => storeSkills().length
+    ? "О своих доступах (учётки, входы, ключи) отвечай по списку хранилища: `vallis-secret list` — названия и назначение, без значений."
+    : null;
+  bb.agents.contributeInstructions(({threadId}) =>
+    [contact.instructions(threadId), accessLine()].filter(Boolean).join("\n\n") || null);
+
+  // The credentials store (С37): its skill only where the installer put vallis-secret on the PATH of this BB.
   bb.agents.configure(({project, thread}) =>
     matches(project.id, thread.id)
       ? { instructions: policy, skills: ["dispatch", "integrations", "task-tracking", "agent-mail", ...storeSkills()], tools: [] }
