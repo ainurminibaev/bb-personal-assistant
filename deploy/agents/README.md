@@ -28,7 +28,11 @@
 5. Агент: `install-agent.sh install <агент> --bb-user bbagents --project <id> --bb-cli … --bb-url http://127.0.0.1:39300
    [--allow-port N] [--owner-telegram ID] [--chat ID]`; перевод из формата Claude — `install-agent.sh migrate-claude
    <агент> --workspace <папка>`. После нового агента перезапустить `bb-agents.service` (установщик предупредит).
-6. Проверки: ход агента (`id -un`, `pwd`), отказы `checkCommand`, порты BB владельца и BB агентов от учётки агента,
+6. Общие инструменты платформы ставит тот же `install-agent.sh install` (с `--bb-cli` и `--bb-url` — и плагины
+   в BB агентов) и печатает состояние каждой строки `tools.yml`. Позже то же одной командой от root:
+   `python3 <платформа>/tools.py status [--json] --kind agents --account <агент> --bb-user bbagents --bb-cli … --bb-url …`.
+   Формат — [docs/tools.md](../../docs/tools.md).
+7. Проверки: ход агента (`id -un`, `pwd`), отказы `checkCommand`, порты BB владельца и BB агентов от учётки агента,
    правила Docker и ufw до и после.
 
 ## Память

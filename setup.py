@@ -2,17 +2,18 @@
 import argparse
 import json
 import re
+import shutil
 from pathlib import Path
 import subprocess
 import sys
 
 from migrate_bridge import LEGACY, TRACKING
 import organization
+import tools
 
-ASSISTANT = "git:https://github.com/ainurminibaev/bb-personal-assistant.git@semver:^0.3.0"
-SOURCES = {"telegram-projects": TRACKING, "personal-assistant": ASSISTANT}
-# The knowledge base ships in this repository and release, as a separate plugin folder.
-KNOWLEDGE_BASE = ("knowledge-base", ASSISTANT, "plugins/knowledge-base")
+# The platform list (tools.yml): core plugins are the base of every installation, the rest is general by default.
+REGISTRY = tools.load()
+SOURCES = {name: tool["source"] for name, tool in REGISTRY.items() if tool.get("core")}
 
 
 def bb(*args):
@@ -95,6 +96,9 @@ def install_guest_guard(package, root, data_dir):
 
 
 def main():
+    if sys.argv[1:2] == ["tools"]:
+        # setup.py tools status [--json] [--workspace <folder>]: the state of every tool of this installation.
+        sys.exit(tools.main(sys.argv[2:]))
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--machine", required=True, help="BB host ID of this folder")
     parser.add_argument("--name", default="Personal Assistant", help="Display name for a newly created BB project")
@@ -117,6 +121,8 @@ def main():
                         help="Keep plugin sources that are already installed (a release candidate or a local mirror)")
     parser.add_argument("--provider", help="Agent for the project, for example codex or claude-code")
     parser.add_argument("--model", help="Model for the project, for example the provider's current model ID")
+    parser.add_argument("--tool-source", action="append", default=[], metavar="ID=SOURCE",
+                        help="Install a tool plugin from another source, for example a copy brought by the administrator")
     parser.add_argument("--inbox", type=Path,
                         help="Folder for received Telegram files (default: telegram-inbox next to the workspace)")
     args = parser.parse_args()
@@ -129,6 +135,7 @@ def main():
     if args.organization and args.workspace_repo:
         raise SystemExit("Choose --organization or --workspace-repo.")
     clone = None
+    description, employee = {}, {}
     if args.organization:
         args.kind = "employee"
         clone = root
@@ -168,12 +175,16 @@ def main():
     )]
     if len(projects) > 1:
         raise SystemExit("Multiple BB projects use this folder. Check their workspace bindings.")
+    decisions, tool_problems = tools.select(REGISTRY, args.kind, description, employee)
+    sources = dict(s.split("=", 1) for s in args.tool_source if "=" in s)
     missing = [src for pid, src in SOURCES.items() if pid not in installed]
-    kb_id, kb_source, kb_folder = KNOWLEDGE_BASE
-    # The knowledge base is the owner's personal library: an assistant gets it, an employee does not.
-    kb_missing = kb_id not in installed and args.kind == "assistant"
-    if missing or kb_missing:
-        print("BB release sources:", *missing, *([f"{kb_source} (folder {kb_folder})"] if kb_missing else []),
+    # General plugins of the list (knowledge base, pictures...): what this installation gets and does not have yet.
+    extra = [name for name, tool in REGISTRY.items() if tool["kind"] == "plugin" and not tool.get("core")
+             and decisions[name][0] and name not in installed]
+    if missing or extra:
+        print("BB release sources:", *missing, *(
+            sources.get(n) or REGISTRY[n]["source"] + (f" (folder {REGISTRY[n]['subdirectory']})"
+                                                     if REGISTRY[n].get("subdirectory") else "") for n in extra),
               sep="\n", flush=True)
         if not args.yes and (not sys.stdin.isatty() or input("Install [y/N]? ").lower() != "y"):
             raise SystemExit("Installation requires confirmation. For unattended installation use --yes.")
@@ -181,8 +192,12 @@ def main():
             bb("plugin", "install", src, "--yes")
             if src == SOURCES["telegram-projects"]:
                 bb("plugin", "config", "telegram-projects", "set", "language", args.language)
-        if kb_missing:
-            bb("plugin", "install", kb_source, "--subdirectory", kb_folder, "--yes")
+    tool_errors = {}
+    for name in extra:
+        error = tools.install_tool(name, REGISTRY[name], None, {}, bb, {}, sources.get(name))
+        if error:
+            print(f"{name}: {error}. Setup goes on; the tools list at the end says what to do.", flush=True)
+            tool_errors[name] = error
     # Existing release-tracking installations can lag behind the newest tag.
     releases = {p["id"]: p["version"] for p in bb("plugin", "list")["plugins"]}
     if stable_version(releases.get("personal-assistant", "")) < (0, 2, 3):
@@ -230,6 +245,20 @@ def main():
     if args.provider == "codex":
         subprocess.run(["bb", "settings", "ai-services", "set", "voice", "codex"], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Tools of the agent's account (context-mode, skills, hooks) and the described MCP connections.
+    account, cache = tools.Account(), {}
+    for name, tool in REGISTRY.items():
+        if tool["kind"] not in ("plugin", "service") and decisions[name][0]:
+            error = tools.install_tool(name, tool, account, {p["id"]: p for p in bb("plugin", "list")["plugins"]},
+                                       bb, cache)
+            if error:
+                print(f"{name}: {error}. Setup goes on; the tools list at the end says what to do.", flush=True)
+                tool_errors[name] = error
+    for folder in cache.values():
+        shutil.rmtree(folder, ignore_errors=True)
+    servers, mcp_problems = tools.mcp_servers(description, employee, args.employee) if clone is not None else ({}, [])
+    mcp_errors = tools.write_mcp(root, servers) if clone is not None else {}
+    tools.save_errors(root / tools.STATE_FILE, tool_errors, mcp_errors)
     if clone is not None:
         facts = organization.collect_facts(bb, project["id"], args.machine)
         differences = layout + organization.compare(description, employee, facts)
@@ -239,6 +268,10 @@ def main():
             print(f"  - {line}")
         if organization.not_compared(employee):
             print("  Not compared by this version: " + ", ".join(organization.not_compared(employee)) + ".")
+    rows = tools.states(REGISTRY, decisions, account, {p["id"]: p for p in bb("plugin", "list")["plugins"]},
+                        account.home, tool_errors, root, servers, mcp_errors)
+    tools.print_report(tools.report(args.kind, rows, tool_problems + mcp_problems, args.employee))
+    print("The same list later: python3 setup.py tools status [--json] --workspace " + str(root))
     status = bb("plugin", "rpc", "call", "telegram-projects", "status")
     preferences = bb("plugin", "rpc", "call", "telegram-projects", "preferences")
     print(f"Workspace registered as BB project {project['id']}.")

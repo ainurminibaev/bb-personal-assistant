@@ -34,6 +34,10 @@ services:                     # shared services: addresses only, no keys
   tasks: https://tasks.example.com
 connections:                  # shared connections: where they are, no values
   github: example-org
+tools:                        # general platform tools: exclude or add lines of tools.yml (docs/tools.md)
+  exclude: []
+mcp:                          # MCP connections for named employees: url, token_env, employees (docs/tools.md)
+  tasks: {url: https://tasks.example.com/mcp, token_env: TASKS_TOKEN, employees: [support]}
 ```
 
 ## employee.yml
@@ -49,6 +53,8 @@ timezone: Europe/Berlin       # optional, overrides the organization's
 groups: [-1001234567890]      # Telegram group chats the employee works in
 quiet_hours: "21:00-09:00"    # reserved for task tracking
 reminders: {}                 # reserved for task tracking
+tools: {add: [], exclude: []} # general platform tools for this employee (docs/tools.md)
+mcp: {}                       # this employee's MCP connections: url and token_env, no values (docs/tools.md)
 ```
 
 Every field is optional. The installer compares the fields it can read from BB with the installation and prints one

@@ -158,7 +158,9 @@ class Organization(unittest.TestCase):
         argv = ["setup.py", "--workspace", str(work / "org"), "--machine", "host", "--organization", self.url,
                 "--employee", "alpha", "--keep-installed-sources"]
         out = io.StringIO()
-        with patch.object(sys, "argv", argv), patch.object(setup, "bb", cli), contextlib.redirect_stdout(out):
+        core = {n: t for n, t in setup.REGISTRY.items() if t.get("core")}
+        with patch.object(sys, "argv", argv), patch.object(setup, "bb", cli), contextlib.redirect_stdout(out), \
+                patch.object(setup, "REGISTRY", core):
             setup.main()
         root = work / "org" / "employees" / "alpha"
         self.assertIn(str(root), created[0])
@@ -169,7 +171,7 @@ class Organization(unittest.TestCase):
         status = subprocess.run(["git", "status", "--porcelain"], cwd=work / "org", text=True,
                                 stdout=subprocess.PIPE).stdout
         self.assertEqual(status, "")
-        with patch.object(sys, "argv", argv[:-1]), patch.object(setup, "bb", cli), \
+        with patch.object(sys, "argv", argv[:-1]), patch.object(setup, "bb", cli), patch.object(setup, "REGISTRY", core), \
                 contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
             setup.main()  # without the flag a mirror source is refused, as before
 

@@ -13,7 +13,8 @@
 #     (/var/lib/bb-agents/login, группа bb-agents-login), вход выполняется один раз владельцем;
 #   - обёртку запуска /usr/local/lib/bb-agents/<агент>/{claude,codex,bin/codex,bin/bb};
 #   - правило sudoers: учётка BB запускает только agent-exec и только от имени агента;
-#   - сетевой экран: агенту на loopback открыты только разрешённые порты (firewall.sh).
+#   - сетевой экран: агенту на loopback открыты только разрешённые порты (firewall.sh);
+#   - общие инструменты платформы (tools.yml): плагины в BB агентов, context-mode, навыки и хуки учётке агента.
 # Ничего чужого не меняет и не сбрасывает.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -136,5 +137,13 @@ if [ -n "$bbcli" ] && [ -n "$bburl" ]; then
   bbrun plugin config project-command set agents "$new" >/dev/null
   echo "настройка плагина: $new"
 fi
+# Общие инструменты платформы (tools.yml): плагины — в BB агентов, остальное — учётке агента.
+# Ничего не пропускается молча: в конце — состояние каждой строки списка (то же: tools.py status).
+toolargs=(--kind agents --account "$agent")
+if [ -n "$bbcli" ] && [ -n "$bburl" ]; then
+  toolargs+=(--bb-user "$bbuser" --bb-cli "$bbcli" --bb-url "$bburl")
+  for e in "${bbenv[@]}"; do toolargs+=(--bb-env "$e"); done
+fi
+python3 "$here/../../tools.py" install "${toolargs[@]}" || echo "инструменты: установка с ошибками, см. список выше" >&2
 echo "агент $agent готов: дом $home, группа $group, обёртка $lib/$agent"
 [ "$newgrp_bb" = 1 ] && echo "ВНИМАНИЕ: $bbuser добавлен в группу $group — перезапустите службу BB агентов, иначе она не увидит папку агента"

@@ -15,12 +15,13 @@ import subprocess
 from pathlib import Path
 
 EMPLOYEE_FIELDS = {"kind", "machine", "bot", "provider", "model", "timezone", "groups",
-                   "quiet_hours", "reminders", "description"}
+                   "quiet_hours", "reminders", "description", "tools", "mcp"}
 NOT_COMPARED = ("quiet_hours", "reminders")
 SKILL_DIRS = (Path(".claude") / "skills", Path(".agents") / "skills")
 EXCLUDE_BEGIN = "# vallis-organization: installation files (managed by setup.py)"
 EXCLUDE_END = "# vallis-organization: end"
-INSTALLATION_FILES = ("local/", "projects.md", ".bb/hooks/", ".codex/hooks.json", ".claude/settings.json")
+INSTALLATION_FILES = ("local/", "projects.md", ".bb/hooks/", ".codex/hooks.json", ".claude/settings.json",
+                      ".mcp.json", ".codex/config.toml")
 
 
 def load_yaml(path):

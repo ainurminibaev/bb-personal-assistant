@@ -18,9 +18,9 @@ export default async function personalAssistant(bb: BbPluginApi) {
 
   bb.agents.configure(({project, thread}) =>
     matches(project.id, thread.id)
-      ? { instructions: policy, skills: ["dispatch", "integrations", "task-tracking"], tools: [] }
-      // Every conversation keeps the tasks given in it: groups and people's chats too.
-      : { skills: ["task-tracking"], tools: [] }
+      ? { instructions: policy, skills: ["dispatch", "integrations", "task-tracking", "agent-mail"], tools: [] }
+      // Every conversation keeps the tasks given in it and can get the agent's own mail: groups and people's chats too.
+      : { skills: ["task-tracking", "agent-mail"], tools: [] }
   );
 
   // The built plugin runs from dist/; the guard ships next to it in the package root.

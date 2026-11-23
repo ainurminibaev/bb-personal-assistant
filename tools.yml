@@ -1,0 +1,104 @@
+# Общие инструменты платформы: что получает каждая установка.
+#
+# Установщик ставит каждую позицию, которая подходит виду установки (installs) и не исключена
+# организацией или сотрудником. Позиция, которой нужен вход, ставится, а установщик печатает
+# «нужен вход» и идёт дальше. core — основа установки: исключить нельзя.
+#
+# Виды установки: assistant — личный помощник, employee — сотрудник организации,
+# agents — агент под своей учётной записью в BB агентов (deploy/agents).
+#
+# Как ставится (kind):
+#   plugin — плагин BB: из git-источника (как у владельца, с диапазоном версий; обновляется штатно)
+#            или из штатного каталога BB (builtin:<id>); subdirectory и tag_prefix — для плагина в папке
+#            общего репозитория с метками <id>/vX.Y.Z;
+#   npm    — пакет npm и его собственная настройка агентов (setup);
+#   skill  — папка навыка из git-метки: в ~/.agents/skills (Codex) и ~/.claude/skills (Claude Code) учётки агента,
+#            или навык, который приходит с плагином (plugin: <id>);
+#   setting — что нужно настроить после установки (переменная или файл в закрытой папке); нет — «нужна настройка».
+#   hook   — сценарий-хук из git-метки, ставится собственной командой --apply в настройки учётки;
+#   service — служба сервера, одна на сервер вне любого BB: ставит установщик общих служб, здесь — только состояние.
+# Описание формата и уровней — docs/tools.md.
+
+tools:
+  telegram-projects:
+    what: Мост Telegram — чат и группы, поиск по истории переписки, отправка
+    kind: plugin
+    source: git:https://github.com/ainurminibaev/bb-plugin-telegram-projects.git@semver:^0.9.1-personal.24
+    core: true
+    installs: [assistant, employee]
+    login: токен бота Telegram (шаги подключения — README)
+
+  personal-assistant:
+    what: Плагин платформы — ведение поручений (task-tracking), делегирование, замок гостевых тредов
+    kind: plugin
+    source: git:https://github.com/ainurminibaev/bb-personal-assistant.git@semver:^0.4.0
+    core: true
+    installs: [assistant, employee, agents]
+
+  knowledge-base:
+    what: Личная база знаний
+    kind: plugin
+    source: git:https://github.com/ainurminibaev/bb-personal-assistant.git@semver:^0.4.0
+    subdirectory: plugins/knowledge-base
+    installs: [assistant]
+
+  image-gen:
+    what: Генерация и правка картинок при любой модели агента; рисует Codex
+    kind: plugin
+    source: git:https://github.com/ainurminibaev/bb-config.git@^0.1.0
+    subdirectory: plugins/image-gen
+    tag_prefix: image-gen/
+    installs: [assistant, employee, agents]
+    login: вход Codex учётки, под которой работает BB (один на сервер)
+    login_check: ~/.codex/auth.json
+
+  context-mode:
+    what: Большие выводы команд остаются вне контекста агента; Codex и Claude Code
+    kind: npm
+    package: context-mode
+    version: 2.2.1
+    agents: [codex, claude-code]
+    installs: [assistant, employee, agents]
+
+  agent-compat:
+    what: Навык совместимости правил — AGENTS.md главный, CLAUDE.md одной строкой @AGENTS.md
+    kind: skill
+    repo: https://github.com/ainurminibaev/bb-config.git
+    ref: shared-guides/v0.1.0
+    path: plugins/shared-guides/skills/agent-compat
+    present_with_plugin: shared-guides
+    installs: [assistant, employee, agents]
+
+  agent-mail:
+    what: Своя почта агента — завести ящик через API почтового сервиса и читать письма с кодами
+    kind: skill
+    plugin: personal-assistant        # навык-инструкция приходит с плагином платформы
+    setting:
+      what: ключ почтового сервиса (настройка организации или владельца)
+      env: AGENTMAIL_API_KEY
+      file: ~/.secrets/agentmail.key
+    installs: [assistant, employee, agents]
+
+  claude-md-guard:
+    what: Хук Claude Code — в CLAUDE.md только импорт @AGENTS.md, правила идут в AGENTS.md
+    kind: hook
+    repo: https://github.com/ainurminibaev/bb-config.git
+    ref: v1.16.0
+    path: scripts/claude_md_guard.py
+    installs: [assistant, employee, agents]
+
+  browser:
+    what: Браузер агента — открывать страницы, читать, нажимать, заполнять формы, снимки (штатный BB)
+    kind: plugin
+    source: builtin:browser-automation
+    installs: [assistant, employee, agents]
+    login: входы на сайты у каждого агента свои, общих нет
+
+  speech:
+    what: Расшифровка речи каскадом — выбор исполнителя, русская и татарская модели, Codex; одна служба на сервер
+    kind: service
+    check_commands: [voice-to-text]
+    check_units: {ru: bb-speech-ru.socket, multi: bb-speech-multi.socket}   # по профилям службы
+    state_file: /var/lib/bb-speech/state.json   # пишет установщик службы: state, reason, profiles
+    install: служба сервера, ставится установщиком общих служб на сервер сотрудника
+    installs: [assistant, employee, agents]
