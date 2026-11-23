@@ -1,0 +1,18 @@
+#!/bin/bash
+# Уже под учёткой агента (через sudo из runner): своё окружение и обычный CLI.
+#   agent-exec <claude|codex> [аргументы]
+set -euo pipefail
+kind=$1; shift
+me=$(id -un)
+export HOME=$(getent passwd "$me" | cut -d: -f6) USER="$me" LOGNAME="$me"
+export CODEX_HOME="$HOME/.codex"
+# Общие программы сервера (пути задаёт установщик); команда bb подменена подсказкой про инструмент.
+CLAUDE_BIN=claude CODEX_BIN=codex TOOLS_PATH=/usr/local/bin
+[ -r /etc/bb-agents/agents.env ] && . /etc/bb-agents/agents.env
+export PATH="/usr/local/lib/bb-agents/$me/bin:$TOOLS_PATH:/usr/local/bin:/usr/bin:/bin"
+umask 007
+case "$kind" in
+  claude) exec "$CLAUDE_BIN" "$@";;
+  codex) exec "$CODEX_BIN" "$@";;
+  *) echo "неизвестный вид хода: $kind" >&2; exit 64;;
+esac

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Общий codex / claude первым в PATH службы BB (каталог /usr/local/lib/bb-agents/shim).
+# BB запускает CLI в рабочей папке окружения. Папка под домом зарегистрированного агента — ход идёт
+# под учёткой агента (обёртка runner); иначе — обычный CLI учётки BB. Агенту нельзя выбрать окружение
+# вне своей домашней папки (это правило инструмента project_command), поэтому подменить агента нельзя.
+kind=$(basename "$0")
+cwd=$(pwd -P)
+lib=/usr/local/lib/bb-agents
+if [ -r /etc/bb-agents/firewall.conf ]; then
+  for agent in $(sed -n 's/^agent //p' /etc/bb-agents/firewall.conf); do
+    home=$(getent passwd "$agent" | cut -d: -f6)
+    case "$cwd/" in "$home"/*) exec "$lib/$agent/$kind" "$@";; esac
+  done
+fi
+# Не агент: обычный CLI — следующий в PATH после этого каталога.
+PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx "$lib/shim" | paste -sd: -)
+export PATH
+exec "$kind" "$@"

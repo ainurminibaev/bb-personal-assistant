@@ -1,0 +1,28 @@
+# Служба BB агентов (отдельный от BB владельца). Ставится в /etc/systemd/system/bb-agents.service.
+# Память: вся служба — MemoryMax; сам BB — в подгруппе main с гарантией memory.min; ходы агентов — в
+# agents/<агент> со своим пределом (их создаёт обёртка runner, настройки — /etc/bb-agents/agents.env).
+[Unit]
+Description=BB агентов (отдельный от BB владельца)
+After=network-online.target
+
+[Service]
+User=bbagents
+Group=bbagents
+WorkingDirectory=/var/lib/bbagents
+UMask=0077
+Environment=HOME=/var/lib/bbagents
+Environment=PATH=/usr/local/lib/bb-agents/shim:/opt/bb-agents/tools/node_modules/.bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/bb-agents/tools/node_modules/.bin/bb-app --bundled --no-in-app-updates --data-dir /var/lib/bbagents/data --server-bind-host 127.0.0.1 --server-port 39300 --host-daemon-port 39301
+ExecStartPost=-+/bin/sh -c 'r=/sys/fs/cgroup/system.slice/bb-agents.service; echo "+memory +pids" > $r/cgroup.subtree_control; echo 1G > $r/main/memory.min'
+Restart=on-failure
+RestartSec=10
+Delegate=memory pids
+DelegateSubgroup=main
+MemoryMax=7G
+MemoryHigh=6G
+CPUWeight=20
+IOWeight=20
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

@@ -83,6 +83,10 @@ Every Telegram conversation is its own BB thread in the same project: your priva
 
 Connecting a personal Telegram account for old channel history is optional. Its session key grants account-wide access. Channel selection limits searches in the connector. The server operator controls the machine handling the session and the two-step verification password. For a shared Linux installation, give the coordinator access to the restricted search socket and keep the key under its own unprivileged account. [Private history service setup](telegram-account/PRIVATE-HISTORY.md).
 
+## Several agents on one server
+
+Agents run under their own Linux accounts in one agents BB, separate from the owner's BB: a wall (file rights and firewall), a scoped BB command tool, turns under the agent's account and a per-agent memory limit. Install order (Russian): [deploy/agents/README.md](deploy/agents/README.md).
+
 ## Updates
 
 The installer also adds the **Knowledge Base** plugin from the `plugins/knowledge-base` folder of the same release. Its `root` setting is the base folder on the BB server, `~/knowledge-base` by default; an empty git base is created there on first use. Agents in any project search, read and add items with `kb_search`, `kb_read`, `kb_topics`, `kb_add`, and you can use `bb kb`.

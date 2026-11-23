@@ -1,0 +1,49 @@
+#!/bin/bash
+# Запускается BB (под учёткой BB) вместо claude / codex app-server для тредов агента.
+#   runner <claude|codex> <учётка агента> [аргументы CLI]
+# 1) навыки хода (--plugin-dir во временной папке BB, закрытой от агента) копируются в ~/.bb-runtime агента;
+# 2) хранилище треда — ~/.bb-thread-storage/<тред> агента;
+# 3) ход передаётся агенту через sudo: только agent-exec и только переменные хода.
+set -euo pipefail
+kind=$1; agent=$2; shift 2
+home=$(getent passwd "$agent" | cut -d: -f6)
+umask 007
+args=()
+for a in "$@"; do
+  case "$a" in
+    --plugin-dir=*)
+      src=${a#--plugin-dir=}
+      dst="$home/.bb-runtime/skills/$(basename "$src")"
+      rm -rf "$dst"; mkdir -p "$dst"; cp -R "$src/." "$dst/"; chmod -R g+rwX "$dst"
+      args+=("--plugin-dir=$dst");;
+    *) args+=("$a");;
+  esac
+done
+if [ -n "${BB_THREAD_ID:-}" ]; then
+  export BB_THREAD_STORAGE="$home/.bb-thread-storage/$BB_THREAD_ID"
+  mkdir -p "$BB_THREAD_STORAGE"
+fi
+# Свой срез памяти агента: подгруппы службы BB агентов делегированы её учётке (Delegate=yes, DelegateSubgroup=main),
+# обёртка переносит себя в <служба>/agents/<агент> до sudo — Codex/Claude агента и всё, что они запустят, наследуют
+# группу и предел. Ошибка переноса не мешает ходу (предупреждение в журнал службы).
+. /etc/bb-agents/agents.env 2>/dev/null || true
+place_in_slice() {
+  local own root dir
+  own=$(sed -n 's/^0:://p' /proc/self/cgroup); root=/sys/fs/cgroup${own%%/main*}
+  [ "$root" != "/sys/fs/cgroup$own" ] && [ -w "$root/cgroup.subtree_control" ] || return 1
+  mkdir -p "$root/agents" || return 1
+  grep -q memory "$root/agents/cgroup.subtree_control" || echo "+memory +pids" > "$root/agents/cgroup.subtree_control" || return 1
+  dir=$root/agents/$agent
+  [ -d "$dir" ] || mkdir "$dir" || return 1
+  # Только жёсткий предел: мягкий (memory.high) без подкачки не завершает процесс, а почти останавливает — ход зависает.
+  echo "${AGENT_MEMORY_MAX:-1G}" > "$dir/memory.max"; echo "${AGENT_MEMORY_HIGH:-max}" > "$dir/memory.high"
+  echo 0 > "$dir/memory.swap.max" 2>/dev/null || true; echo "${AGENT_PIDS_MAX:-256}" > "$dir/pids.max"
+  echo $$ > "$dir/cgroup.procs"
+}
+place_in_slice || echo "bb-agents runner: срез памяти агента $agent не назначен (нет делегирования подгрупп)" >&2
+# Codex: навыки BB приходят сообщением протокола — их передаёт codex-proxy (копирует в папку агента).
+if [ "$kind" = codex ]; then
+  exec "${NODE_BIN:-node}" /usr/local/lib/bb-agents/codex-proxy.mjs "$agent" "${args[@]}"
+fi
+exec sudo -n -u "$agent" --preserve-env=BB_THREAD_ID,BB_PROJECT_ID,BB_ENVIRONMENT_ID,BB_THREAD_STORAGE,BB_APP_SURFACE \
+  /usr/local/lib/bb-agents/agent-exec "$kind" "${args[@]}"
