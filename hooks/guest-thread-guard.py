@@ -294,6 +294,12 @@ def guest_bb_allowed(args, scope):
                 return True
             return bool(targets) and all(scope.owns(t) for t in targets)
         return False
+    if head == ["thread-cleanup", "task"]:
+        # A guest marks only its own task sub-threads open or closed.
+        targets = [a for a in positionals(args[2:]) if a.startswith("thr_")]
+        return "--self" in args or (bool(targets) and all(scope.owns(t) for t in targets))
+    if head[:1] == ["thread-cleanup"]:
+        return False
     if len(head) == 2 and head[0] == "automation":
         # A schedule that spawns a new thread on each run would start outside the guest conversation.
         if any(f in args or flag(args, f) for f in RUN_ELSEWHERE):

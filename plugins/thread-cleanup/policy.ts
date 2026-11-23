@@ -21,6 +21,8 @@ export interface CleanupConfig {
   exemptTitleMarkers: readonly string[];
   /** Thread ids never touched (bindings reported by other plugins). */
   protectedThreadIds: ReadonlySet<string>;
+  /** Hours an open task may sit quiet before the owner hears about it. */
+  taskStaleHours: number;
 }
 
 export interface ThreadRow {
@@ -37,6 +39,8 @@ export interface ThreadRow {
   lastReadAt: number | null;
   hasPendingInteraction: boolean;
   queuedWork: string;
+  parentNotifications?: string | null;
+  originPluginId?: string | null;
   environmentId?: string | null;
   environmentIsWorktree?: boolean | null;
   activity?: Record<string, number | undefined> | null;
@@ -59,6 +63,8 @@ export interface ThreadFacts {
   scheduled: boolean;
   liveChildren: number;
   workspace: WorkspaceState;
+  /** Task mark this module keeps in the thread's plugin metadata. */
+  taskMark: "open" | "closed" | null;
 }
 
 export type Kind = "subthread" | "hidden" | "root";
@@ -83,6 +89,19 @@ export function inScope(t: ThreadRow, cfg: CleanupConfig): boolean {
   return true;
 }
 
+/**
+ * A task sub-thread (an assignment kept until its result is checked) is told
+ * apart by structure, not by words: it was marked by `bb thread-cleanup task`,
+ * or it was spawned so that its turns do not wake the parent
+ * (`--parent-notifications stuck|off`), which is how the task skill opens one.
+ * Schedule runs are spawned the same way and are not tasks.
+ */
+export function isTask(t: ThreadRow, f: ThreadFacts): boolean {
+  if (f.taskMark) return true;
+  if (!t.parentThreadId || t.originPluginId === "automations") return false;
+  return t.parentNotifications === "stuck" || t.parentNotifications === "off";
+}
+
 export function decide(t: ThreadRow, f: ThreadFacts, cfg: CleanupConfig, now: number): Verdict {
   const keep: string[] = [];
   let attention: string | null = null;
@@ -103,7 +122,7 @@ export function decide(t: ThreadRow, f: ThreadFacts, cfg: CleanupConfig, now: nu
 
   if (t.status === "error" || (f.lastTurn && f.lastTurn.status !== "completed")) {
     keep.push(`last turn ${f.lastTurn?.status ?? "error"}`);
-    attention = `last turn ${f.lastTurn?.status ?? "error"}`;
+    attention = `последний ход: ${f.lastTurn?.status ?? "error"}`;
   } else if (!f.lastTurn) {
     keep.push("no finished turn");
   }
@@ -112,19 +131,28 @@ export function decide(t: ThreadRow, f: ThreadFacts, cfg: CleanupConfig, now: nu
   const lastAt = Math.max(f.lastActivityAt, f.lastTurn?.at ?? 0);
   if (now - lastAt < hours * HOUR_MS) keep.push(`active within ${hours} h`);
 
-  if (f.lastTurn && f.lastTurn.status === "completed" && !resultArrived(t, f)) keep.push("result not picked up");
+  const task = isTask(t, f);
+  // Reversed rule for tasks: only an explicit close lets one go.
+  if (task && f.taskMark !== "closed") keep.push("open task");
+  if (f.lastTurn && f.lastTurn.status === "completed" && !(task && f.taskMark === "closed") && !resultArrived(t, f)) keep.push("result not picked up");
 
   if (f.workspace === "dirty") {
     keep.push("uncommitted or unmerged work");
-    attention ??= "uncommitted or unmerged work";
+    attention ??= "в рабочей копии несохранённая или невлитая работа";
   } else if (f.workspace === "unknown") {
     keep.push("workspace not checked");
-    attention ??= "workspace not checked";
+    attention ??= "рабочую копию не удалось проверить";
   }
 
   // Attention only matters for threads that are otherwise done and old.
-  const onlyAttention = keep.every(k => k === attention || k.startsWith("last turn") || k === "uncommitted or unmerged work" || k === "workspace not checked");
-  return { archive: keep.length === 0, keep, attention: keep.length && onlyAttention ? attention : null };
+  const flags = new Set(["open task", "result not picked up", "uncommitted or unmerged work", "workspace not checked"]);
+  const onlyAttention = keep.every(k => flags.has(k) || k.startsWith("last turn"));
+  if (!(keep.length && onlyAttention)) attention = null;
+  // An open task quiet for long is the owner's question, whatever else holds it.
+  const quietH = (now - lastAt) / HOUR_MS;
+  if (task && f.taskMark !== "closed" && !keep.includes("running") && !f.scheduled && quietH >= cfg.taskStaleHours)
+    attention = `поручение без движения ${quietH < 48 ? `${Math.floor(quietH)} ч` : `${Math.floor(quietH / 24)} сут`}`;
+  return { archive: keep.length === 0, keep, attention };
 }
 
 /**

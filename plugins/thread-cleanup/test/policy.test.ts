@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { decide, HOUR_MS, inScope, parseHours, parseList, resultArrived, type CleanupConfig, type ThreadFacts, type ThreadRow } from "../policy.ts";
 
 const NOW = 1_800_000_000_000;
-const cfg: CleanupConfig = { subthreadHours: 24, rootHours: 0, exemptProjects: [], exemptTitleMarkers: ["⏳"], protectedThreadIds: new Set() };
+const cfg: CleanupConfig = { subthreadHours: 24, rootHours: 0, exemptProjects: [], exemptTitleMarkers: ["⏳"], protectedThreadIds: new Set(), taskStaleHours: 168 };
 
 const row = (o: Partial<ThreadRow> = {}): ThreadRow => ({
   id: "thr_child", projectId: "proj_a", title: "Сделать отчёт", status: "idle", parentThreadId: "thr_parent",
@@ -13,7 +13,7 @@ const row = (o: Partial<ThreadRow> = {}): ThreadRow => ({
 const done = NOW - 48 * HOUR_MS;
 const facts = (o: Partial<ThreadFacts> = {}): ThreadFacts => ({
   lastTurn: { at: done, status: "completed" }, lastActivityAt: done, parentLastTurnAt: done + HOUR_MS, parentArchived: false,
-  pendingQuestion: false, queuedMessages: 0, scheduled: false, liveChildren: 0, workspace: "none", ...o,
+  pendingQuestion: false, queuedMessages: 0, scheduled: false, liveChildren: 0, workspace: "none", taskMark: null, ...o,
 });
 
 test("finished sub-thread whose result the parent picked up goes to the archive", () => {
@@ -55,7 +55,7 @@ test("protected threads and exempt projects stay", () => {
 test("a thread that failed stays and is flagged once for the owner", () => {
   const v = decide(row({ status: "error" }), facts({ lastTurn: { at: done, status: "failed" } }), cfg, NOW);
   assert.equal(v.archive, false);
-  assert.equal(v.attention, "last turn failed");
+  assert.equal(v.attention, "последний ход: failed");
   const young = decide(row({ status: "error" }), facts({ lastTurn: { at: NOW - HOUR_MS, status: "failed" }, lastActivityAt: NOW - HOUR_MS }), cfg, NOW);
   assert.equal(young.attention, null, "not flagged before the term");
 });
@@ -88,4 +88,31 @@ test("settings parsing", () => {
   assert.equal(parseHours("72", 0), 72);
   assert.equal(parseHours("x", 24), 24);
   assert.equal(parseHours("-1", 24), 24);
+});
+
+const task = (o: Partial<ThreadRow> = {}) => row({ parentNotifications: "stuck", title: "ждём ответа Виктора", ...o });
+
+test("open task without a schedule stays, however old; the owner hears after the stale term", () => {
+  const v = decide(task(), facts(), cfg, NOW);
+  assert.equal(v.archive, false);
+  assert.ok(v.keep.includes("open task"));
+  assert.equal(v.attention, null, "2 days: no line yet");
+  const old = NOW - 8 * 24 * HOUR_MS;
+  const s = decide(task(), facts({ lastTurn: { at: old, status: "completed" }, lastActivityAt: old }), cfg, NOW);
+  assert.equal(s.archive, false);
+  assert.equal(s.attention, "поручение без движения 8 сут");
+  assert.equal(decide(task(), facts({ lastTurn: { at: old, status: "completed" }, lastActivityAt: old, scheduled: true }), cfg, NOW).attention, null, "a schedule tracks it");
+});
+
+test("a task is told by structure: stuck/off spawn or the module's mark, not by its title", () => {
+  assert.ok(decide(task({ parentNotifications: "off" }), facts(), cfg, NOW).keep.includes("open task"));
+  assert.ok(decide(row({ title: "просто работа" }), facts({ taskMark: "open" }), cfg, NOW).keep.includes("open task"));
+  assert.equal(decide(row({ title: "⏳ нет — это не метка", parentNotifications: "auto" }), facts(), { ...cfg, exemptTitleMarkers: [] }, NOW).archive, true);
+  assert.equal(decide(task({ originPluginId: "automations" }), facts(), cfg, NOW).archive, true, "schedule runs are not tasks");
+});
+
+test("closed task goes, even though its parent was never woken", () => {
+  const v = decide(task({ title: "готово, проверено" }), facts({ taskMark: "closed", parentLastTurnAt: null }), cfg, NOW);
+  assert.equal(v.archive, true, String(v.keep));
+  assert.equal(decide(task(), facts({ taskMark: "closed", lastActivityAt: NOW - HOUR_MS }), cfg, NOW).archive, false, "still the 24 h term");
 });

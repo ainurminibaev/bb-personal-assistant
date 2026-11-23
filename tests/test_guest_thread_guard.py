@@ -79,6 +79,16 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread update thr_owner --title x"}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread update thr_child --clear-parent-thread"}), 2)
 
+    def test_guest_marks_only_its_own_task_subthreads(self):
+        ok = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 0, c)
+        no = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 2, c)
+        ok("bb thread-cleanup task thr_child open")
+        ok("bb thread-cleanup task thr_child closed")
+        ok("bb thread-cleanup task --self closed")
+        no("bb thread-cleanup task thr_owner closed")
+        no("bb thread-cleanup run")
+        no("bb thread-cleanup restore --last-run")
+
     def test_guest_may_read_help_and_its_own_thread(self):
         for cmd in ("bb thread spawn --help", "bb thread show --json", "bb thread context --self --json",
                     "bb skill list", "bb help"):

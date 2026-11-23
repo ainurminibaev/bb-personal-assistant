@@ -14,7 +14,7 @@ import {
 const PAGE = 100;
 const JOURNAL_MAX = 1000;
 
-interface RunOptions { dryRun: boolean; maxArchives: number; signal?: AbortSignal; now?: number }
+interface RunOptions { dryRun: boolean; maxArchives: number; signal?: AbortSignal; now?: number; only?: ReadonlySet<string> }
 interface Decision { id: string; projectId: string; title: string; kind: string; archive: boolean; keep: string[]; attention: string | null }
 export interface RunResult {
   at: number; dryRun: boolean; scanned: number; checked: number;
@@ -68,6 +68,19 @@ async function protectedByPlugins(sdk: Sdk, specs: string[]): Promise<Set<string
   return out;
 }
 
+/** Task marks this module keeps in thread plugin metadata. */
+async function taskMarks(bb: BbPluginApi, ids: string[], signal?: AbortSignal): Promise<Map<string, "open" | "closed">> {
+  const out = new Map<string, "open" | "closed">();
+  for (let i = 0; i < ids.length; i += 100) {
+    const res = await bb.sdk.threads.experimental_listPluginMetadata({ pluginId: bb.pluginId, threadIds: ids.slice(i, i + 100), signal });
+    for (const r of res.threads) {
+      const m = (r.metadata as { task?: unknown }).task;
+      if (m === "open" || m === "closed") out.set(r.threadId, m);
+    }
+  }
+  return out;
+}
+
 async function lastTurn(sdk: Sdk, threadId: string, signal?: AbortSignal) {
   const ev = await sdk.threads.events.list({ threadId, types: ["turn/completed"], order: "desc", limit: "1", signal }) as unknown as { createdAt: number; data?: { status?: string } }[];
   return ev[0] ? { at: ev[0].createdAt, status: ev[0].data?.status ?? "unknown" } : null;
@@ -101,11 +114,12 @@ export async function runCleanup(bb: BbPluginApi, cfg: CleanupConfig, opts: RunO
   const live = new Map<string, number>();
   for (const t of threads) if (t.parentThreadId) live.set(t.parentThreadId, (live.get(t.parentThreadId) ?? 0) + 1);
 
-  const scope = threads.filter(t => inScope(t, cfg));
+  const scope = threads.filter(t => inScope(t, cfg) && (!opts.only || opts.only.has(t.id)));
   // Fail closed: without schedules or bindings nothing is archived.
   const scheduled = await scheduledThreads(sdk, scope.map(t => t.projectId));
   const bound = await protectedByPlugins(sdk, opts.protectionRpcs);
   const config: CleanupConfig = { ...cfg, protectedThreadIds: new Set([...cfg.protectedThreadIds, ...bound]) };
+  const marks = await taskMarks(bb, scope.map(t => t.id), opts.signal);
 
   const res: RunResult = { at: now, dryRun: opts.dryRun, scanned: threads.length, checked: 0, archived: [], wouldArchive: [], errors: [], attention: [], kept: {} };
   const parentTurn = new Map<string, number | null>();
@@ -132,7 +146,7 @@ export async function runCleanup(bb: BbPluginApi, cfg: CleanupConfig, opts: RunO
       lastTurn: turn, lastActivityAt: activity, parentLastTurnAt, parentArchived,
       pendingQuestion: asks.some(a => a.status === "pending"),
       queuedMessages: queue.length, scheduled: scheduled.has(t.id), liveChildren: live.get(t.id) ?? 0,
-      workspace: "none",
+      workspace: "none", taskMark: marks.get(t.id) ?? null,
     };
     let v = decide(t, facts, config, now);
     // The workspace check is slow (remote hosts); only for threads that otherwise go.
@@ -197,6 +211,7 @@ export default async function plugin(bb: BbPluginApi) {
     protectedThreads: { type: "string", label: "Треды-исключения", description: "Id тредов через запятую.", default: "" },
     protectionRpcs: { type: "string", label: "Привязки из плагинов", description: "pluginId.method через запятую; метод возвращает id тредов, привязанных к чатам. Недоступен — уборка не идёт.", default: "" },
     maxArchives: { type: "string", label: "Предел архиваций за запуск", default: "100" },
+    taskStaleHours: { type: "string", label: "Поручение без движения, часов", description: "Открытое поручение не архивируется; после этого срока без движения владелец получает строку.", default: "168" },
     dryRun: { type: "boolean", label: "Только сухой прогон", description: "Показывать, что ушло бы в архив, ничего не трогая.", default: false },
   });
 
@@ -208,6 +223,7 @@ export default async function plugin(bb: BbPluginApi) {
       exemptProjects: parseList(v.exemptProjects),
       exemptTitleMarkers: parseList(v.exemptTitleMarkers),
       protectedThreadIds: new Set(parseList(v.protectedThreads)),
+      taskStaleHours: parseHours(v.taskStaleHours, 168) || 168,
     };
     return { cfg, dryRun: Boolean(v.dryRun), maxArchives: parseHours(v.maxArchives, 100), protectionRpcs: parseList(v.protectionRpcs) };
   }
@@ -226,16 +242,20 @@ export default async function plugin(bb: BbPluginApi) {
     name: "thread-cleanup",
     summary: "Уборка законченных подтредов в архив",
     commands: [
-      { name: "run", summary: "Запустить уборку сейчас", usage: "bb thread-cleanup run [--dry-run]" },
+      { name: "run", summary: "Запустить уборку сейчас; --only — только эти треды (по тому же правилу)", usage: "bb thread-cleanup run [--dry-run] [--only thr_a,thr_b]" },
       { name: "status", summary: "Итог последнего запуска и настройки", usage: "bb thread-cleanup status" },
       { name: "log", summary: "Журнал убранного", usage: "bb thread-cleanup log [--limit N]" },
+      { name: "task", summary: "Отметить подтред поручением: открыто или закрыто", usage: "bb thread-cleanup task <thread-id>|--self open|closed" },
       { name: "restore", summary: "Вернуть тред или весь последний заход", usage: "bb thread-cleanup restore <thread-id>|--last-run" },
     ],
     async run(argv, ctx) {
       const [sub, ...rest] = argv;
       if (sub === "run") {
         const r = await resolve();
-        const res = await runCleanup(bb, r.cfg, { ...r, dryRun: r.dryRun || rest.includes("--dry-run"), signal: ctx.signal });
+        const i = rest.indexOf("--only");
+        const only = i >= 0 ? new Set(parseList(rest[i + 1])) : undefined;
+        if (only && !only.size) return { exitCode: 2, stderr: "--only needs thread ids" };
+        const res = await runCleanup(bb, r.cfg, { ...r, only, dryRun: r.dryRun || rest.includes("--dry-run"), signal: ctx.signal });
         return { exitCode: 0, stdout: formatRun(res, true) };
       }
       if (sub === "status") {
@@ -250,6 +270,13 @@ export default async function plugin(bb: BbPluginApi) {
         const j = ((await bb.storage.kv.get<JournalEntry[]>("journal")) ?? []).slice(-n);
         return { exitCode: 0, stdout: j.map(e => `${new Date(e.at).toISOString()} ${e.id}${e.restoredAt ? " (возвращён)" : ""} ${e.title.slice(0, 70)}`).join("\n") || "пусто" };
       }
+      if (sub === "task") {
+        const state = rest.find(a => a === "open" || a === "closed");
+        const threadId = rest.includes("--self") ? ctx.threadId : rest.find(a => a.startsWith("thr_"));
+        if (!state || !threadId) return { exitCode: 2, stderr: "usage: bb thread-cleanup task <thread-id>|--self open|closed" };
+        await bb.sdk.threads.updatePluginMetadata({ threadId, pluginId: bb.pluginId, set: { task: state, at: Date.now() } });
+        return { exitCode: 0, stdout: `${threadId}: поручение ${state === "open" ? "открыто" : "закрыто"}` };
+      }
       if (sub === "restore") {
         const journal = (await bb.storage.kv.get<JournalEntry[]>("journal")) ?? [];
         const lastAt = Math.max(0, ...journal.map(e => e.at));
@@ -263,7 +290,7 @@ export default async function plugin(bb: BbPluginApi) {
         await bb.storage.kv.set("journal", journal);
         return { exitCode: failed.length ? 1 : 0, stdout: `возвращено ${done.length}`, stderr: failed.join("\n") || undefined };
       }
-      return { exitCode: 2, stderr: "usage: bb thread-cleanup <run|status|log|restore>" };
+      return { exitCode: 2, stderr: "usage: bb thread-cleanup <run|status|log|task|restore>" };
     },
   });
 }
