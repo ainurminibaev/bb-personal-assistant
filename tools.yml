@@ -155,6 +155,8 @@ tools:
     login:
       what: свой Google-аккаунт агента (навык google-workspace, с «да» владельца)
       dir: ~/.secrets/google-workspace
+      backup: GOOGLE_WORKSPACE_LOGIN    # копия входа в хранилище; её дата — дата входа
+      max_age_days: 7                   # приложение Google в режиме Testing: вход живёт 7 дней (убрать после публикации)
     default: false
     installs: [assistant, employee]
 

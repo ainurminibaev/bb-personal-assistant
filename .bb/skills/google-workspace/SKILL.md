@@ -16,12 +16,16 @@ described in your spaces (`bb personal-assistant tools`, the space's description
 - `installed` — work.
 - `needs_setup` — a program or the key of the organization's Google application is missing: tell the owner in one
   line; the administrator gives the key (`vallis-secret grant` / `receive`). Do not look for keys anywhere else.
-- `needs_login` — your Google account is not logged in: follow «Login» below.
+- `needs_login` — your Google account is not logged in, or the login has expired: follow «Login» below.
+  While the organization's Google application is in testing mode, a login lasts **7 days**: the list says when it
+  expires («expires tomorrow» — ask the owner to log in again before it stops).
 - `error` — say the reason in one line; a revoked or expired login is logged in again the same way.
 
 ## Login (a human step)
 
-Never log in on your own and never use a person's Google account.
+Never log in on your own and never use a person's Google account. While the application is in testing mode,
+your account must be on its list of test users (the owner adds it in the Google console, «Audience → Test users»);
+otherwise Google refuses the login.
 
 1. Ask the owner in one message: «Нужен вход в мой Google-аккаунт <адрес> для диска, документов и таблиц.
    Разрешаете?» Wait for a yes.
@@ -33,7 +37,8 @@ Never log in on your own and never use a person's Google account.
    They log in **as you** and allow Drive, Docs and Sheets.
 4. When the MCP reports the login, close the address (`bb connect unexpose <port>`), check with a list of
    files, and keep a copy of the login in your store: `vallis-secret import GOOGLE_WORKSPACE_LOGIN --file <the
-   new file in ~/.secrets/google-workspace> --what "вход Google-аккаунта <адрес>"`.
+   new file in ~/.secrets/google-workspace> --what "вход Google-аккаунта <адрес>"`. Do it after **every** login:
+   the date of this copy is the date the tools list counts the 7 days from.
 5. **If the return through the shared address does not work:** the person logs in on their own computer with the
    same application (the administrator gives them the steps), and the resulting login file comes to you as an
    organization key file: the administrator runs `vallis-secret grant GOOGLE_WORKSPACE_LOGIN --to <your public key>

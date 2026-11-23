@@ -558,21 +558,42 @@ def _mcp_tool_state(name, tool, level, account):
     missing = [p for p in tool.get("requires", []) if not account.which(p)]
     if missing:
         return _row(name, tool, level, "needs_setup", f"not installed: {', '.join(missing)}", RERUN)
-    if tool.get("secrets"):
+    stored = {}
+    if tool.get("secrets") or (tool.get("login") or {}).get("backup"):
         listed = account.run("vallis-secret", "list", "--json") if account.which("vallis-secret") else None
         try:
-            have = {r["name"] for r in json.loads(listed.stdout)["secrets"]} if listed else set()
+            stored = {r["name"]: r for r in json.loads(listed.stdout)["secrets"]} if listed else {}
         except (ValueError, KeyError, TypeError):
-            have = set()
-        lacking = [k for k in tool["secrets"] if k not in have]
-        if lacking:
-            return _row(name, tool, level, "needs_setup", "no key of the application in the credentials store",
-                        "the administrator grants " + ", ".join(lacking) + " (vallis-secret grant / receive)")
+            stored = {}
+    lacking = [k for k in tool.get("secrets", []) if k not in stored]
+    if lacking:
+        return _row(name, tool, level, "needs_setup", "no key of the application in the credentials store",
+                    "the administrator grants " + ", ".join(lacking) + " (vallis-secret grant / receive)")
+    login = tool.get("login") or {}
+    what = login.get("what", "a login")
     folder = _login_dir(tool, account)
     if folder and not (folder.is_dir() and any(p.is_file() for p in folder.iterdir())):
-        login = (tool.get("login") or {}).get("what", "a login")
-        return _row(name, tool, level, "needs_login", f"no login: {login}",
+        return _row(name, tool, level, "needs_login", f"no login: {what}",
                     "log in with the owner's yes (google-workspace skill)")
+    days = login.get("max_age_days")
+    if days:
+        import datetime
+        copy = stored.get(login.get("backup") or "")
+        try:
+            since = datetime.date.fromisoformat(str((copy or {}).get("updated") or "")[:10])
+        except ValueError:
+            since = None
+        if since is None:
+            return _row(name, tool, level, "installed",
+                        f"the login lasts {days} days and its date is unknown: keep its copy in the store")
+        age = (datetime.date.today() - since).days
+        if age >= days:
+            return _row(name, tool, level, "needs_login",
+                        f"the login has expired: the application is in testing mode and a login lasts {days} days",
+                        "log in again with the owner's yes (google-workspace skill)")
+        if age >= days - 1:
+            return _row(name, tool, level, "installed", "the login expires tomorrow: ask the owner to log in again")
+        return _row(name, tool, level, "installed", f"the login lasts {days - age} more day(s)")
     return _row(name, tool, level, "installed")
 
 

@@ -571,3 +571,13 @@ class McpProcess(unittest.TestCase):
         (folder / "agent@example.com.json").write_text("{}")
         row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
         self.assertEqual(row["state"], "installed")
+        self.assertIn("date is unknown", row["reason"])
+        import datetime
+        for age, state, part in ((2, "installed", "5 more day"), (6, "installed", "expires tomorrow"),
+                                 (7, "needs_login", "testing mode")):
+            day = (datetime.date.today() - datetime.timedelta(days=age)).isoformat()
+            listed["secrets"] = [{"name": "GOOGLE_OAUTH_CLIENT_ID"}, {"name": "GOOGLE_OAUTH_CLIENT_SECRET"},
+                                 {"name": "GOOGLE_WORKSPACE_LOGIN", "updated": day}]
+            row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
+            self.assertEqual(row["state"], state, age)
+            self.assertIn(part, row["reason"])
