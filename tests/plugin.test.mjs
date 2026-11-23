@@ -108,3 +108,13 @@ test("no instruction for an employee, without the bridge, or when switched off",
   const { contact } = await load({ownerContact: false});
   assert.equal(contact("t"), null);
 });
+
+test("the assistant's role reads the same marker that other threads are told to use", async () => {
+  const { instructions, contact } = await load({projectId: "personal", threadId: "owner"});
+  const policy = instructions({project: {id: "personal"}, thread: {id: "owner"}}).instructions;
+  const marker = "Владельцу в Telegram от";
+  assert.match(contact("other-thread"), new RegExp(marker));
+  assert.match(policy, new RegExp(marker));
+  assert.match(policy, /agent_roster_list/);           // roles: only while the roles list is installed
+  assert.match(policy, /task-tracking skill/);         // kept as an ordinary tracked task
+});
