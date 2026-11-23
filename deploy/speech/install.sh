@@ -3,7 +3,7 @@
 #
 #   install.sh [--organization <organization.yml>] [--profiles ru,multi] [--order codex-first|local-only]
 #              [--lang ru] [--ru-port 9003] [--multi-port 9002]
-#   install.sh status | remove [--purge]
+#   install.sh status | remove [--purge] | router   (router: only the voice-to-text router, nothing else touched)
 #
 # Settings come from the organization file (section speech: {profiles: [...], order: ...}, language), options
 # override it; defaults: profiles ru, order codex-first, language ru.
@@ -43,7 +43,7 @@ TORCH='torch==2.11.0'; TORCHAUDIO='torchaudio==2.11.0'; TORCH_INDEX=https://down
 TRANSFORMERS='transformers==5.19.0'; ORT='onnxruntime==1.31.0'
 
 profiles=""; order=""; lang=""; ru_port=9003; multi_port=9002; organization=""; action=install; purge=0
-case "${1:-}" in status|remove) action=$1; shift;; esac
+case "${1:-}" in status|remove|router) action=$1; shift;; esac
 while [ $# -gt 0 ]; do
   case "$1" in
     --organization) organization=$2; shift 2;;
@@ -59,6 +59,12 @@ done
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 77; }
 
 if [ "$action" = status ]; then cat "$state_file" 2>/dev/null || echo '{"state":"needs_setup","reason":"not installed"}'; exit 0; fi
+if [ "$action" = router ]; then
+  # A new release's router (formats, retries) without touching models, ports or units.
+  [ -d "$opt" ] || { echo "speech service not installed: run install.sh first" >&2; exit 66; }
+  install -m 755 "$here/voice-to-text" "$opt/voice-to-text.new" && mv "$opt/voice-to-text.new" "$opt/voice-to-text" \
+    && ln -sfn "$opt/voice-to-text" /usr/local/bin/voice-to-text && echo "speech router updated"; exit $?
+fi
 if [ "$action" = remove ]; then
   systemctl disable -q --now bb-speech-ru.socket bb-speech-multi.socket 2>/dev/null
   systemctl stop bb-speech-ru.service bb-speech-multi.service 2>/dev/null
