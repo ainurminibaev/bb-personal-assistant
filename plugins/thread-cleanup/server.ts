@@ -5,6 +5,7 @@
 // needs a look. Archive is not delete: `bb thread-cleanup restore` or
 // `bb thread unarchive <id>` brings a thread back.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 import {
   decide, inScope, kindOf, parseHours, parseList,
   type CleanupConfig, type ThreadFacts, type ThreadRow, type WorkspaceState,
@@ -24,6 +25,11 @@ interface JournalEntry { at: number; id: string; title: string; reason: string; 
 
 type Sdk = BbPluginApi["sdk"];
 
+/** Call another plugin's RPC; the host validates input, we take the answer as is. */
+function rpc(sdk: Sdk, pluginId: string, method: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  return sdk.plugins.callRpc({ pluginId, method, input: input as never, outputSchema: z.unknown(), signal });
+}
+
 async function listAll(sdk: Sdk, signal?: AbortSignal): Promise<ThreadRow[]> {
   const out: ThreadRow[] = [];
   for (let offset = 0; !signal?.aborted; offset += PAGE) {
@@ -38,7 +44,7 @@ async function listAll(sdk: Sdk, signal?: AbortSignal): Promise<ThreadRow[]> {
 async function scheduledThreads(sdk: Sdk, projectIds: Iterable<string>): Promise<Set<string>> {
   const out = new Set<string>();
   for (const projectId of new Set(projectIds)) {
-    const list = (await sdk.plugins.callRpc({ pluginId: "automations", method: "automations_list", input: { projectId } } as never)) as unknown;
+    const list = await rpc(sdk, "automations", "automations_list", { projectId });
     if (!Array.isArray(list)) throw new Error("automations_unavailable");
     for (const a of list as { enabled?: boolean; createdByThreadId?: string | null; execution?: { targetThreadId?: string | null } }[]) {
       if (!a.enabled) continue;
@@ -55,7 +61,7 @@ async function protectedByPlugins(sdk: Sdk, specs: string[]): Promise<Set<string
   for (const spec of specs) {
     const dot = spec.lastIndexOf(".");
     if (dot <= 0) continue;
-    const ids = (await sdk.plugins.callRpc({ pluginId: spec.slice(0, dot), method: spec.slice(dot + 1), input: {} } as never)) as unknown;
+    const ids = await rpc(sdk, spec.slice(0, dot), spec.slice(dot + 1), {});
     if (!Array.isArray(ids)) throw new Error(`protection_unavailable:${spec}`);
     for (const id of ids) if (typeof id === "string") out.add(id);
   }
@@ -63,19 +69,19 @@ async function protectedByPlugins(sdk: Sdk, specs: string[]): Promise<Set<string
 }
 
 async function lastTurn(sdk: Sdk, threadId: string, signal?: AbortSignal) {
-  const ev = await sdk.threads.events.list({ threadId, types: ["turn/completed"], order: "desc", limit: "1", signal } as never) as unknown as { createdAt: number; data?: { status?: string } }[];
+  const ev = await sdk.threads.events.list({ threadId, types: ["turn/completed"], order: "desc", limit: "1", signal }) as unknown as { createdAt: number; data?: { status?: string } }[];
   return ev[0] ? { at: ev[0].createdAt, status: ev[0].data?.status ?? "unknown" } : null;
 }
 
 async function lastActivity(sdk: Sdk, threadId: string, signal?: AbortSignal) {
-  const ev = await sdk.threads.events.list({ threadId, order: "desc", limit: "1", signal } as never) as unknown as { createdAt: number }[];
+  const ev = await sdk.threads.events.list({ threadId, order: "desc", limit: "1", signal }) as unknown as { createdAt: number }[];
   return ev[0]?.createdAt ?? 0;
 }
 
 async function workspaceOf(sdk: Sdk, t: ThreadRow): Promise<WorkspaceState> {
   if (!t.environmentIsWorktree || !t.environmentId) return "none";
   try {
-    const res = (await sdk.plugins.callRpc({ pluginId: "bb--git", method: "status", input: { keys: [t.environmentId] } } as never)) as Record<string, {
+    const res = (await rpc(sdk, "bb--git", "status", { keys: [t.environmentId] })) as Record<string, {
       outcome?: string; workspace?: { workingTree?: { fileCount?: number }; mergeBase?: { hasCommittedUnmergedChanges?: boolean } };
     }>;
     const s = res?.[t.environmentId];
@@ -109,8 +115,8 @@ export async function runCleanup(bb: BbPluginApi, cfg: CleanupConfig, opts: RunO
     const [turn, activity, queue, asks] = await Promise.all([
       lastTurn(sdk, t.id, opts.signal),
       lastActivity(sdk, t.id, opts.signal),
-      sdk.threads.queuedMessages.list({ threadId: t.id } as never) as unknown as Promise<unknown[]>,
-      (sdk.threads.interactions.list({ threadId: t.id, signal: opts.signal } as never) as unknown as Promise<{ status?: string }[]>).catch(() => [{ status: "pending" }]),
+      sdk.threads.queuedMessages.list({ threadId: t.id }) as unknown as Promise<unknown[]>,
+      (sdk.threads.interactions.list({ threadId: t.id, signal: opts.signal }) as unknown as Promise<{ status?: string }[]>).catch(() => [{ status: "pending" }]),
     ]);
     let parentLastTurnAt: number | null = null;
     let parentArchived = false;
@@ -167,7 +173,7 @@ async function report(bb: BbPluginApi, res: RunResult): Promise<string | null> {
   const line = `Уборка тредов: ${parts.join(", ")}. Подробно: bb thread-cleanup status`;
   for (const d of fresh) told.add(d.id);
   await bb.storage.kv.set("told", [...told].slice(-JOURNAL_MAX));
-  await bb.sdk.plugins.callRpc({ pluginId: "push-notifications", method: "notifications.send", input: { title: "Уборка тредов", body: line } } as never)
+  await rpc(bb.sdk, "push-notifications", "notifications.send", { title: "Уборка тредов", body: line })
     .catch(e => bb.log.warn(`report not sent: ${e instanceof Error ? e.message : e}`));
   return line;
 }
