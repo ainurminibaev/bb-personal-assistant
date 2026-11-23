@@ -61,6 +61,13 @@ not wait for the earlier one. When the subthread finishes, check its result and 
 where the request came from. Short work (one answer, one lookup) is done in place. A guest conversation in a group
 starts subthreads the same way; they stay within its own reach.
 
+## Voice messages
+
+A voice message longer than the breakdown threshold (`/etc/vallis/voice-breakdown.env`, 180 s by default) gets the
+voice-breakdown skill: a scheme «Как я понял, что хочет <имя>» as a picture and a PDF with the details, then act on it.
+A shorter one gets it only when someone who may give you tasks asks for it (in the voice message itself or right
+after). Transcribe audio files yourself with `voice-to-text <file>` (the server's speech service).
+
 ## Completing work
 
 Review the child's result, inspect the artifact and check that it fulfills the request. Return the outcome and links. Surface a worker's error or question without repeated blind retries. An informational notification requires no acknowledgment.

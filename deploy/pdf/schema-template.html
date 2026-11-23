@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- Scheme «how I understood»: one picture for a phone. Fill the blocks, keep the classes and sizes; render with
+     `vallis-pdf --png <file.html> <out.png>` (width 1200 px, scale 1.6 → about 1920 px wide). Remove unused blocks. -->
+<html lang="ru"><head><meta charset="utf-8">
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:"Inter","Noto Sans","DejaVu Sans",sans-serif;background:#f6f8fb;color:#1d232b}
+.wrap{width:1200px;padding:32px 36px 28px}
+h1{margin:0;font-size:38px;color:#0f2a44}
+.sub{margin:6px 0 22px;font-size:19px;color:#55606d}
+.goal{background:#0f2a44;color:#fff;border-radius:14px;padding:16px 22px;font-size:22px;margin-bottom:22px}
+.goal b{color:#ffd36b}
+.legend{font-size:17px;color:#55606d;margin-bottom:10px}
+.flow{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:10px}
+.step{background:#fff;border:2px solid #4a7fb0;border-radius:12px;padding:12px 14px}
+.step .n{display:inline-block;width:32px;height:32px;border-radius:50%;background:#4a7fb0;color:#fff;font-weight:700;text-align:center;line-height:32px;font-size:18px}
+.step h3{margin:6px 0 6px;font-size:21px;color:#0f2a44}
+.step p{margin:0;font-size:17.5px;color:#3d4753;line-height:1.35}
+.step.gate{border-color:#d08a1e}
+.step.gate .n{background:#d08a1e}
+.who{margin-top:8px;font-size:16px}
+.tag{display:inline-block;padding:2px 7px;border-radius:9px;margin:2px 2px 0 0}
+.ag{background:#e5f1ff;color:#1f5fa0}
+.hu{background:#fff0dc;color:#a05a00}
+.bug{margin:10px 0 22px}
+.bug div{display:inline-block;background:#fdecec;border:2px dashed #c0504d;border-radius:12px;padding:8px 14px;font-size:17px;color:#7a2422}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.row .card.wide{grid-column:1 / -1}
+.card{background:#fff;border-radius:14px;padding:16px 18px;border:1px solid #d6e2ee}
+.card h2{margin:0 0 10px;font-size:22px;color:#0f2a44}
+.card ul{margin:0;padding-left:20px;font-size:18px;line-height:1.5}
+.modes{display:flex;flex-direction:column;gap:8px}
+.mode{border-radius:10px;padding:8px 12px;font-size:17px}
+.m1{background:#e5f1ff}.m2{background:#eef7e8}.m3{background:#fff0dc}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.chips span{background:#e5f1ff;color:#1f5fa0;border-radius:16px;padding:4px 11px;font-size:16.5px}
+.note{font-size:16.5px;color:#3d4753}
+.foot{margin-top:18px;background:#fff8e6;border:1px solid #f0d48a;border-radius:12px;padding:12px 18px;font-size:18px}
+</style></head><body><div class="wrap">
+  <h1>Как я понял, что хочет {{ИМЯ}}</h1>
+  <div class="sub">{{ГДЕ И КОГДА: группа или тема · дата · длительность голосового}}</div>
+  <div class="goal">Цель: <b>{{главная мысль одной фразой}}</b>{{, пояснение}}</div>
+  <div class="legend"><span class="tag ag">агент</span> <span class="tag hu">человек</span> · оранжевая рамка — нужно решение человека</div>
+  <div class="flow">
+    <!-- этапы по порядку, по 4 в ряд; .gate — этап с решением человека -->
+    <div class="step"><span class="n">1</span><h3>{{этап}}</h3><p>{{что происходит}}</p><div class="who"><span class="tag ag">{{кто}}</span></div></div>
+    <div class="step gate"><span class="n">2</span><h3>{{этап}}</h3><p>{{что происходит}}</p><div class="who"><span class="tag hu">{{кто}}</span></div></div>
+  </div>
+  <div class="bug"><div>{{открытый вопрос или риск, если есть}}</div></div>
+  <div class="row">
+    <div class="card"><h2>{{Кто участвует}}</h2><div class="chips"><span>{{роль}}</span></div><div class="note">{{связи и правила}}</div></div>
+    <div class="card"><h2>{{Как это настраивается}}</h2><div class="modes"><div class="mode m1">{{вариант}}</div><div class="mode m2">{{вариант}}</div><div class="mode m3">{{вариант}}</div></div></div>
+    <div class="card wide"><h2>{{Где видно работу}}</h2><ul><li>{{пункт}}</li></ul></div>
+  </div>
+  <div class="foot"><b>Что ждут от агента:</b> {{следующие шаги по порядку}}</div>
+</div></body></html>

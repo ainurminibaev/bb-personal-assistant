@@ -50,9 +50,9 @@ test("coordinator rules apply only to the configured thread in its own project",
   const { instructions } = await load(owner);
   const config = (projectId, threadId) => instructions({project: {id: projectId}, thread: {id: threadId}});
   assert.match(config(owner.projectId, owner.threadId).instructions, /projects\.md/);
-  assert.deepEqual(config(owner.projectId, owner.threadId).skills, ["dispatch", "integrations", "task-tracking", "agent-mail"]);
-  assert.deepEqual(config(owner.projectId, "group"), {skills: ["task-tracking", "agent-mail"], tools: []});
-  assert.deepEqual(config("other", owner.threadId), {skills: ["task-tracking", "agent-mail"], tools: []});
+  assert.deepEqual(config(owner.projectId, owner.threadId).skills, ["dispatch", "integrations", "task-tracking", "agent-mail", "voice-breakdown"]);
+  assert.deepEqual(config(owner.projectId, "group"), {skills: ["task-tracking", "agent-mail", "voice-breakdown"], tools: []});
+  assert.deepEqual(config("other", owner.threadId), {skills: ["task-tracking", "agent-mail", "voice-breakdown"], tools: []});
 });
 
 test("the credentials store skill comes only where vallis-secret is on the PATH", async () => {

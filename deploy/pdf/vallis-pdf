@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""vallis-pdf — documents of the platform with one common look.
+
+    vallis-pdf <file.md|file.html> <out.pdf>                 PDF: Markdown → pandoc → HTML with the common style → WeasyPrint
+    vallis-pdf --png <file.html> <out.png> [--width 1200] [--scale 1.6]
+                                                             a picture of an HTML card (the voice scheme) through the
+                                                             installed Chrome, offline, only this file
+    vallis-pdf --template                                    print the path of the scheme template
+
+Chrome: $VALLIS_CHROME, else the browser of the BB browser tool (<BB data dir>/plugins/browser-automation/host-data/
+runtime/chrome), else google-chrome / chromium on PATH. No network: every host resolves to nothing.
+"""
+import glob
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+STYLE = os.path.join(HERE, "style.css")
+TEMPLATE = os.path.join(HERE, "schema-template.html")
+
+
+def die(msg, code=1):
+    print("vallis-pdf: " + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def to_pdf(src, out):
+    html = src
+    tmp = None
+    if not src.lower().endswith((".html", ".htm")):
+        if not shutil.which("pandoc"):
+            die("pandoc is not installed")
+        tmp = tempfile.mkdtemp(prefix="vallis-pdf-")
+        html = os.path.join(tmp, "doc.html")
+        with open(STYLE, encoding="utf-8") as f:
+            css = f.read()
+        body = subprocess.run(["pandoc", "-f", "markdown+hard_line_breaks", "-t", "html5", src],
+                              capture_output=True, text=True)
+        if body.returncode:
+            die("pandoc failed: " + body.stderr.strip()[:300])
+        with open(html, "w", encoding="utf-8") as f:
+            f.write('<!doctype html><html lang="ru"><head><meta charset="utf-8"><style>' + css + "</style></head><body>"
+                    + body.stdout + "</body></html>")
+    try:
+        if not shutil.which("weasyprint"):
+            die("weasyprint is not installed")
+        r = subprocess.run(["weasyprint", "--base-url", os.path.dirname(os.path.abspath(src)), html, out],
+                           capture_output=True, text=True)
+        if r.returncode:
+            die("weasyprint failed: " + r.stderr.strip()[:300])
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def chrome():
+    if os.environ.get("VALLIS_CHROME"):
+        return os.environ["VALLIS_CHROME"]
+    home = os.path.expanduser("~")
+    roots = [os.environ.get("BB_DATA_DIR", "")] + glob.glob(os.path.join(home, ".bb*")) + \
+        glob.glob(os.path.join(home, ".bb-machines", "*"))
+    for root in roots:
+        path = os.path.join(root, "plugins", "browser-automation", "host-data", "runtime", "chrome") if root else ""
+        if path and os.access(path, os.X_OK):
+            return path
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        if shutil.which(name):
+            return shutil.which(name)
+    die("no browser: install the browser tool of the platform (tools.yml «browser»)")
+
+
+def to_png(src, out, width=1200, scale=1.6):
+    tmp = tempfile.mkdtemp(prefix="vallis-png-")
+    shot = os.path.join(tmp, "shot.png")
+    try:
+        r = subprocess.run([chrome(), "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
+                            "--no-first-run", "--disable-extensions", "--user-data-dir=" + os.path.join(tmp, "profile"),
+                            # offline: nothing outside this file is fetched
+                            "--host-resolver-rules=MAP * ~NOTFOUND", "--proxy-server=127.0.0.1:9",
+                            f"--force-device-scale-factor={scale}", f"--window-size={width},4000",
+                            "--screenshot=" + shot, "file://" + os.path.abspath(src)],
+                           capture_output=True, text=True, timeout=120)
+        if not os.path.exists(shot):
+            die("the browser made no picture: " + (r.stderr.strip()[-300:] or "unknown"))
+        trim(shot, out)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def trim(src, out):
+    """Cut the empty page below the card (same colour as the last row)."""
+    try:
+        from PIL import Image
+    except ImportError:
+        shutil.copy(src, out)
+        return
+    im = Image.open(src).convert("RGB")
+    w, h = im.size
+    bg = im.getpixel((w - 1, h - 1))
+    px = im.load()
+    bottom = h - 1
+    while bottom > 0 and all(px[x, bottom] == bg for x in range(0, w, 7)):
+        bottom -= 1
+    im.crop((0, 0, w, min(h, bottom + 24))).save(out)
+
+
+def main(argv):
+    if argv == ["--template"]:
+        print(TEMPLATE)
+        return 0
+    if argv[:1] == ["--png"] and len(argv) >= 3:
+        opts = dict(zip(argv[3::2], argv[4::2]))
+        to_png(argv[1], argv[2], int(opts.get("--width", 1200)), float(opts.get("--scale", 1.6)))
+        return 0
+    if len(argv) == 2:
+        to_pdf(argv[0], argv[1])
+        return 0
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

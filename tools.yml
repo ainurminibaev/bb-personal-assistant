@@ -140,6 +140,13 @@ tools:
     install: служба сервера — ставится установщиком общих служб сервера
     installs: [assistant, employee, agents]
 
+  pdf:
+    what: PDF с общим оформлением платформы и картинки HTML-карточек (схема разбора голосового) — vallis-pdf
+    kind: service
+    check_commands: [/usr/local/bin/vallis-pdf]
+    install: служба сервера — deploy/pdf/install.sh (pandoc, WeasyPrint; схема — браузер из строки «browser»)
+    installs: [assistant, employee, agents]
+
   decide:
     what: Быстрое решение — выбор из списка, да/нет, оценка за секунды (реакции моста и др.); одна служба на сервер, провайдер в самой службе
     kind: service
