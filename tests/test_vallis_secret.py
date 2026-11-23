@@ -245,6 +245,70 @@ class Base:
         found = subprocess.run(["grep", "-r", "-l", CANARY, str(repo / ".git")], capture_output=True, text=True)
         self.assertEqual(found.stdout, "")
 
+    def commit_repo(self):
+        """A repository with the installed pre-commit check and vallis-secret + sops in one folder off the PATH."""
+        import tools
+        repo, bin_dir = self.tmp / "repo", self.tmp / "installed"
+        bin_dir.mkdir()
+        shutil.copy(TOOL, bin_dir / "vallis-secret")
+        (bin_dir / "vallis-secret").chmod(0o755)
+        shutil.copy(self.sops_bin, bin_dir / "sops")
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        self.assertIsNone(tools.install_leak_check(repo, bin_dir / "vallis-secret"))
+        env = {k: v for k, v in self.alpha["env"].items() if k not in ("VALLIS_SOPS", "PATH")}
+        # sops is not on the PATH (the stand case); age stays reachable only for the fake sops of these tests
+        age_dir = os.path.dirname(shutil.which("age"))
+        env.update(PATH=f"/usr/bin:/bin:{age_dir}", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        return repo, bin_dir, env
+
+    def git(self, repo, env, *args):
+        return subprocess.run(["git", *args], cwd=repo, env=env, capture_output=True, text=True)
+
+    def objects_with(self, repo, env, text):
+        listed = self.git(repo, env, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)").stdout.split()
+        return [o for o in listed if text in self.git(repo, env, "cat-file", "-p", o).stdout]
+
+    def test_commit_hook_off_the_path_refuses_and_leaves_no_copy(self):
+        self.put_canary(self.alpha)
+        repo, bin_dir, env = self.commit_repo()
+        (repo / "ok.txt").write_text("fine\n")
+        self.git(repo, env, "add", "ok.txt")
+        self.assertEqual(self.git(repo, env, "commit", "-q", "-m", "ok").returncode, 0)
+        # a new file with the value, plain commit
+        (repo / "leak.txt").write_text("token " + CANARY + "\n")
+        self.git(repo, env, "add", "leak.txt")
+        done = self.git(repo, env, "commit", "-q", "-m", "leak")
+        self.assertNotEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("no copy of them is left", done.stdout + done.stderr)
+        self.assertEqual(self.objects_with(repo, env, CANARY), [])
+        # a tracked file changed with the value, commit -a (a temporary index)
+        (repo / "ok.txt").write_text("fine " + CANARY + "\n")
+        done = self.git(repo, env, "commit", "-q", "-a", "-m", "leak2")
+        self.assertNotEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(self.objects_with(repo, env, CANARY), [])
+        self.assertNotIn(CANARY, done.stdout + done.stderr)
+
+    def test_commit_hook_refuses_when_it_cannot_read_the_store(self):
+        self.put_canary(self.alpha)
+        repo, bin_dir, env = self.commit_repo()
+        (bin_dir / "sops").unlink()
+        (repo / "a.txt").write_text("anything\n")
+        self.git(repo, env, "add", "a.txt")
+        done = self.git(repo, env, "commit", "-q", "-m", "x")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("cannot be read", done.stderr)
+        # the key is gone while the store is there: refused too
+        shutil.copy(self.sops_bin, bin_dir / "sops")
+        os.rename(self.alpha["env"]["VALLIS_AGE_KEY"], str(self.tmp / "moved.key"))
+        done = self.git(repo, env, "commit", "-q", "-m", "x")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("key is missing", done.stderr)
+        # an account without any store: nothing to check, the commit goes
+        env2 = dict(env, VALLIS_AGE_KEY=str(self.tmp / "none.key"), VALLIS_SECRETS_DIR=str(self.tmp / "none"))
+        done = self.git(repo, env2, "commit", "-q", "-m", "x")
+        self.assertEqual(done.returncode, 0, done.stderr)
+
     def test_an_account_without_a_store_is_told_what_to_do(self):
         # never a real BB form from a test: bb is a stand-in that fails if it is ever called
         fake = self.tmp / "bb-must-not-run"
