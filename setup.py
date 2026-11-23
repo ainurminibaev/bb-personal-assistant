@@ -170,7 +170,8 @@ def main():
         raise SystemExit("Multiple BB projects use this folder. Check their workspace bindings.")
     missing = [src for pid, src in SOURCES.items() if pid not in installed]
     kb_id, kb_source, kb_folder = KNOWLEDGE_BASE
-    kb_missing = kb_id not in installed
+    # The knowledge base is the owner's personal library: an assistant gets it, an employee does not.
+    kb_missing = kb_id not in installed and args.kind == "assistant"
     if missing or kb_missing:
         print("BB release sources:", *missing, *([f"{kb_source} (folder {kb_folder})"] if kb_missing else []),
               sep="\n", flush=True)

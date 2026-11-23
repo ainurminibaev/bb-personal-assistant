@@ -129,8 +129,7 @@ class Organization(unittest.TestCase):
         plugins = {"telegram-projects": dict(id="telegram-projects", source="git:/mirror/bridge.git", enabled=True,
                                              version="0.9.53"),
                    "personal-assistant": dict(id="personal-assistant", source="git:/mirror/platform.git",
-                                              enabled=True, version="0.3.1"),
-                   "knowledge-base": dict(id="knowledge-base", source="x", enabled=True, version="0.2.8")}
+                                              enabled=True, version="0.3.1")}  # an employee has no knowledge base
         settings = {"installKind": "employee", "telegramInboxRoot": "/inbox", "timeZone": "Europe/Moscow"}
         created = []
 
