@@ -41,12 +41,8 @@ export async function deliverScheduleAlerts(bb: BbPluginApi, roots: readonly str
     for (const a of alerts) {
       const thread = await bb.sdk.threads.get({ threadId: a.conversation }).catch(() => null) as { title?: string | null } | null;
       const text = alertText(thread?.title ?? a.conversation, a);
-      const owner = await readOwnerThread(bb.sdk);
-      if (owner) await bb.sdk.threads.send({ threadId: owner, input: [{ type: "text", text }] } as never);
-      else await bb.sdk.plugins.callRpc({ pluginId: "push-notifications", method: "notifications.send",
-        input: { title: "Расписания в гостевом разговоре", body: text }, outputSchema: z.unknown() });
+      const via = await deliver(bb, text);
       // What was sent and where: the plugin log and `bb personal-assistant alerts`.
-      const via = owner ? `assistant conversation ${owner}` : "BB notification";
       bb.log.info(`schedule warning sent (${via}): conversation ${a.conversation}, pending ${a.pending}, per minute ${a.perMinute}`);
       const log = (await bb.storage.kv.get<object[]>("schedule-alerts:sent")) ?? [];
       await bb.storage.kv.set("schedule-alerts:sent", [...log, { at: Date.now(), conversation: a.conversation, via, text }].slice(-50));
@@ -55,6 +51,32 @@ export async function deliverScheduleAlerts(bb: BbPluginApi, roots: readonly str
     await bb.storage.kv.set(key, lines);
   }
   return sent;
+}
+
+const sendToOwnerAnswer = z.object({ ok: z.boolean(), reason: z.string().optional() }).passthrough();
+
+/**
+ * Assistant: its conversation with the owner. Employee: the bridge's sendToOwner (the owner's private chat with
+ * the employee's bot, no model turn). A bridge without it, or a refusal: a BB notification, the reason in the log.
+ */
+async function deliver(bb: BbPluginApi, text: string): Promise<string> {
+  const owner = await readOwnerThread(bb.sdk);
+  if (owner) {
+    await bb.sdk.threads.send({ threadId: owner, input: [{ type: "text", text }] } as never);
+    return `assistant conversation ${owner}`;
+  }
+  let why = "";
+  try {
+    const answer = await bb.sdk.plugins.callRpc({ pluginId: "telegram-projects", method: "sendToOwner",
+      input: { text: text.replace(/^Владельцу в Telegram от платформы: /, ""), source: "Платформа" }, outputSchema: sendToOwnerAnswer });
+    if (answer.ok) return "owner's private chat (bridge)";
+    why = answer.reason ?? "refused";
+  } catch (error) {
+    why = error instanceof Error ? error.message : String(error);
+  }
+  await bb.sdk.plugins.callRpc({ pluginId: "push-notifications", method: "notifications.send",
+    input: { title: "Расписания в гостевом разговоре", body: text }, outputSchema: z.unknown() });
+  return `BB notification (bridge: ${why.slice(0, 80)})`;
 }
 
 function lines0(n: number) { return Number.isInteger(n) && n >= 0 ? n : 0; }
