@@ -23,7 +23,7 @@ REGISTRY = Path(__file__).resolve().with_name("tools.yml")
 KINDS = ("assistant", "employee", "agents")
 STATES = ("installed", "excluded", "needs_login", "needs_setup", "error")
 FORMAT = 1
-TOOL_KINDS = ("plugin", "npm", "skill", "hook", "service", "cli")
+TOOL_KINDS = ("plugin", "npm", "skill", "hook", "service", "cli", "mcp")
 SKILL_DIRS = (Path(".agents") / "skills", Path(".claude") / "skills")
 SOURCE_MARK = ".vallis-source"
 ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
@@ -521,6 +521,61 @@ def _cli_state(name, tool, level, account):
     return _row(name, tool, level, "installed", f"keys in the store: {count}")
 
 
+def mcp_processes(registry, decisions, account):
+    """MCP processes of the selected tools.yml lines: {name: {"level", "command", "env"}}.
+
+    Keys of the line come from the credentials store at start (vallis-secret run), never from the settings files."""
+    out = {}
+    for name, tool in registry.items():
+        if tool["kind"] != "mcp" or not decisions.get(name, (False,))[0]:
+            continue
+        command = [str(c) for c in tool["command"]]
+        if tool.get("secrets"):
+            command = ["vallis-secret", "run", *tool["secrets"], "--", *command]
+        env = {k: str(account.home / v[2:]) if str(v).startswith("~/") else str(v)
+               for k, v in (tool.get("env") or {}).items()}
+        out[name] = {"level": decisions[name][1], "command": command, "env": env}
+    return out
+
+
+def _login_dir(tool, account):
+    folder = (tool.get("login") or {}).get("dir")
+    return account.home / folder[2:] if folder and folder.startswith("~/") else (Path(folder) if folder else None)
+
+
+def prepare_mcp(tool, account):
+    """The closed folder for the line's login (the MCP writes and refreshes the login there itself)."""
+    folder = _login_dir(tool, account)
+    if folder:
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        folder.chmod(0o700)
+        account.give(folder)
+    missing = [p for p in tool.get("requires", []) if not account.which(p)]
+    return f"not installed: {', '.join(missing)}" if missing else None
+
+
+def _mcp_tool_state(name, tool, level, account):
+    missing = [p for p in tool.get("requires", []) if not account.which(p)]
+    if missing:
+        return _row(name, tool, level, "needs_setup", f"not installed: {', '.join(missing)}", RERUN)
+    if tool.get("secrets"):
+        listed = account.run("vallis-secret", "list", "--json") if account.which("vallis-secret") else None
+        try:
+            have = {r["name"] for r in json.loads(listed.stdout)["secrets"]} if listed else set()
+        except (ValueError, KeyError, TypeError):
+            have = set()
+        lacking = [k for k in tool["secrets"] if k not in have]
+        if lacking:
+            return _row(name, tool, level, "needs_setup", "no key of the application in the credentials store",
+                        "the administrator grants " + ", ".join(lacking) + " (vallis-secret grant / receive)")
+    folder = _login_dir(tool, account)
+    if folder and not (folder.is_dir() and any(p.is_file() for p in folder.iterdir())):
+        login = (tool.get("login") or {}).get("what", "a login")
+        return _row(name, tool, level, "needs_login", f"no login: {login}",
+                    "log in with the owner's yes (google-workspace skill)")
+    return _row(name, tool, level, "installed")
+
+
 def _hook_state(name, tool, level, account):
     script = Path(tool["path"]).name
     settings = account.home / ".claude" / "settings.json"
@@ -723,6 +778,8 @@ def tool_state(name, tool, decision, account, plugins, bb_home, errors, data_dir
             row = _skill_state(name, tool, level, account, plugins)
         elif tool["kind"] == "cli":
             row = _cli_state(name, tool, level, account)
+        elif tool["kind"] == "mcp":
+            row = _mcp_tool_state(name, tool, level, account)
         else:
             row = _hook_state(name, tool, level, account)
     except Exception as error:  # a broken check is a state, not a crash of the whole list
@@ -788,6 +845,8 @@ def install_tool(name, tool, account, plugins, bb, cache, source=None, admins=()
         return None
     if kind == "cli":
         return install_cli(tool, account, admins)
+    if kind == "mcp":
+        return prepare_mcp(tool, account)  # the settings files are written with the described MCP (write_mcp)
     if kind == "skill":
         if tool.get("plugin") or tool.get("present_with_plugin") in plugins:
             return None
@@ -975,8 +1034,17 @@ def _tracked(root, path):
 
 def _toml_block(servers):
     lines = [TOML_BEGIN]
-    for server, (_, url, token) in sorted(servers.items()):
-        lines += [f"[mcp_servers.{json.dumps(server)}]", f"url = {json.dumps(url)}"]
+    for server, spec in sorted(servers.items()):
+        lines.append(f"[mcp_servers.{json.dumps(server)}]")
+        if isinstance(spec, dict):  # an MCP process of a tools.yml line
+            lines += [f"command = {json.dumps(spec['command'][0])}", f"args = {json.dumps(spec['command'][1:])}",
+                      "startup_timeout_sec = 120", "tool_timeout_sec = 180"]
+            if spec.get("env"):
+                lines.append(f"[mcp_servers.{json.dumps(server)}.env]")
+                lines += [f"{json.dumps(k)} = {json.dumps(v)}" for k, v in sorted(spec["env"].items())]
+            continue
+        _, url, token = spec
+        lines.append(f"url = {json.dumps(url)}")
         if token:
             lines.append(f"bearer_token_env_var = {json.dumps(token)}")
     return "\n".join(lines + [TOML_END]) + "\n"
@@ -1006,10 +1074,15 @@ def write_mcp(root, servers, stored=()):
             entries = data.setdefault("mcpServers", {})
             for server in managed - set(servers):
                 entries.pop(server, None)
-            for server, (_, url, token) in servers.items():
+            for server, spec in servers.items():
                 if server in entries and server not in managed:
                     errors[server] = f".mcp.json already has its own {server}: remove it or rename the description"
                     continue
+                if isinstance(spec, dict):
+                    entries[server] = {"type": "stdio", "command": spec["command"][0], "args": spec["command"][1:],
+                                       "env": dict(spec.get("env") or {})}
+                    continue
+                _, url, token = spec
                 entry = {"type": "http", "url": url}
                 if token and token in stored:
                     entry["headersHelper"] = f"vallis-secret header {token}"  # read by Claude Code, not the agent
@@ -1048,7 +1121,10 @@ def mcp_state(root, servers, errors, stored=()):
         codex = tomllib.loads((root / ".codex" / "config.toml").read_text(encoding="utf-8")).get("mcp_servers", {})
     except (OSError, ValueError):
         codex = {}
-    for server, (level, url, token) in sorted(servers.items()):
+    for server, spec in sorted(servers.items()):
+        if isinstance(spec, dict):
+            continue  # an MCP process of a tools.yml line has the line's own row
+        level, url, token = spec
         tool = {"what": url, "kind": "mcp"}
         name = f"mcp:{server}"
         if server in errors:

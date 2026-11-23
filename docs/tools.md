@@ -42,6 +42,11 @@ tools:
 - `cli` — a command from the platform package (`path`) into the account's program folder (on the PATH of its BB),
   with the programs it needs: `requires` from system packages, `download` — a pinned release checked by `sha256`
   per architecture. The credentials store (`secrets-store`: `vallis-secret`, sops, age) is such a line.
+- `mcp` — an MCP process (`command`) written into `.mcp.json` and `.codex/config.toml` of the installation next to the
+  described MCP connections; its keys (`secrets`) come from the credentials store when it starts
+  (`vallis-secret run … --`), its login lives in a closed folder (`login.dir`) the MCP keeps itself. States:
+  `needs_setup` (a program or a key is missing), `needs_login` (no login yet), `installed`. Google Drive, Docs and
+  Sheets (`google-workspace`, off by default; skill `google-workspace` for the login) is such a line.
 - `setting` — what has to be configured after installation (`env` variable or `file` in the installation's closed
   folder); without it the line is `needs_setup`.
 

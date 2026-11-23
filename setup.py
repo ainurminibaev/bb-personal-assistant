@@ -291,7 +291,12 @@ def main():
     if note:
         secret_problems.append(note)
     servers, mcp_problems = tools.mcp_servers(description, employee, args.employee) if clone is not None else ({}, [])
-    mcp_errors = tools.write_mcp(root, servers, set(keys)) if clone is not None else {}
+    processes = tools.mcp_processes(REGISTRY, decisions, account)
+    mcp_errors = (tools.write_mcp(root, {**servers, **processes}, set(keys))
+                  if clone is not None or processes else {})
+    for name in processes:
+        if name in mcp_errors:
+            tool_errors[name] = mcp_errors.pop(name)
     tools.save_errors(root / tools.STATE_FILE, tool_errors, mcp_errors)
     if clone is not None:
         facts = organization.collect_facts(bb, project["id"], args.machine)

@@ -506,3 +506,68 @@ class Spaces(unittest.TestCase):
         self.assertEqual(data["format"], 1)
         self.assertEqual(data["spaces"], [{"id": "tasks"}])
         self.assertEqual(tools.report("agents", [], [])["spaces"], [])
+
+
+class McpProcess(unittest.TestCase):
+    """A tools.yml line of kind mcp (С51): written into both settings files, keys from the store, login state."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.tool = REGISTRY["google-workspace"]
+
+    def test_off_by_default_and_added_by_the_description(self):
+        decisions, _ = tools.select(REGISTRY, "employee")
+        self.assertFalse(decisions["google-workspace"][0])
+        decisions, _ = tools.select(REGISTRY, "employee", {"tools": {"add": ["google-workspace"]}})
+        self.assertEqual(decisions["google-workspace"], (True, "organization", ""))
+        processes = tools.mcp_processes(REGISTRY, decisions, FakeAccount(self.home))
+        spec = processes["google-workspace"]
+        self.assertEqual(spec["command"][:5], ["vallis-secret", "run", "GOOGLE_OAUTH_CLIENT_ID",
+                                               "GOOGLE_OAUTH_CLIENT_SECRET", "--"])
+        self.assertIn("workspace-mcp==2.5.0", spec["command"])
+        self.assertEqual(spec["env"]["WORKSPACE_MCP_CREDENTIALS_DIR"], str(self.home / ".secrets/google-workspace"))
+
+    def test_written_without_values_next_to_described_servers(self):
+        root = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        decisions, _ = tools.select(REGISTRY, "employee", {}, {"tools": {"add": ["google-workspace"]}})
+        processes = tools.mcp_processes(REGISTRY, decisions, FakeAccount(self.home))
+        servers = {"wiki": ("organization", "https://wiki.example.com/mcp", None), **processes}
+        self.assertEqual(tools.write_mcp(root, servers), {})
+        claude = json.loads((root / ".mcp.json").read_text())["mcpServers"]
+        self.assertEqual(claude["google-workspace"]["type"], "stdio")
+        self.assertEqual(claude["google-workspace"]["command"], "vallis-secret")
+        import tomllib
+        codex = tomllib.loads((root / ".codex" / "config.toml").read_text())["mcp_servers"]
+        self.assertEqual(codex["google-workspace"]["command"], "vallis-secret")
+        self.assertIn("workspace-mcp==2.5.0", codex["google-workspace"]["args"])
+        self.assertIn("WORKSPACE_MCP_CREDENTIALS_DIR", codex["google-workspace"]["env"])
+        self.assertEqual(codex["wiki"]["url"], "https://wiki.example.com/mcp")
+        self.assertNotIn("CLIENT_SECRET\" =", (root / ".codex" / "config.toml").read_text())
+        rows = tools.mcp_state(root, servers, {})
+        self.assertEqual([r["id"] for r in rows], ["mcp:wiki"])  # the line has its own row
+        # off again: both entries go away
+        tools.write_mcp(root, {"wiki": servers["wiki"]})
+        self.assertNotIn("google-workspace", json.loads((root / ".mcp.json").read_text())["mcpServers"])
+        self.assertNotIn("google-workspace", (root / ".codex" / "config.toml").read_text())
+
+    def test_states(self):
+        account = FakeAccount(self.home, programs={"vallis-secret"})
+        row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
+        self.assertEqual(row["state"], "needs_setup")
+        self.assertIn("uvx", row["reason"])
+        account.programs.add("uvx")
+        listed = {"secrets": [{"name": "GOOGLE_OAUTH_CLIENT_ID"}]}
+        account.run = lambda *a, **k: subprocess.CompletedProcess(a, 0, json.dumps(listed), "")
+        row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
+        self.assertEqual(row["state"], "needs_setup")
+        self.assertIn("GOOGLE_OAUTH_CLIENT_SECRET", row["action"])
+        listed["secrets"].append({"name": "GOOGLE_OAUTH_CLIENT_SECRET"})
+        self.assertIsNone(tools.prepare_mcp(self.tool, account))
+        folder = self.home / ".secrets" / "google-workspace"
+        self.assertEqual(oct(folder.stat().st_mode & 0o777), "0o700")
+        row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
+        self.assertEqual(row["state"], "needs_login")
+        (folder / "agent@example.com.json").write_text("{}")
+        row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
+        self.assertEqual(row["state"], "installed")
