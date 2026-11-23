@@ -53,6 +53,12 @@ def configure_bridge(kind, inbox):
     if not values.get("telegramInboxRoot"):
         inbox.mkdir(mode=0o700, parents=True, exist_ok=True)
         bb("plugin", "config", "telegram-projects", "set", "telegramInboxRoot", str(inbox))
+    # Voice of the bridge goes through the server's speech service when it is installed (a path that no longer
+    # exists, e.g. a retired local recognizer, is replaced; a working custom router stays).
+    router = Path("/usr/local/bin/voice-to-text")
+    current = values.get("voiceRouterPath") or ""
+    if router.exists() and current != str(router) and (not current or not Path(current).exists()):
+        bb("plugin", "config", "telegram-projects", "set", "voiceRouterPath", str(router))
 
 
 def remember_agent(project_id, provider, model):
