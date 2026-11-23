@@ -45,6 +45,11 @@ export async function deliverScheduleAlerts(bb: BbPluginApi, roots: readonly str
       if (owner) await bb.sdk.threads.send({ threadId: owner, input: [{ type: "text", text }] } as never);
       else await bb.sdk.plugins.callRpc({ pluginId: "push-notifications", method: "notifications.send",
         input: { title: "Расписания в гостевом разговоре", body: text }, outputSchema: z.unknown() });
+      // What was sent and where: the plugin log and `bb personal-assistant alerts`.
+      const via = owner ? `assistant conversation ${owner}` : "BB notification";
+      bb.log.info(`schedule warning sent (${via}): conversation ${a.conversation}, pending ${a.pending}, per minute ${a.perMinute}`);
+      const log = (await bb.storage.kv.get<object[]>("schedule-alerts:sent")) ?? [];
+      await bb.storage.kv.set("schedule-alerts:sent", [...log, { at: Date.now(), conversation: a.conversation, via, text }].slice(-50));
       sent++;
     }
     await bb.storage.kv.set(key, lines);

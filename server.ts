@@ -51,10 +51,15 @@ export default async function personalAssistant(bb: BbPluginApi) {
       { name: "doctor", usage: "bb personal-assistant doctor", summary: "Check the configured coordinator thread and project." },
       { name: "work", usage: "bb personal-assistant work", summary: "List open child tasks from the personal coordinator." },
       { name: "owner-thread", usage: "bb personal-assistant owner-thread", summary: "The assistant conversation that reaches the owner in Telegram now." },
+      { name: "alerts", usage: "bb personal-assistant alerts", summary: "Warnings about many schedules in guest conversations sent to the owner." },
     ],
     async run(argv, ctx) {
       if (argv.length !== 1 || !["doctor", "work", "owner-thread"].includes(argv[0]))
         return { exitCode: 2, stderr: "Usage: bb personal-assistant doctor | work | owner-thread" };
+      if (argv[0] === "alerts") {
+        const sent = (await bb.storage.kv.get<{ at: number; conversation: string; via: string; text: string }[]>("schedule-alerts:sent")) ?? [];
+        return { exitCode: 0, stdout: sent.map(e => `${new Date(e.at).toISOString()} ${e.via}: ${e.text}`).join("\n") || "no warnings sent" };
+      }
       if (argv[0] === "owner-thread") {
         const id = await contact.refresh();
         return id ? { exitCode: 0, stdout: id }
