@@ -100,5 +100,5 @@ tools:
     check_commands: [voice-to-text]
     check_units: {ru: bb-speech-ru.socket, multi: bb-speech-multi.socket}   # по профилям службы
     state_file: /var/lib/bb-speech/state.json   # пишет установщик службы: state, reason, profiles
-    install: служба сервера, ставится установщиком общих служб на сервер сотрудника
+    install: служба сервера — ставится установщиком общих служб сервера
     installs: [assistant, employee, agents]

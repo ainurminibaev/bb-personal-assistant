@@ -32,6 +32,7 @@ MCP_FIELDS = {"url", "token_env", "employees", "what"}
 TOML_BEGIN = "# vallis: MCP from the organization description (managed by setup.py)"
 TOML_END = "# vallis: end"
 STATE_FILE = Path("local") / "tools-state.json"
+RERUN = "run setup.py"  # what sets the tools up again; agents: install-agent.sh
 
 
 def load_yaml(path):
@@ -213,7 +214,7 @@ def _plugin_state(name, tool, level, plugins, bb_home, errors):
             return _row(name, tool, level, "error", errors[name],
                         "give this server read access to the source, or pass --tool-source "
                         f"{name}=<path or git source> to setup.py")
-        return _row(name, tool, level, "needs_setup", "the plugin is not installed", "run setup.py")
+        return _row(name, tool, level, "needs_setup", "the plugin is not installed", RERUN)
     if not plugin.get("enabled", True):
         return _row(name, tool, level, "needs_setup", "the plugin is installed but disabled", f"bb plugin enable {name}")
     check = tool.get("login_check")
@@ -255,20 +256,20 @@ def _service_state(name, tool, level, account):
 def _npm_state(name, tool, level, account):
     binary = account.which(name if tool.get("package") is None else tool["package"])
     if not binary:
-        return _row(name, tool, level, "needs_setup", f"{tool['package']} is not installed", "run setup.py")
+        return _row(name, tool, level, "needs_setup", f"{tool['package']} is not installed", RERUN)
     agents = [a for a in tool.get("agents", []) if account.which("claude" if a == "claude-code" else a)]
     if not agents:
         return _row(name, tool, level, "needs_setup", "no agent CLI (codex, claude) for this account",
-                    "install the agent CLI, then run setup.py again")
+                    f"install the agent CLI, then {RERUN}")
     dry = account.run(binary, "setup", "--dry-run", "--no-input", "--agents", ",".join(agents), "--json")
     try:
         report = json.loads(dry.stdout)
         todo = [a["id"] for a in report.get("agents", []) if a.get("changes") or a.get("status") != "PASS"]
     except (ValueError, AttributeError):
         return _row(name, tool, level, "error", f"{name} setup --dry-run: {(dry.stderr or dry.stdout).strip()[-200:]}",
-                    "run setup.py again; if it repeats, run context-mode doctor")
+                    f"{RERUN}; if it repeats, run context-mode doctor")
     if todo:
-        return _row(name, tool, level, "needs_setup", f"not set up for {', '.join(todo)}", "run setup.py")
+        return _row(name, tool, level, "needs_setup", f"not set up for {', '.join(todo)}", RERUN)
     return _row(name, tool, level, "installed", f"for {', '.join(agents)}")
 
 
@@ -287,12 +288,12 @@ def _skill_state(name, tool, level, account, plugins):
     if tool.get("plugin"):
         if tool["plugin"] in plugins:
             return _row(name, tool, level, "installed", f"comes with the {tool['plugin']} plugin")
-        return _row(name, tool, level, "needs_setup", f"the {tool['plugin']} plugin is not installed", "run setup.py")
+        return _row(name, tool, level, "needs_setup", f"the {tool['plugin']} plugin is not installed", RERUN)
     if tool.get("present_with_plugin") in plugins:
         return _row(name, tool, level, "installed", f"through the {tool['present_with_plugin']} plugin")
     missing = [str(d) for d in _skill_dirs(account) if not (d / name / "SKILL.md").is_file()]
     if missing:
-        return _row(name, tool, level, "needs_setup", "not in " + ", ".join(missing), "run setup.py")
+        return _row(name, tool, level, "needs_setup", "not in " + ", ".join(missing), RERUN)
     return _row(name, tool, level, "installed")
 
 
@@ -306,7 +307,7 @@ def _hook_state(name, tool, level, account):
     if registered and (account.home / ".claude" / "hooks" / script).is_file():
         return _row(name, tool, level, "installed", "Claude Code")
     return _row(name, tool, level, "needs_setup", "the hook is not registered in ~/.claude/settings.json",
-                "run setup.py")
+                RERUN)
 
 
 def tool_state(name, tool, decision, account, plugins, bb_home, errors):
@@ -325,7 +326,7 @@ def tool_state(name, tool, decision, account, plugins, bb_home, errors):
         else:
             row = _hook_state(name, tool, level, account)
     except Exception as error:  # a broken check is a state, not a crash of the whole list
-        return _row(name, tool, level, "error", _err(error), "run setup.py again")
+        return _row(name, tool, level, "error", _err(error), RERUN)
     setting = tool.get("setting")
     if row["state"] == "installed" and setting:
         env, file = setting.get("env"), setting.get("file")
@@ -334,7 +335,7 @@ def tool_state(name, tool, decision, account, plugins, bb_home, errors):
             row.update(state="needs_setup", reason=f"no {setting.get('what', 'setting')}: {where}",
                        action=f"put it into {where} (not into a repository)")
     if row["state"] != "installed" and name in errors and row["state"] != "error":
-        row.update(state="error", reason=errors[name], action="fix the reason, then run setup.py again")
+        row.update(state="error", reason=errors[name], action=f"fix the reason, then {RERUN}")
     return row
 
 
@@ -491,10 +492,10 @@ def mcp_state(root, servers, errors):
         tool = {"what": url, "kind": "mcp"}
         name = f"mcp:{server}"
         if server in errors:
-            rows.append(_row(name, tool, level, "error", errors[server], "fix the reason, then run setup.py again"))
+            rows.append(_row(name, tool, level, "error", errors[server], f"fix the reason, then {RERUN}"))
         elif server not in claude or server not in codex:
             missing = [f for f, have in ((".mcp.json", claude), (".codex/config.toml", codex)) if server not in have]
-            rows.append(_row(name, tool, level, "needs_setup", "not in " + ", ".join(missing), "run setup.py"))
+            rows.append(_row(name, tool, level, "needs_setup", "not in " + ", ".join(missing), RERUN))
         elif token:
             rows.append(_row(name, tool, level, "needs_login", f"the key is read from {token}",
                              f"set {token} in the environment of the BB service (not in the repository)"))
@@ -583,7 +584,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     registry = load()
     sources = dict(s.split("=", 1) for s in args.tool_source if "=" in s)
+    global RERUN
     if args.kind == "agents" or args.account:
+        RERUN = f"run install-agent.sh install {args.account}"
         if not args.account:
             raise SystemExit("--account names the agent's Linux account.")
         account = Account(args.account)
