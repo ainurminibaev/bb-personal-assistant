@@ -444,3 +444,65 @@ class PinnedArchive(unittest.TestCase):
                 spec["sha256"][arch] = "0" * 64
                 self.assertIn("sha256", tools.install_cli(tool, Acc()))
                 self.assertFalse((bin_dir / "age").exists())
+class Spaces(unittest.TestCase):
+    """Where the agent works (С53): spaces refer to tools, MCP, connections, folders and groups; one row each."""
+
+    def setUp(self):
+        self.clone = Path(tempfile.mkdtemp())
+        (self.clone / "shared" / "knowledge").mkdir(parents=True)
+        (self.clone / "shared" / "knowledge" / "where.md").write_text("# Где что лежит\n")
+        self.organization = {"connections": {"github": {"org": "example"}}, "spaces": {
+            "tasks": {"what": "задачник команды", "kind": "tracker", "via": "mcp:tracker", "to": "all",
+                      "access": "write", "map": "shared/knowledge/where.md#задачник"},
+            "knowledge": {"what": "знания команды", "kind": "knowledge", "via": "folder:shared/knowledge", "to": "all",
+                          "access": "write"},
+            "drive": {"what": "диск организации", "kind": "drive", "via": "tool:google-workspace", "to": ["alpha"],
+                      "access": "read", "map": "shared/knowledge/drive.md"},
+            "repos": {"what": "репозитории", "kind": "repositories", "via": "connections:github", "to": "all"},
+            "other": {"what": "чужое", "kind": "other", "via": "groups", "to": ["beta"]}}}
+        self.employee = {"groups": [-100, -200], "spaces": {
+            "exclude": ["repos"],
+            "chats": {"what": "чаты и группы", "kind": "chats", "via": "groups", "access": "write"}}}
+
+    def test_description(self):
+        spaces, problems = tools.described_spaces(self.organization, self.employee, "alpha")
+        self.assertEqual(problems, [])
+        self.assertEqual(sorted(spaces), ["chats", "drive", "knowledge", "tasks"])
+        self.assertEqual(spaces["drive"]["access"], "read")
+        self.assertEqual(spaces["chats"]["level"], "employee")
+        bad = {"spaces": {"x": {"what": "x", "kind": "nope", "via": "groups", "to": "all"},
+                          "y": {"what": "y", "kind": "drive", "via": "https://drive", "to": "all"},
+                          "z": {"what": "z", "kind": "drive", "via": "folder:../etc", "to": "all"},
+                          "w": {"what": "w", "kind": "drive", "via": "groups"},
+                          "v": {"what": "v", "kind": "drive", "via": "groups", "to": "all", "token": "abc"}}}
+        spaces, problems = tools.described_spaces(bad, {"spaces": {"exclude": ["none"]}}, "alpha")
+        text = "\n".join(problems)
+        for part in ("spaces.x:", "spaces.y:", "inside the organization repository", "w: to is missing",
+                     "v: token not used", "none is not a space"):
+            self.assertIn(part, text)
+        self.assertEqual(sorted(spaces), ["v"])
+
+    def test_rows_take_the_state_of_what_they_refer_to(self):
+        spaces, _ = tools.described_spaces(self.organization, self.employee, "alpha")
+        tool_rows = [{"id": "mcp:tracker", "state": "installed", "action": ""},
+                     {"id": "google-workspace", "state": "needs_login", "reason": "no login: ~/.secrets/x",
+                      "action": "log in"}]
+        rows = {r["id"]: r for r in tools.space_rows(spaces, tool_rows, self.clone, self.organization, self.employee)}
+        self.assertEqual(rows["tasks"]["state"], "ready")
+        self.assertEqual(rows["knowledge"]["state"], "ready")
+        self.assertEqual((rows["drive"]["state"], rows["drive"]["reason"]), ("needs_login", "нужен вход"))
+        self.assertEqual((rows["chats"]["state"], rows["chats"]["reason"]), ("ready", "групп: 2"))
+        for row in rows.values():  # words without paths or addresses: a guest sees what and reason
+            self.assertNotIn("/", row["reason"] + row["what"])
+        tool_rows[1]["state"] = "installed"
+        rows = {r["id"]: r for r in tools.space_rows(spaces, tool_rows, self.clone, self.organization, self.employee)}
+        self.assertEqual((rows["drive"]["state"], rows["drive"]["reason"]), ("needs_setup", "нет описания, что где лежит"))
+        rows = {r["id"]: r for r in tools.space_rows(spaces, [], self.clone, self.organization, {"spaces": {}})}
+        self.assertEqual(rows["tasks"]["reason"], "подключение не описано")
+        self.assertEqual(rows["chats"]["reason"], "групп нет")
+
+    def test_report_carries_spaces(self):
+        data = tools.report("employee", [], [], "alpha", [{"id": "tasks"}])
+        self.assertEqual(data["format"], 1)
+        self.assertEqual(data["spaces"], [{"id": "tasks"}])
+        self.assertEqual(tools.report("agents", [], [])["spaces"], [])

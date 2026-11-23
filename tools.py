@@ -30,6 +30,12 @@ ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
 MCP_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 MCP_FIELDS = {"url", "token_env", "employees", "what"}
 SECRET_FIELDS = {"what", "to"}
+SPACE_KINDS = ("tracker", "knowledge", "drive", "chats", "repositories", "mail", "other")
+SPACE_FIELDS = {"what", "kind", "via", "to", "access", "map"}
+SPACE_VIA = re.compile(r"(mcp|tool|connections):[a-z0-9][a-z0-9_-]*|folder:[\w./-]+|groups")
+SPACE_STATES = {"installed": ("ready", ""), "needs_login": ("needs_login", "нужен вход"),
+                "needs_setup": ("needs_setup", "нужна настройка"), "error": ("error", "ошибка подключения"),
+                "excluded": ("needs_setup", "инструмент выключен")}
 ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 PACKAGE = Path(__file__).resolve().parent
 TOML_BEGIN = "# vallis: MCP from the organization description (managed by setup.py)"
@@ -191,6 +197,97 @@ def described_secrets(organization, employee, name):
                 problems.append(f"employee.yml secrets.keys.{key}: to belongs to organization.yml")
             keys[key] = (level, str(entry["what"]).strip())
     return keys, admins, problems
+
+
+def described_spaces(organization, employee, name):
+    """Where the agent works (С53): ({id: entry}, problems). An entry only refers to what is described elsewhere.
+
+    organization.yml: spaces: {ID: {what, kind, via, to: all | [employees], access: read | write, map}}
+    employee.yml: spaces: {exclude: [ID], ID: {what, kind, via, access, map}}"""
+    spaces, problems = {}, []
+    excluded = []
+    for label, level, section in (("organization.yml", "organization", (organization or {}).get("spaces")),
+                                  ("employee.yml", "employee", (employee or {}).get("spaces"))):
+        if section is None:
+            continue
+        if not isinstance(section, dict):
+            problems.append(f"{label} spaces: one entry per space")
+            continue
+        for key, entry in section.items():
+            key = str(key)
+            if key == "exclude" and level == "employee":
+                excluded += _names(section, "exclude")
+                continue
+            if not MCP_NAME.fullmatch(key) or not isinstance(entry, dict):
+                problems.append(f"{label} spaces.{key}: a lowercase name with what, kind and via")
+                continue
+            unknown = sorted(set(entry) - SPACE_FIELDS)
+            if unknown:
+                problems.append(f"{label} spaces.{key}: {', '.join(unknown)} not used")
+            what, kind, via = str(entry.get("what") or "").strip(), entry.get("kind"), str(entry.get("via") or "")
+            access = entry.get("access", "read")
+            if not what or kind not in SPACE_KINDS or not SPACE_VIA.fullmatch(via) or access not in ("read", "write"):
+                problems.append(f"{label} spaces.{key}: what, kind ({'|'.join(SPACE_KINDS)}), via "
+                                "(mcp:, tool:, connections:, folder: or groups) and access (read | write)")
+                continue
+            if ".." in via or ".." in str(entry.get("map") or ""):
+                problems.append(f"{label} spaces.{key}: paths stay inside the organization repository")
+                continue
+            if level == "organization":
+                who = entry.get("to")
+                if who is None:
+                    problems.append(f"organization.yml spaces.{key}: to is missing (a list of names or all)")
+                    continue
+                if who != "all" and name not in [str(w) for w in (who if isinstance(who, list) else [who])]:
+                    continue
+            elif "to" in entry:
+                problems.append(f"employee.yml spaces.{key}: to belongs to organization.yml")
+            spaces[key] = {"level": level, "what": what, "kind": kind, "via": via, "access": access,
+                           "map": str(entry["map"]) if entry.get("map") else ""}
+    for key in excluded:
+        if key not in spaces:
+            problems.append(f"employee.yml spaces.exclude: {key} is not a space of this employee")
+        spaces.pop(key, None)
+    return spaces, problems
+
+
+def space_rows(spaces, tool_rows, clone=None, organization=None, employee=None):
+    """One row per space: its state comes from what via refers to, and from the map file being there.
+
+    what and reason are words without paths or addresses: a guest's view shows them."""
+    tools_by_id = {r["id"]: r for r in tool_rows}
+    rows = []
+    for key, space in spaces.items():
+        via, state, reason, action = space["via"], "ready", "", ""
+        kind, _, target = via.partition(":")
+        if kind in ("mcp", "tool"):
+            row = tools_by_id.get(f"mcp:{target}" if kind == "mcp" else target)
+            if row is None:
+                state, reason = "needs_setup", "подключение не описано"
+                action = f"describe {via} in organization.yml or employee.yml"
+            else:
+                state, reason = SPACE_STATES.get(row["state"], ("error", "ошибка подключения"))
+                action = row.get("action", "")
+        elif kind == "connections":
+            if not ((organization or {}).get("connections") or {}).get(target):
+                state, reason, action = "needs_setup", "подключение не описано", f"add connections.{target}"
+        elif kind == "folder":
+            if clone is None or not (clone / target).is_dir():
+                state, reason, action = "needs_setup", "папки нет", f"create {target} in the organization repository"
+        else:  # groups: the employee's groups and the bridge's settings for each
+            groups = (employee or {}).get("groups") or []
+            if groups:
+                reason = f"групп: {len(groups)}"
+            else:
+                state, reason, action = "needs_setup", "групп нет", "list the groups in employee.yml groups"
+        if state == "ready" and space["map"]:
+            path = space["map"].split("#", 1)[0]
+            if clone is None or not (clone / path).is_file():
+                state, reason, action = "needs_setup", "нет описания, что где лежит", f"write {path}"
+        rows.append({"id": key, "what": space["what"], "kind": space["kind"], "level": space["level"],
+                     "via": via, "access": space["access"], "map": space["map"],
+                     "state": state, "reason": reason, "action": action})
+    return rows
 
 
 # --- running commands as the agent's account -------------------------------------------------------------
@@ -991,8 +1088,9 @@ def save_errors(path, tools_errors, mcp_errors=None):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def report(kind, rows, problems, who=None, accesses=None):
-    return {"format": FORMAT, "kind": kind, "for": who, "tools": rows, "accesses": accesses or [], "problems": problems}
+def report(kind, rows, problems, who=None, spaces=None, accesses=None):
+    return {"format": FORMAT, "kind": kind, "for": who, "tools": rows, "spaces": spaces or [],
+            "accesses": accesses or [], "problems": problems}
 
 
 REPORT_FILE = STATE_FILE.parent / "tools-report.json"
@@ -1016,6 +1114,13 @@ def print_report(data, stream=sys.stdout):
         text = f"  {row['id']:<{width}}  {row['state']:<11}  {row['level']}"
         details = "; ".join(x for x in (row["reason"], f"to do: {row['action']}" if row["action"] else "") if x)
         print(text + (f"  — {details}" if details else ""), file=stream)
+    if data.get("spaces"):
+        width = max(len(r["id"]) for r in data["spaces"])
+        print("Spaces:", file=stream)
+        for row in data["spaces"]:
+            text = f"  {row['id']:<{width}}  {row['state']:<11}  {row['access']:<5}  {row['what']}"
+            details = "; ".join(x for x in (row["reason"], f"to do: {row['action']}" if row["action"] else "") if x)
+            print(text + (f"  — {details}" if details else ""), file=stream)
     if data.get("accesses"):
         print("Accesses (names and purpose, no values):", file=stream)
         for row in data["accesses"]:
@@ -1129,8 +1234,10 @@ def main(argv=None):
         errors = read_errors(root / STATE_FILE)
         rows = states(registry, decisions, account, plugin_list(bb), account.home, errors["tools"],
                       root, servers, errors["mcp"], bb_data_dir(bb), keys=keys)
-        data = report(kind, rows, problems + more + mcp_problems + secret_problems, name,
-                      accesses=access_rows(account))
+        spaces, space_problems = described_spaces(description, employee, name) if name else ({}, [])
+        space_list = space_rows(spaces, rows, root.parent.parent if name else None, description, employee)
+        data = report(kind, rows, problems + more + mcp_problems + secret_problems + space_problems, name,
+                      spaces=space_list, accesses=access_rows(account))
         save_report(root, data)
     if args.json:
         json.dump(data, sys.stdout, ensure_ascii=False, indent=2)
