@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from migrate_bridge import LEGACY, TRACKING
+import organization
 
 ASSISTANT = "git:https://github.com/ainurminibaev/bb-personal-assistant.git@semver:^0.3.0"
 SOURCES = {"telegram-projects": TRACKING, "personal-assistant": ASSISTANT}
@@ -108,6 +109,12 @@ def main():
                         help="assistant: a personal assistant with the owner's files; employee: a digital employee of a team")
     parser.add_argument("--workspace-repo",
                         help="Git URL of the employee's repository: the workspace becomes its git copy (role, team rules, connections)")
+    parser.add_argument("--organization",
+                        help="Git URL of the organization repository: the workspace becomes its copy with shared/ "
+                             "and employees/<name> only; the BB project is employees/<name>")
+    parser.add_argument("--employee", help="Employee folder name in the organization repository (with --organization)")
+    parser.add_argument("--keep-installed-sources", action="store_true",
+                        help="Keep plugin sources that are already installed (a release candidate or a local mirror)")
     parser.add_argument("--provider", help="Agent for the project, for example codex or claude-code")
     parser.add_argument("--model", help="Model for the project, for example the provider's current model ID")
     parser.add_argument("--inbox", type=Path,
@@ -117,9 +124,20 @@ def main():
     root = args.workspace.expanduser().resolve()
     if root == package or package in root.parents:
         raise SystemExit("Choose a workspace outside the extracted release directory.")
+    if bool(args.organization) != bool(args.employee):
+        raise SystemExit("--organization and --employee go together.")
+    if args.organization and args.workspace_repo:
+        raise SystemExit("Choose --organization or --workspace-repo.")
+    clone = None
+    if args.organization:
+        args.kind = "employee"
+        clone = root
+        print(f"Organization copy {organization.checkout(args.organization, clone, args.employee)}: {clone}.")
+        root = clone / "employees" / args.employee
+        description, employee, layout = organization.read_organization(clone, args.employee)
     if args.workspace_repo:
         clone_workspace(args.workspace_repo, root)
-    cloned = bool(args.workspace_repo) and (root / ".git").exists()
+    cloned = (bool(args.workspace_repo) and (root / ".git").exists()) or clone is not None
     if root.exists() and (not root.is_dir() or (any(root.iterdir()) and not (root / "projects.md").is_file() and not cloned)):
         raise SystemExit("Choose an empty directory or an existing assistant workspace containing projects.md.")
     machines = bb("machine", "list")
@@ -140,6 +158,8 @@ def main():
             )
         if plugin and plugin["source"] == LEGACY and plugin_id == "telegram-projects":
             raise SystemExit("Migrate the existing chat binding first. Follow BRIDGE-MIGRATION.md.")
+        if plugin and args.keep_installed_sources and plugin["enabled"]:
+            continue
         if plugin and (plugin["source"] != expected or not plugin["enabled"]):
             raise SystemExit(f"Check the installed source and enabled state of {plugin_id}.")
     projects = [p for p in bb("project", "list") if any(
@@ -189,6 +209,10 @@ def main():
             pass
     except FileExistsError:
         pass
+    if clone is not None:
+        links, notes = organization.link_skills(clone, args.employee)
+        organization.exclude_installation_files(clone, args.employee, links)
+        layout += notes
     install_guest_guard(package, root, bb("status")["dataDir"])
     if args.allow_guest_guard:
         subprocess.run([sys.executable, str(package / "hooks" / "approve-guest-guard.py"), str(root)], check=True)
@@ -196,7 +220,7 @@ def main():
     else:
         print("Guest thread guard installed. Allow it once: the \"Codex hooks\" card in BB, or run setup.py again with --allow-guest-guard.")
     project = projects[0] if projects else bb(
-        "project", "create", "--name", args.name, "--root", str(root),
+        "project", "create", "--name", args.employee if clone is not None and args.name == "Personal Assistant" else args.name, "--root", str(root),
         "--machine", args.machine
     )
     if args.provider or args.model:
@@ -205,6 +229,15 @@ def main():
     if args.provider == "codex":
         subprocess.run(["bb", "settings", "ai-services", "set", "voice", "codex"], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if clone is not None:
+        facts = organization.collect_facts(bb, project["id"], args.machine)
+        differences = layout + organization.compare(description, employee, facts)
+        print(f"Employee {args.employee}: " + ("description matches the installation." if not differences
+                                               else f"{len(differences)} difference(s):"))
+        for line in differences:
+            print(f"  - {line}")
+        if organization.not_compared(employee):
+            print("  Not compared by this version: " + ", ".join(organization.not_compared(employee)) + ".")
     status = bb("plugin", "rpc", "call", "telegram-projects", "status")
     preferences = bb("plugin", "rpc", "call", "telegram-projects", "preferences")
     print(f"Workspace registered as BB project {project['id']}.")
