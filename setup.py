@@ -180,7 +180,7 @@ def main():
     missing = [src for pid, src in SOURCES.items() if pid not in installed]
     # General plugins of the list (knowledge base, pictures...): what this installation gets and does not have yet.
     extra = [name for name, tool in REGISTRY.items() if tool["kind"] == "plugin" and not tool.get("core")
-             and decisions[name][0] and name not in installed]
+             and decisions[name][0] and tools.plugin_id(name, tool) not in installed]
     if missing or extra:
         print("BB release sources:", *missing, *(
             sources.get(n) or REGISTRY[n]["source"] + (f" (folder {REGISTRY[n]['subdirectory']})"
@@ -198,6 +198,8 @@ def main():
         if error:
             print(f"{name}: {error}. Setup goes on; the tools list at the end says what to do.", flush=True)
             tool_errors[name] = error
+    if extra:
+        tools.wait_for_plugins(bb, [tools.plugin_id(n, REGISTRY[n]) for n in extra if n not in tool_errors])
     # Existing release-tracking installations can lag behind the newest tag.
     releases = {p["id"]: p["version"] for p in bb("plugin", "list")["plugins"]}
     if stable_version(releases.get("personal-assistant", "")) < (0, 2, 3):

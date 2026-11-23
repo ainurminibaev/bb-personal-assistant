@@ -207,8 +207,25 @@ def _row(name, tool, level, state, reason="", action=""):
             "state": state, "reason": reason, "action": action}
 
 
+def plugin_id(name, tool):
+    """The BB plugin id of a plugin line: the line's name unless the plugin is called otherwise."""
+    return tool.get("plugin_id", name)
+
+
+def wait_for_plugins(bb, names, timeout=300, step=5):
+    """bb plugin install builds in the background: wait until the plugins are listed, so the state is not stale."""
+    import time
+    deadline = time.monotonic() + timeout
+    while True:
+        installed = plugin_list(bb)
+        missing = [n for n in names if n not in installed]
+        if not missing or time.monotonic() > deadline:
+            return installed
+        time.sleep(step)
+
+
 def _plugin_state(name, tool, level, plugins, bb_home, errors):
-    plugin = plugins.get(name)
+    plugin = plugins.get(plugin_id(name, tool))
     if not plugin:
         if name in errors:
             return _row(name, tool, level, "error", errors[name],
@@ -216,7 +233,8 @@ def _plugin_state(name, tool, level, plugins, bb_home, errors):
                         f"{name}=<path or git source> to setup.py")
         return _row(name, tool, level, "needs_setup", "the plugin is not installed", RERUN)
     if not plugin.get("enabled", True):
-        return _row(name, tool, level, "needs_setup", "the plugin is installed but disabled", f"bb plugin enable {name}")
+        return _row(name, tool, level, "needs_setup", "the plugin is installed but disabled",
+                    f"bb plugin enable {plugin_id(name, tool)}")
     check = tool.get("login_check")
     if check and bb_home and not (bb_home / check.removeprefix("~/")).exists():
         return _row(name, tool, level, "needs_login", f"no login: {tool.get('login', check)}",
@@ -345,7 +363,7 @@ def install_tool(name, tool, account, plugins, bb, cache, source=None):
     if kind == "service":
         return None  # one per server, the services installer puts it; the state says what is missing
     if kind == "plugin":
-        if name in plugins:
+        if plugin_id(name, tool) in plugins:
             return None
         args = ["plugin", "install", source or tool["source"]]
         if tool.get("subdirectory") and not source:
@@ -611,7 +629,9 @@ def main(argv=None):
                 shutil.rmtree(folder, ignore_errors=True)
             save_errors(state_file, errors)
             account.give(state_file.parent)
-            plugins = plugin_list(bb) if bb else {}
+            wanted = [plugin_id(n, t) for n, t in registry.items()
+                      if t["kind"] == "plugin" and decisions[n][0] and n not in errors]
+            plugins = wait_for_plugins(bb, wanted) if bb else {}
         if not bb:
             problems.append("BB plugins are not checked: pass --bb-user, --bb-cli and --bb-url of the agents' BB")
         errors = read_errors(state_file)["tools"]

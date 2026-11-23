@@ -31,6 +31,7 @@ class SetupLanguageTest(unittest.TestCase):
                         if PLUGINS[key].get("subdirectory"):
                             self.assertEqual(args[3:7], ("--subdirectory", PLUGINS[key]["subdirectory"],
                                                          "--tag-prefix", PLUGINS[key]["tag_prefix"]))
+                        key = setup.tools.plugin_id(key, PLUGINS[key])
                         plugins[key] = dict(id=key, source=args[2], enabled=True,
                                             version="0.9.22" if key == "telegram-projects" else "0.2.5")
                     elif args[:4] == ("plugin", "config", "telegram-projects", "set"):

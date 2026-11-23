@@ -91,6 +91,7 @@ tools:
     what: Браузер агента — открывать страницы, читать, нажимать, заполнять формы, снимки (штатный BB)
     kind: plugin
     source: builtin:browser-automation
+    plugin_id: browser-automation
     installs: [assistant, employee, agents]
     login: входы на сайты у каждого агента свои, общих нет
 

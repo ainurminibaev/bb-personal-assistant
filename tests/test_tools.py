@@ -140,6 +140,11 @@ class States(unittest.TestCase):
         self.assertEqual(self.state("image-gen", disabled)["action"], "bb plugin enable image-gen")
         self.assertEqual(self.state("image-gen", decision=(False, "organization", "excluded"))["state"], "excluded")
 
+    def test_plugin_called_otherwise(self):
+        self.assertEqual(self.state("browser")["state"], "needs_setup")
+        running = {"browser-automation": {"id": "browser-automation", "enabled": True}}
+        self.assertEqual(self.state("browser", running)["state"], "installed")
+
     def test_skill_and_hook(self):
         self.assertEqual(self.state("agent-compat")["state"], "needs_setup")
         self.assertEqual(self.state("agent-compat", {"shared-guides": {}})["state"], "installed")
