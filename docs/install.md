@@ -61,3 +61,23 @@ its source can be installed from a copy: `--tool-source <id>=<path or git source
 
 An assistant gets the knowledge base plugin; an employee does not. An assistant's BB also tells every thread how to
 reach the owner through the active assistant conversation (`ownerContact` setting of the platform plugin).
+
+## Server services
+
+Speech, the quick decision service and PDF are one per server and are set up by their own installers in `deploy/`
+(as root, once per server); the assistant's or employee's setup uses them.
+
+- **Voice of the bridge.** When the speech service is installed (`/usr/local/bin/voice-to-text`), setup points the
+  bridge at it (`voiceRouterPath`); a working custom router is kept.
+- **Speech router update.** A new release's router (formats, retries) without touching models, ports or units:
+  `sudo deploy/speech/install.sh router`.
+- **Quick decision key from another server.** The key goes from that server's service straight into this one, with no
+  copy on disk: `ssh <server> 'sudo cat /var/lib/bb-decide/openai.key' | sudo deploy/decide/install.sh
+  --openai-key-from - --openai-consumers <accounts>`. See [decide.md](decide.md).
+- **PDF for one account.** `deploy/pdf/install.sh --prefix <home>/vallis-pdf` installs into that account's folder
+  without root (a stand account, a second employee on the same server); put `<prefix>/bin` on that agent's PATH. The
+  server-wide default is `/opt/vallis-pdf` with commands in `/usr/local/bin`.
+- **Credentials store.** `vallis-secret` with `age` and `sops` comes with setup from their pinned releases; no system
+  package is needed.
+- **After a plugin update.** `bb personal-assistant tools` checks the tools again when its saved check is older than the
+  loaded plugin; no BB restart is needed for the platform plugin's background work.
