@@ -141,10 +141,11 @@ tools:
     installs: [assistant, employee, agents]
 
   pdf:
-    what: PDF с общим оформлением платформы и картинки HTML-карточек (схема разбора голосового) — vallis-pdf
+    what: PDF с общим оформлением платформы, чтение PDF (pdftotext) и картинки HTML-карточек (схема разбора голосового) — vallis-pdf
     kind: service
     check_commands: [/usr/local/bin/vallis-pdf]
-    install: служба сервера — deploy/pdf/install.sh (pandoc, WeasyPrint; схема — браузер из строки «browser»)
+    check_parts: {"чтение PDF": [pdftotext, /usr/local/bin/pdftotext]}   # каждая часть: любая из команд
+    install: служба сервера — deploy/pdf/install.sh (pandoc, WeasyPrint; чтение PDF — poppler-utils в свою папку /opt/vallis-pdf/poppler, в систему не ставится; схема — браузер из строки «browser»)
     installs: [assistant, employee, agents]
 
   decide:

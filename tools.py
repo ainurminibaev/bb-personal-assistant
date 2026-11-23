@@ -321,7 +321,15 @@ def _service_state(name, tool, level, account):
     if idle:
         return _row(name, tool, level, "error", f"installed, but not running: {', '.join(idle)}",
                     f"systemctl start {' '.join(idle)}")
-    return _row(name, tool, level, "installed", f"service of the server: {found[0]}")
+    # Parts of the service each with their own command (pdf: «чтение PDF» — pdftotext): each must be there.
+    parts = tool.get("check_parts") or {}
+    have = {part: any(account.which(c) or Path(c).exists() for c in commands) for part, commands in parts.items()}
+    if not all(have.values()):
+        return _row(name, tool, level, "needs_setup",
+                    "; ".join(f"{part}: {'стоит' if ok else 'не стоит'}" for part, ok in have.items()),
+                    tool.get("install", "install the server services"))
+    return _row(name, tool, level, "installed", "; ".join(
+        [f"service of the server: {found[0]}", *(f"{part}: стоит" for part in parts)]))
 
 
 def _npm_state(name, tool, level, account):

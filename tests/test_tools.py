@@ -242,6 +242,18 @@ class States(unittest.TestCase):
             row = tools.tool_state("speech", tool, (True, "platform", ""), self.account, {}, self.home, {})
         self.assertEqual(row["state"], "installed")
 
+    def test_pdf_shows_reading_pdf_as_its_own_part(self):
+        tool = dict(REGISTRY["pdf"], check_commands=["vallis-pdf"],
+                    check_parts={"чтение PDF": ["pdftotext", str(self.home / "no-such-pdftotext")]})
+        self.account.programs.add("vallis-pdf")
+        row = tools.tool_state("pdf", tool, (True, "platform", ""), self.account, {}, self.home, {})
+        self.assertEqual((row["state"], row["reason"]), ("needs_setup", "чтение PDF: не стоит"))
+        self.account.programs.add("pdftotext")
+        row = tools.tool_state("pdf", tool, (True, "platform", ""), self.account, {}, self.home, {})
+        self.assertEqual(row["state"], "installed")
+        self.assertIn("чтение PDF: стоит", row["reason"])
+        self.assertIn("чтение PDF", str(REGISTRY["pdf"]["check_parts"]))  # the registry row has the part
+
     def test_a_broken_check_is_an_error_row(self):
         self.account.programs.add("context-mode")
         self.account.programs.add("codex")
