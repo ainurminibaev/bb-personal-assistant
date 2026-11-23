@@ -19,15 +19,18 @@ class Fake:
     """One loopback HTTP server: path -> (status, body); records the paths it was asked for."""
 
     def __init__(self, routes):
-        self.routes, self.calls = routes, []
+        self.routes, self.calls, self.names = routes, [], []
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
-                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 path = self.path.split("?")[0]
                 fake.calls.append(path)
-                status, body = fake.routes.get(path, (404, "no"))
+                m = __import__("re").search(rb'filename="([^"]+)"', raw)
+                fake.names.append(m.group(1).decode() if m else None)
+                route = fake.routes.get(path, (404, "no"))
+                status, body = route.pop(0) if isinstance(route, list) else route
                 self.send_response(status)
                 self.end_headers()
                 self.wfile.write(body.encode())
@@ -66,7 +69,7 @@ class RouterTest(unittest.TestCase):
 
     def run_router(self, codex=None, ru=None, multi=None, order="codex-first", profiles="ru,multi", lang=None,
                    login=True):
-        env = {**os.environ, "SPEECH_CONFIG": "/nonexistent", "SPEECH_ORDER": order, "SPEECH_PROFILES": profiles,
+        env = {**os.environ, "SPEECH_CONFIG": "/nonexistent", "SPEECH_CODEX_PAUSE_SEC": "0.1", "SPEECH_ORDER": order, "SPEECH_PROFILES": profiles,
                "SPEECH_LANG": "ru", "CODEX_HOME": str(self.codex_home if login else Path(self.tmp.name) / "none"),
                "CODEX_TRANSCRIBE_URL": (codex.url + "/transcribe") if codex else "http://127.0.0.1:9/transcribe",
                "SPEECH_RU_URL": ru.url if ru else "http://127.0.0.1:9", "SPEECH_MULTI_URL": multi.url if multi else "http://127.0.0.1:9"}
@@ -87,6 +90,29 @@ class RouterTest(unittest.TestCase):
         self.assertEqual((rc, out), (0, "из облака"))
         self.assertIn("route=codex", err)
         self.assertEqual(ru.calls + multi.calls, [])
+
+    def test_codex_server_error_is_retried_once(self):
+        codex = self.fake({"/transcribe": [(500, "down"), (200, json.dumps({"text": "со второго раза"}))]})
+        ru, multi = self.models()
+        rc, out, err = self.run_router(codex, ru, multi)
+        self.assertEqual((rc, out), (0, "со второго раза"))
+        self.assertEqual(codex.calls, ["/transcribe", "/transcribe"])
+        self.assertIn("attempts=2", err)
+
+    def test_codex_limit_goes_local_at_once(self):
+        codex = self.fake({"/transcribe": [(429, "limit"), (200, json.dumps({"text": "не должно"}))]})
+        ru, multi = self.models(lid_ru=0.95)
+        rc, out, err = self.run_router(codex, ru, multi)
+        self.assertEqual((rc, out), (0, "привет"))
+        self.assertEqual(codex.calls, ["/transcribe"])           # no retry on a limit
+        self.assertIn("codex failed: http 429", err)
+
+    def test_telegram_oga_is_sent_as_ogg(self):
+        self.audio = self.audio.with_name("file_14.oga")
+        self.audio.write_bytes(b"OggS fake")
+        codex = self.fake({"/transcribe": (200, json.dumps({"text": "ок"}))})
+        rc, out, _ = self.run_router(codex, None, None)
+        self.assertEqual((rc, out, codex.names), (0, "ок", ["file_14.ogg"]))
 
     def test_codex_fails_then_local_russian(self):
         codex = self.fake({"/transcribe": (500, "down")})

@@ -31,11 +31,21 @@ CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 CTYPES = {".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg", ".wav": "audio/wav",
           ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".webm": "audio/webm"}
 LANGS = ("auto", "ru", "tt", "en", "ar")
+CODEX_TRY = float(os.environ.get("SPEECH_CODEX_TRY_SEC", "30"))       # one attempt
+CODEX_PAUSE = float(os.environ.get("SPEECH_CODEX_PAUSE_SEC", "1.5"))   # before the one retry
+CODEX_BUDGET = float(os.environ.get("SPEECH_CODEX_BUDGET_SEC", "45"))  # the whole Codex step
 T0 = time.monotonic()
 
 
 class Fail(Exception):
-    pass
+    def __init__(self, msg, status=None, transient=False):
+        super().__init__(msg)
+        self.status, self.transient = status, transient
+
+    @property
+    def retryable(self):
+        """A server error or a broken connection is worth one more try; a limit, a login or a bad request is not."""
+        return self.transient or (self.status is not None and self.status >= 500)
 
 
 def settings():
@@ -63,13 +73,21 @@ def log(msg):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+# The Codex cloud refuses an Ogg file named .oga/.opus (HTTP 500 «Error in ASR API») while the same bytes as .ogg pass;
+# Telegram keeps voice notes as file_N.oga. The name sent is normalized; the file itself is not touched.
+SEND_AS = {".oga": ".ogg", ".opus": ".ogg"}
+ATTEMPTS = [0]   # Codex attempts of this run, for the log line
+
+
 def post(url, field, path, headers=None, timeout=600):
     """multipart POST of the audio file; returns (body, response headers)."""
     with open(path, "rb") as f:
         audio = f.read()
     b = uuid.uuid4().hex
-    ctype = CTYPES.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
-    body = (f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{os.path.basename(path)}"\r\n'
+    stem, ext = os.path.splitext(os.path.basename(path))
+    ctype = CTYPES.get(ext.lower(), "application/octet-stream")
+    name = stem + SEND_AS.get(ext.lower(), ext)
+    body = (f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{name}"\r\n'
             f"Content-Type: {ctype}\r\n\r\n").encode() + audio + f"\r\n--{b}--\r\n".encode()
     h = {"Content-Type": f"multipart/form-data; boundary={b}", **(headers or {})}
     try:
@@ -77,9 +95,9 @@ def post(url, field, path, headers=None, timeout=600):
                                     timeout=timeout) as r:
             return r.read().decode("utf-8", "replace").strip(), r.headers
     except urllib.error.HTTPError as e:
-        raise Fail(f"http {e.code}")
+        raise Fail(f"http {e.code}", status=e.code)
     except Exception as e:
-        raise Fail(type(e).__name__)
+        raise Fail(type(e).__name__, transient=True)
 
 
 def codex_auth():
@@ -97,7 +115,20 @@ def codex(path):
          "User-Agent": "Codex Desktop (bb-speech voice-to-text)"}
     if tok.get("account_id"):
         h["ChatGPT-Account-Id"] = tok["account_id"]
-    raw, _ = post(CODEX_URL, "file", path, h, timeout=90)
+    # One retry after a short pause on a server error or a broken connection; the whole Codex step stays bounded,
+    # so a person never waits minutes before the local models answer.
+    deadline = time.monotonic() + CODEX_BUDGET
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            raw, _ = post(CODEX_URL, "file", path, h, timeout=max(5, min(CODEX_TRY, deadline - time.monotonic())))
+            ATTEMPTS[0] = attempt
+            break
+        except Fail as e:
+            if attempt >= 2 or not e.retryable or deadline - time.monotonic() < CODEX_PAUSE + 5:
+                raise Fail(f"{e}" + (" after a retry" if attempt > 1 else ""), e.status)
+            time.sleep(CODEX_PAUSE)
     try:
         text = (json.loads(raw).get("text") or "").strip()
     except ValueError:
@@ -166,7 +197,7 @@ def run(conf, path, lang):
     if "multi" in conf["profiles"] and TURKIC_LATIN.search(text) and not CYRILLIC.search(text):
         text, info = multi(conf, path)
         return text, f"order={order} route=multi reason='codex returned Latin Turkic' {info}"
-    return text, f"order={order} route=codex reason=ok codex={time.monotonic() - t:.1f}s"
+    return text, f"order={order} route=codex reason=ok attempts={ATTEMPTS[0]} codex={time.monotonic() - t:.1f}s"
 
 
 def main(argv):
