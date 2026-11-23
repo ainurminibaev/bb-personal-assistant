@@ -144,8 +144,9 @@ tools:
     what: PDF с общим оформлением платформы, чтение PDF (pdftotext) и картинки HTML-карточек (схема разбора голосового) — vallis-pdf
     kind: service
     check_commands: [/usr/local/bin/vallis-pdf]
-    check_parts: {"чтение PDF": [pdftotext, /usr/local/bin/pdftotext]}   # каждая часть: любая из команд
-    install: служба сервера — deploy/pdf/install.sh (pandoc, WeasyPrint; чтение PDF — poppler-utils в свою папку /opt/vallis-pdf/poppler, в систему не ставится; схема — браузер из строки «browser»)
+    check_run: [/usr/local/bin/vallis-pdf, --check]   # что реально запускается: PDF, чтение PDF, схема
+    required_parts: [PDF, чтение PDF]                  # схеме нужен ещё браузер учётки (строка «browser»)
+    install: служба сервера — deploy/pdf/install.sh; всё в /opt/vallis-pdf, в систему ничего не ставится (pandoc — официальный выпуск с суммой; WeasyPrint с Pillow — закреплённые колёса с суммами; poppler-utils, шрифты DejaVu и недостающие библиотеки — пакеты Ubuntu распаковкой); схема — браузер из строки «browser»
     installs: [assistant, employee, agents]
 
   decide:

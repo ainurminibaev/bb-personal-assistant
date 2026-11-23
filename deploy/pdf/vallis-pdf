@@ -6,6 +6,10 @@
                                                              a picture of an HTML card (the voice scheme) through the
                                                              installed Chrome, offline, only this file
     vallis-pdf --template                                    print the path of the scheme template
+    vallis-pdf --check                                       which parts really start: {"PDF", "чтение PDF", "схема"}
+
+The installer puts pandoc, WeasyPrint (with Pillow), poppler-utils, fonts and the libraries the system lacks next to
+this file (/opt/vallis-pdf); they are used from there. Run from the source tree, the system ones are used.
 
 Chrome: $VALLIS_CHROME, else the browser of the BB browser tool (<BB data dir>/plugins/browser-automation/host-data/
 runtime/chrome), else google-chrome / chromium on PATH. No network: every host resolves to nothing.
@@ -17,9 +21,37 @@ import subprocess
 import sys
 import tempfile
 
-HERE = os.path.dirname(os.path.realpath(__file__))
+HERE = os.environ.get("VALLIS_PDF_HOME") or os.path.dirname(os.path.realpath(__file__))
 STYLE = os.path.join(HERE, "style.css")
 TEMPLATE = os.path.join(HERE, "schema-template.html")
+PY = os.path.join(HERE, "py")
+if os.path.isdir(PY):
+    sys.path.insert(0, PY)   # Pillow for trim()
+
+
+def tools_env():
+    """Environment with this folder's tools first (pandoc, WeasyPrint, poppler, fonts, libraries)."""
+    env = dict(os.environ)
+    paths = [os.path.join(HERE, "pandoc", "bin"), os.path.join(HERE, "poppler")]
+    env["PATH"] = os.pathsep.join([p for p in paths if os.path.isdir(p)] + [env.get("PATH", "/usr/bin:/bin")])
+    if os.path.isdir(PY):
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [PY, env.get("PYTHONPATH")]))
+    lib = os.path.join(HERE, "lib")
+    if os.path.isdir(lib):
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, [lib, env.get("LD_LIBRARY_PATH")]))
+    if os.path.exists(os.path.join(HERE, "fonts.conf")):
+        env["FONTCONFIG_FILE"] = os.path.join(HERE, "fonts.conf")
+    return env
+
+
+def which(name, env):
+    return shutil.which(name, path=env["PATH"])
+
+
+def weasyprint_cmd(env):
+    if os.path.isdir(os.path.join(PY, "weasyprint")):
+        return [sys.executable, "-m", "weasyprint"]
+    return [which("weasyprint", env)] if which("weasyprint", env) else None
 
 
 def die(msg, code=1):
@@ -30,25 +62,27 @@ def die(msg, code=1):
 def to_pdf(src, out):
     html = src
     tmp = None
+    env = tools_env()
     if not src.lower().endswith((".html", ".htm")):
-        if not shutil.which("pandoc"):
+        if not which("pandoc", env):
             die("pandoc is not installed")
         tmp = tempfile.mkdtemp(prefix="vallis-pdf-")
         html = os.path.join(tmp, "doc.html")
         with open(STYLE, encoding="utf-8") as f:
             css = f.read()
-        body = subprocess.run(["pandoc", "-f", "markdown+hard_line_breaks", "-t", "html5", src],
-                              capture_output=True, text=True)
+        body = subprocess.run([which("pandoc", env), "-f", "markdown+hard_line_breaks", "-t", "html5", src],
+                              capture_output=True, text=True, env=env)
         if body.returncode:
             die("pandoc failed: " + body.stderr.strip()[:300])
         with open(html, "w", encoding="utf-8") as f:
             f.write('<!doctype html><html lang="ru"><head><meta charset="utf-8"><style>' + css + "</style></head><body>"
                     + body.stdout + "</body></html>")
     try:
-        if not shutil.which("weasyprint"):
+        weasy = weasyprint_cmd(env)
+        if not weasy:
             die("weasyprint is not installed")
-        r = subprocess.run(["weasyprint", "--base-url", os.path.dirname(os.path.abspath(src)), html, out],
-                           capture_output=True, text=True)
+        r = subprocess.run([*weasy, "--base-url", os.path.dirname(os.path.abspath(src)), html, out],
+                           capture_output=True, text=True, env=env)
         if r.returncode:
             die("weasyprint failed: " + r.stderr.strip()[:300])
     finally:
@@ -107,7 +141,46 @@ def trim(src, out):
     im.crop((0, 0, w, min(h, bottom + 24))).save(out)
 
 
+def check():
+    """Each part really starts: a one-line PDF is made, read back, and a tiny card becomes a picture."""
+    import json
+    env = tools_env()
+    parts = {"PDF": False, "чтение PDF": False, "схема": False}
+    tmp = tempfile.mkdtemp(prefix="vallis-check-")
+    try:
+        md, pdf, html, png = (os.path.join(tmp, n) for n in ("c.md", "c.pdf", "c.html", "c.png"))
+        with open(md, "w", encoding="utf-8") as f:
+            f.write("проверка vallis\n")
+        quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        if subprocess.run([sys.executable, os.path.realpath(__file__), md, pdf], timeout=120,
+                          env=dict(env, VALLIS_PDF_HOME=HERE), **quiet).returncode == 0 and os.path.exists(pdf):
+            parts["PDF"] = True
+            reader = which("pdftotext", env)
+            if reader:
+                got = subprocess.run([reader, pdf, "-"], capture_output=True, text=True, timeout=60, env=env)
+                parts["чтение PDF"] = "vallis" in got.stdout
+        elif which("pdftotext", env):
+            parts["чтение PDF"] = subprocess.run([which("pdftotext", env), "-v"], timeout=60, env=env,
+                                                 **quiet).returncode == 0
+        with open(html, "w", encoding="utf-8") as f:
+            f.write("<html><body style='margin:0'><div style='width:40px;height:40px;background:#036'></div></body></html>")
+        try:
+            r = subprocess.run([sys.executable, os.path.realpath(__file__), "--png", html, png, "--width", "200"],
+                               timeout=150, env=dict(env, VALLIS_PDF_HOME=HERE), **quiet)
+            parts["схема"] = r.returncode == 0 and os.path.exists(png)
+        except subprocess.TimeoutExpired:
+            pass
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(json.dumps(parts, ensure_ascii=False))
+    return 0
+
+
 def main(argv):
+    if argv == ["--check"]:
+        return check()
     if argv == ["--template"]:
         print(TEMPLATE)
         return 0

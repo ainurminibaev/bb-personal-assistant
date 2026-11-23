@@ -321,15 +321,22 @@ def _service_state(name, tool, level, account):
     if idle:
         return _row(name, tool, level, "error", f"installed, but not running: {', '.join(idle)}",
                     f"systemctl start {' '.join(idle)}")
-    # Parts of the service each with their own command (pdf: «чтение PDF» — pdftotext): each must be there.
-    parts = tool.get("check_parts") or {}
-    have = {part: any(account.which(c) or Path(c).exists() for c in commands) for part, commands in parts.items()}
-    if not all(have.values()):
-        return _row(name, tool, level, "needs_setup",
-                    "; ".join(f"{part}: {'стоит' if ok else 'не стоит'}" for part, ok in have.items()),
-                    tool.get("install", "install the server services"))
-    return _row(name, tool, level, "installed", "; ".join(
-        [f"service of the server: {found[0]}", *(f"{part}: стоит" for part in parts)]))
+    # A service that says itself which of its parts really start (pdf: `vallis-pdf --check` → {"PDF": true, ...}).
+    if tool.get("check_run"):
+        try:
+            said = account.run(*tool["check_run"], timeout=300)
+            parts = json.loads(said.stdout)
+            if not isinstance(parts, dict) or not parts:
+                raise ValueError
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return _row(name, tool, level, "error", f"{' '.join(tool['check_run'])}: no answer",
+                        tool.get("install", "install the server services"))
+        said_parts = "; ".join(f"{part}: {'стоит' if ok else 'не стоит'}" for part, ok in parts.items())
+        required = tool.get("required_parts") or list(parts)
+        if not all(parts.get(part) for part in required):
+            return _row(name, tool, level, "needs_setup", said_parts, tool.get("install", "install the server services"))
+        return _row(name, tool, level, "installed", said_parts)
+    return _row(name, tool, level, "installed", f"service of the server: {found[0]}")
 
 
 def _npm_state(name, tool, level, account):
