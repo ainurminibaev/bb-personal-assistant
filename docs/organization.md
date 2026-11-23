@@ -72,8 +72,7 @@ fields are reported the same way. Fields marked "reserved" are listed as not com
 
 - Other employees' folders are not checked out, and with a remote repository their contents are not downloaded
   (partial clone). An agent reading files does not find them.
-- Git access is per repository: anyone with read access to the organization repository can fetch any file from it,
-  and file names are visible in the history. Documents that must stay closed to another employee of the same
-  organization belong in a separate repository.
+- The organization repository is not an access boundary; closed documents belong in a separate repository with
+  access by list.
 - `shared/` is edited by the administrator. To enforce this, protect the default branch and add a `CODEOWNERS` entry
   for `shared/` and `organization.yml`.
