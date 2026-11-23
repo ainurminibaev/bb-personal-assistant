@@ -115,8 +115,10 @@ test("an assistant installation tells every other thread the active assistant co
   assert.match(text, /bb thread tell assistant-main/);
   assert.match(text, /Владельцу в Telegram от/);
   assert.doesNotMatch(contact("assistant-main"), /bb thread tell/); // the assistant itself needs no detour
-  assert.match(contact("assistant-main"), /\(С49\)/);              // the common rules reach it too
+  assert.match(contact("assistant-main"), /\(С49, С69\)/);              // the common rules reach it too
   assert.match(contact("assistant-main"), /первой строкой ответа по сути просьбы[^\n]*\(С46\)/); // the live first line
+  assert.match(contact("assistant-main"), /На месте отвечаешь[^\n]*\(С49, С69\)/);          // on the spot / a subthread
+  assert.match(contact("assistant-main"), /читается за пять секунд[^\n]*\(С64\)/);          // messages read in five seconds
   telegram.owner = "assistant-reserve";            // the pair switched to the reserve thread
   contact("x"); await settle();
   assert.match(contact("y"), /bb thread tell assistant-reserve/);
