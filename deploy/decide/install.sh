@@ -2,12 +2,12 @@
 # Quick decision service of the platform (one per server): `vallis-decide` for agents, the bridge and plugins.
 #
 #   install.sh [--organization <organization.yml>] [--providers openai-decisions,claude,codex]
-#              [--openai-consumers <account,...>] [--openai-key-from <file>]
+#              [--openai-consumers <account,...>] [--openai-key-from <file|->]
 #   install.sh status | remove [--purge]
 #
 # Providers come from the organization file (section decide: {providers: [...]}), the option overrides it; default
 # openai-decisions. Each provider needs a credential of this service itself, never anyone else's:
-#   openai-decisions  API key: --openai-key-from <file> (a bare key or OPENAI_API_KEY=…; never printed), used only for
+#   openai-decisions  API key: --openai-key-from <file> or - for stdin (a bare key or OPENAI_API_KEY=…; never printed), used only for
 #                     the accounts in --openai-consumers and only for POST https://api.openai.com/v1/decisions
 #   claude            own login: sudo -u bb-decide -H claude   (log in once)
 #   codex             own login: sudo -u bb-decide -H codex login --device-auth
@@ -123,9 +123,13 @@ ProtectControlGroups=yes
 EOF
 # The key: moved straight from the given file into the service, never printed or copied elsewhere.
 if [ -n "$key_from" ]; then
-  [ -s "$key_from" ] || { echo "no key in $key_from" >&2; exit 66; }
-  install -m 600 -o "$user" -g "$user" /dev/null "$home/openai.key.tmp" && cat "$key_from" > "$home/openai.key.tmp" \
-    && mv "$home/openai.key.tmp" "$home/openai.key" && echo "[decide] OpenAI key installed for: ${consumers:-nobody}"
+  # `-` reads the key from stdin straight into the service's file: moving it from another server's service needs no
+  # copy on disk in between (ssh <server> 'sudo cat /var/lib/bb-decide/openai.key' | sudo install.sh --openai-key-from -).
+  [ "$key_from" = - ] || [ -s "$key_from" ] || { echo "no key in $key_from" >&2; exit 66; }
+  src=$key_from; [ "$key_from" = - ] && src=/dev/stdin
+  install -m 600 -o "$user" -g "$user" /dev/null "$home/openai.key.tmp" && cat "$src" > "$home/openai.key.tmp" \
+    && [ -s "$home/openai.key.tmp" ] || { rm -f "$home/openai.key.tmp"; echo "no key given" >&2; exit 66; }
+  mv "$home/openai.key.tmp" "$home/openai.key" && echo "[decide] OpenAI key installed for: ${consumers:-nobody}"
 fi
 systemctl daemon-reload
 systemctl enable -q --now bb-decide.socket || echo "[decide] socket did not start" >&2

@@ -19,7 +19,7 @@ Cascade in the order of the organization file; the first ready provider answers,
 
 | Provider | Model | Credential — of the service itself |
 |---|---|---|
-| `openai-decisions` (default) | `gpt-6-luna` via `POST /v1/decisions` | API key: `install.sh --openai-key-from <file> --openai-consumers <accounts>`; used only for those accounts and only for that address |
+| `openai-decisions` (default) | `gpt-6-luna` via `POST /v1/decisions` | API key: `install.sh --openai-key-from <file> --openai-consumers <accounts>`; from another server's service without a copy on disk: `ssh <server> 'sudo cat /var/lib/bb-decide/openai.key' | sudo install.sh --openai-key-from - …`; used only for those accounts and only for that address |
 | `claude` | `claude-haiku-5-5` via `claude -p` | own login: `sudo -u bb-decide -H claude` |
 | `codex` | `gpt-6-luna` via `codex exec` | own login: `sudo -u bb-decide -H codex login --device-auth` |
 
