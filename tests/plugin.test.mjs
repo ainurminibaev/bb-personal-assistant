@@ -23,7 +23,7 @@ function bridge({kind = "assistant", owner = "assistant-main", off = false} = {}
 const settle = () => new Promise(resolve => setTimeout(resolve, 10));
 
 async function load(binding, telegram = bridge()) {
-  let command, instructions, changed, contributed;
+  let command, instructions, changed, contributed, rpcHandlers;
   const queries = [], schedules = [], aiServices = [];
   await plugin({
     settings: { define: () => ({ get: async () => binding, onChange: fn => { changed = fn; } }) },
@@ -31,6 +31,7 @@ async function load(binding, telegram = bridge()) {
               contributeInstructions: provider => { contributed = provider; } },
     storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => [{ name: "main", file: "/data/plugins/personal-assistant/data.db" }], get() {}, run() {} }) }) },
     cli: { register: callback => { command = callback; } },
+    rpc: { register: (_contract, handlers) => { rpcHandlers = handlers; } },
     background: { schedule: (name, cron) => { schedules.push([name, cron]); } },
     experimental_aiServices: { register: declaration => { aiServices.push(declaration); return { dispose() {} }; } },
     sdk: { plugins: telegram.plugins, threads: { list: async query => {
@@ -40,7 +41,7 @@ async function load(binding, telegram = bridge()) {
     } } },
   });
   await settle();
-  return { command, instructions, queries, schedules, aiServices, changeBinding: next => changed(next),
+  return { command, instructions, queries, schedules, aiServices, rpc: () => rpcHandlers, changeBinding: next => changed(next),
            contact: threadId => contributed({threadId, projectId: "any"}) };
 }
 
@@ -154,4 +155,10 @@ test("voice through the server speech service: one transcription service, ready 
   assert.equal(aiServices[0].complete, undefined);
   const status = await aiServices[0].status();
   assert.equal(typeof status.ready, "boolean");
+});
+
+test("the bridge asks for the rules in force by project; a project outside an organization has none", async () => {
+  const { rpc } = await load({});
+  assert.equal(typeof rpc().turnRules, "function");
+  assert.equal(await rpc().turnRules({ projectId: "unknown" }), null);
 });

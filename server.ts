@@ -1,4 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 import policy from "./.bb/AGENTS.md" with { type: "text" };
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -7,7 +8,18 @@ import { refreshGuardCopies } from "./guard-refresh";
 import { deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
 import { toolsReport } from "./tools-status";
+import { turnRules } from "./turn-rules";
 import { registerServerSpeech } from "./server-speech";
+
+/** For the bridge: the rules in force for a conversation's project and their fingerprint (0.4.4). */
+// The contract object as defineRpcContract would return it (an identity helper): the plugin has no runtime SDK import.
+export const rpcContract = ({
+  turnRules: {
+    input: z.object({ projectId: z.string().min(1) }).strict(),
+    output: z.object({ version: z.string(), text: z.string() }).nullable(),
+  },
+});
+
 
 export default async function personalAssistant(bb: BbPluginApi) {
   // Voice through the server's speech service (Codex first, local models as the fallback).
@@ -39,8 +51,28 @@ export default async function personalAssistant(bb: BbPluginApi) {
     "Работу дольше нескольких минут уводишь в подтред и остаёшься доступным; итог подтреда, запущенного по просьбе человека, всегда передаёшь в тот же разговор одним сообщением (С49).",
     "Расписание ставишь только под названную надобность и в том же сообщении говоришь, что поставил; повторяющееся — одно с повтором и сроком окончания; название человеческими словами; поручение закрыто — его расписания снимаешь (С61).",
   ].join("\n");
-  bb.agents.contributeInstructions(({threadId}) =>
-    [contact.instructions(threadId), accessLine(), common].filter(Boolean).join("\n\n") || null);
+  // Project folders, for the rules read from files (refreshed every minute; contributeInstructions must stay synchronous).
+  const folders = new Map<string, string>();
+  const refreshFolders = async () => {
+    const projects = await bb.sdk.projects.list({});
+    for (const p of projects as { id: string; sources?: { path?: string; isDefault?: boolean }[] }[]) {
+      const src = p.sources ?? [];
+      const path = (src.find(s => s.isDefault) ?? src[0])?.path;
+      if (path) folders.set(p.id, path);
+    }
+  };
+  void refreshFolders().catch(() => {});
+  // A new session gets the organization's rules as they are now (a running session keeps what it started with:
+  // the bridge brings later edits on every Telegram turn).
+  bb.agents.contributeInstructions(({threadId, projectId}) =>
+    [contact.instructions(threadId), accessLine(), common, turnRules(folders.get(projectId), "")?.text ?? null]
+      .filter(Boolean).join("\n\n") || null);
+  bb.rpc.register(rpcContract, {
+    turnRules: async ({ projectId }) => {
+      if (!folders.has(projectId)) await refreshFolders().catch(() => {});
+      return turnRules(folders.get(projectId), [accessLine(), common].filter(Boolean).join("\n"));
+    },
+  });
 
   // The credentials store (С37): its skill only where the installer put vallis-secret on the PATH of this BB.
   bb.agents.configure(({project, thread}) =>
@@ -60,6 +92,7 @@ export default async function personalAssistant(bb: BbPluginApi) {
   }).catch(() => { /* an unreadable workspace keeps its copy; setup.py refreshes it too */ });
   // Schedules in guest conversations are not capped; a burst past the guard's thresholds reaches the owner once.
   bb.background.schedule("guest-schedule-alerts", "* * * * *", async () => {
+    await refreshFolders().catch(() => {});
     const projects = await bb.sdk.projects.list({});
     const roots = projects.flatMap(p => (p as { sources?: { path?: string }[] }).sources ?? []).flatMap(s => s.path ? [s.path] : []);
     await deliverScheduleAlerts(bb, roots);
