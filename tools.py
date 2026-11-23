@@ -256,6 +256,10 @@ def _service_state(name, tool, level, account):
     if own.get("state") in STATES and own["state"] != "installed":
         return _row(name, tool, level, own["state"], str(own.get("reason") or ""),
                     tool.get("install", "install the server services"))
+    if not found and own.get("state") == "installed":
+        # The service's own word: its command may be outside the PATH this status runs with
+        # (a BB service often has no /usr/local/bin in PATH).
+        found = [tool["state_file"]]
     if not found:
         return _row(name, tool, level, "needs_setup", "the service of the server is not installed",
                     tool.get("install", "install the server services"))

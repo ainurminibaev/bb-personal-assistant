@@ -198,6 +198,10 @@ class States(unittest.TestCase):
             row = tools.tool_state("speech", tool, (True, "platform", ""), self.account, {}, self.home, {})
         self.assertEqual(row["state"], "installed")
         self.assertEqual(checked, ["bb-speech-ru.socket"])  # only the profiles the service has
+        self.account.programs.discard("voice-to-text")      # status from a PATH without /usr/local/bin
+        with patch.object(tools.subprocess, "run", systemctl):
+            row = tools.tool_state("speech", tool, (True, "platform", ""), self.account, {}, self.home, {})
+        self.assertEqual(row["state"], "installed")
 
     def test_a_broken_check_is_an_error_row(self):
         self.account.programs.add("context-mode")
