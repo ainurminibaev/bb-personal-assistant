@@ -24,7 +24,7 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 10));
 
 async function load(binding, telegram = bridge()) {
   let command, instructions, changed, contributed, rpcHandlers;
-  const queries = [], schedules = [], aiServices = [];
+  const queries = [], schedules = [], aiServices = [], services = [], stops = [];
   await plugin({
     settings: { define: () => ({ get: async () => binding, onChange: fn => { changed = fn; } }) },
     agents: { configure: callback => { instructions = callback; }, registerTool: () => {},
@@ -32,7 +32,9 @@ async function load(binding, telegram = bridge()) {
     storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => [{ name: "main", file: "/data/plugins/personal-assistant/data.db" }], get() {}, run() {} }) }) },
     cli: { register: callback => { command = callback; } },
     rpc: { register: (_contract, handlers) => { rpcHandlers = handlers; } },
-    background: { schedule: (name, cron) => { schedules.push([name, cron]); } },
+    background: { schedule: (name, cron) => { schedules.push([name, cron]); },
+                  service: (name, def) => { services.push(name); const ac = new AbortController(); stops.push(() => ac.abort());
+                    void def.start(ac.signal); } },
     experimental_aiServices: { register: declaration => { aiServices.push(declaration); return { dispose() {} }; } },
     sdk: { plugins: telegram.plugins, threads: { list: async query => {
       queries.push(query);
@@ -41,9 +43,15 @@ async function load(binding, telegram = bridge()) {
     } } },
   });
   await settle();
-  return { command, instructions, queries, schedules, aiServices, rpc: () => rpcHandlers, changeBinding: next => changed(next),
+  for (const stop of stops) stop();   // the plugin is unloaded: its background services stop
+  return { command, instructions, queries, schedules, aiServices, services, rpc: () => rpcHandlers, changeBinding: next => changed(next),
            contact: threadId => contributed({threadId, projectId: "any"}) };
 }
+
+test("owner contact refreshes in the plugin's background service, so a reload stops it", async () => {
+  const p = await load({ ownerContact: true });
+  assert.ok(p.services.includes("owner-contact"));
+});
 
 test("coordinator rules apply only to the configured thread in its own project", async () => {
   const owner = {projectId: "personal", threadId: "owner"};

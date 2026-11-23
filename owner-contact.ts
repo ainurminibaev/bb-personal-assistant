@@ -37,13 +37,25 @@ export async function readOwnerThread(sdk: BbPluginApi["sdk"]): Promise<string |
 export function ownerContact(bb: BbPluginApi, enabled: () => boolean, everyMs = 60_000) {
   let current: string | null = null;
   let running: Promise<string | null> | null = null;
-  const refresh = () => running ??= readOwnerThread(bb.sdk)
+  // A reloaded plugin's old handle throws on `bb.sdk` synchronously: read it inside the promise, never outside.
+  const refresh = () => running ??= Promise.resolve().then(() => readOwnerThread(bb.sdk))
     .then(id => (current = enabled() ? id : null))
+    .catch(() => current)
     .finally(() => { running = null; });
-  void refresh();
-  const timer = setInterval(() => void refresh(), everyMs);
-  timer.unref?.();
-  bb.experimental_signal?.addEventListener?.("abort", () => clearInterval(timer));
+  // The plugin's own background service: BB stops it when the plugin is reloaded, disabled or removed
+  // (a bare timer outlived reloads and fired on a stale handle every minute).
+  bb.background.service("owner-contact", {
+    async start(signal: AbortSignal) {
+      while (!signal.aborted) {
+        await refresh();
+        await new Promise<void>(resolve => {
+          const timer = setTimeout(done, everyMs);
+          function done() { clearTimeout(timer); signal.removeEventListener("abort", done); resolve(); }
+          signal.addEventListener("abort", done, { once: true });
+        });
+      }
+    },
+  });
   return {
     refresh,
     /** The instruction for one thread at its start; the assistant's own conversation gets none. */
