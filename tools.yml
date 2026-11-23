@@ -42,6 +42,13 @@ tools:
     subdirectory: plugins/knowledge-base
     installs: [assistant]
 
+  thread-cleanup:
+    what: Уборка законченных подтредов в архив раз в сутки, без хода модели; поручение — только закрытое
+    kind: plugin
+    source: git:https://github.com/ainurminibaev/bb-personal-assistant.git@semver:^0.4.2
+    subdirectory: plugins/thread-cleanup
+    installs: [assistant, employee, agents]
+
   image-gen:
     what: Генерация и правка картинок при любой модели агента; рисует Codex
     kind: plugin

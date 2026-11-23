@@ -22,10 +22,13 @@ class SetupLanguageTest(unittest.TestCase):
                         return [{"id": "host", "status": "connected"}]
                     if args == ("plugin", "list"):
                         return {"plugins": list(plugins.values())}
-                    if args[:2] == ("plugin", "install") and "plugins/knowledge-base" in args:
-                        self.assertEqual(args[2:5], (setup.REGISTRY["knowledge-base"]["source"], "--subdirectory",
-                                                     "plugins/knowledge-base"))
-                        plugins["knowledge-base"] = dict(id="knowledge-base", source=args[2], enabled=True, version="0.2.8")
+                    own = next((k for k, t in PLUGINS.items() if t.get("subdirectory", "").startswith("plugins/")
+                                and t["subdirectory"] in args), None)
+                    if args[:2] == ("plugin", "install") and own:
+                        # A module from a folder of the platform release: same tags, no tag prefix.
+                        self.assertEqual(args[2:5], (setup.REGISTRY[own]["source"], "--subdirectory",
+                                                     PLUGINS[own]["subdirectory"]))
+                        plugins[own] = dict(id=own, source=args[2], enabled=True, version="0.2.8")
                     elif args[:2] == ("plugin", "install"):
                         key = next(k for k, t in PLUGINS.items() if t["source"] == args[2] and k != "knowledge-base")
                         if PLUGINS[key].get("subdirectory"):

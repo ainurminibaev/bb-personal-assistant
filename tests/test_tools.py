@@ -56,6 +56,14 @@ class Selection(unittest.TestCase):
         self.assertEqual(decisions["image-gen"], (True, "employee", ""))  # the employee's own line wins
         self.assertEqual(decisions["context-mode"][:2], (False, "employee"))
 
+    def test_thread_cleanup_comes_to_every_kind_and_installs_from_its_folder(self):
+        for kind in ("assistant", "employee", "agents"):
+            self.assertTrue(tools.select(REGISTRY, kind)[0]["thread-cleanup"][0], kind)
+        calls = []
+        self.assertIsNone(tools.install_tool("thread-cleanup", REGISTRY["thread-cleanup"], None, {}, lambda *a: calls.append(a), {}))
+        self.assertIn("--subdirectory", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--subdirectory") + 1], "plugins/thread-cleanup")
+
     def test_agents_get_no_bridge(self):
         decisions, _ = tools.select(REGISTRY, "agents")
         self.assertFalse(decisions["telegram-projects"][0])
