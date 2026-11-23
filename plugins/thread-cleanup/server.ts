@@ -7,21 +7,21 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
-  decide, inScope, kindOf, parseHours, parseList,
+  decide, inScope, installationKey, kindOf, parseHours, parseList, scheduledMode,
   type CleanupConfig, type ThreadFacts, type ThreadRow, type WorkspaceState,
 } from "./policy.ts";
 
 const PAGE = 100;
 const JOURNAL_MAX = 1000;
 
-interface RunOptions { dryRun: boolean; maxArchives: number; signal?: AbortSignal; now?: number; only?: ReadonlySet<string> }
+interface RunOptions { journalDry?: string; dryRun: boolean; maxArchives: number; signal?: AbortSignal; now?: number; only?: ReadonlySet<string> }
 interface Decision { id: string; projectId: string; title: string; kind: string; archive: boolean; keep: string[]; attention: string | null }
 export interface RunResult {
   at: number; dryRun: boolean; scanned: number; checked: number;
   archived: string[]; wouldArchive: Decision[]; errors: { id: string; error: string }[];
   attention: Decision[]; kept: Record<string, number>;
 }
-interface JournalEntry { at: number; id: string; title: string; reason: string; restoredAt?: number }
+interface JournalEntry { at: number; id: string; title: string; reason: string; restoredAt?: number; dryRun?: boolean }
 
 type Sdk = BbPluginApi["sdk"];
 
@@ -172,6 +172,13 @@ export async function runCleanup(bb: BbPluginApi, cfg: CleanupConfig, opts: RunO
     }
     await bb.storage.kv.set("journal", journal.slice(-JOURNAL_MAX));
   }
+  if (opts.dryRun && opts.journalDry) {
+    // A dry run after a new installation or version: write down what would go.
+    const journal = (await bb.storage.kv.get<JournalEntry[]>("journal")) ?? [];
+    for (const d of res.wouldArchive.slice(0, opts.maxArchives))
+      journal.push({ at: now, id: d.id, title: d.title, reason: `сухой прогон (${opts.journalDry}): ушло бы`, dryRun: true });
+    await bb.storage.kv.set("journal", journal.slice(-JOURNAL_MAX));
+  }
   await bb.storage.kv.set("last-run", res);
   return res;
 }
@@ -228,21 +235,30 @@ export default async function plugin(bb: BbPluginApi) {
     return { cfg, dryRun: Boolean(v.dryRun), maxArchives: parseHours(v.maxArchives, 100), protectionRpcs: parseList(v.protectionRpcs) };
   }
 
-  // Daily, server-local time. The first run after install is always a dry run.
-  bb.background.schedule("daily-cleanup", "17 4 * * *", async () => {
+  /** Identity of this installed copy; changes on reinstall and on every update. */
+  async function installation(): Promise<string | null> {
+    const source = await bb.sdk.plugins.getSource({ pluginId: bb.pluginId }).catch(() => null);
+    return installationKey(source as Parameters<typeof installationKey>[0]);
+  }
+
+  // Daily, server-local time. The first scheduled run after every install,
+  // reinstall or update is a dry run that journals what would go.
+  async function scheduledRun(signal?: AbortSignal) {
     const r = await resolve();
-    const first = !(await bb.storage.kv.get<boolean>("first-run-done"));
-    const res = await runCleanup(bb, r.cfg, { ...r, dryRun: r.dryRun || first });
-    await bb.storage.kv.set("first-run-done", true);
-    bb.log.info(formatRun(res, false));
+    const mode = scheduledMode(r.dryRun, (await bb.storage.kv.get<string>("dry-run-done-for")) ?? null, await installation());
+    const res = await runCleanup(bb, r.cfg, { ...r, signal, dryRun: mode.dry, journalDry: mode.reason === "setting" ? undefined : mode.reason ?? undefined });
+    if (mode.remember) await bb.storage.kv.set("dry-run-done-for", mode.remember);
+    bb.log.info(formatRun(res, false) + (mode.reason ? ` [${mode.reason}]` : ""));
     await report(bb, res);
-  });
+    return { res, mode };
+  }
+  bb.background.schedule("daily-cleanup", "17 4 * * *", async () => { await scheduledRun(); });
 
   bb.cli.register({
     name: "thread-cleanup",
     summary: "Уборка законченных подтредов в архив",
     commands: [
-      { name: "run", summary: "Запустить уборку сейчас; --only — только эти треды (по тому же правилу)", usage: "bb thread-cleanup run [--dry-run] [--only thr_a,thr_b]" },
+      { name: "run", summary: "Запустить уборку сейчас; --only — только эти треды (по тому же правилу)", usage: "bb thread-cleanup run [--dry-run] [--only thr_a,thr_b] | run --as-scheduled" },
       { name: "status", summary: "Итог последнего запуска и настройки", usage: "bb thread-cleanup status" },
       { name: "log", summary: "Журнал убранного", usage: "bb thread-cleanup log [--limit N]" },
       { name: "task", summary: "Отметить подтред поручением: открыто или закрыто", usage: "bb thread-cleanup task <thread-id>|--self open|closed" },
@@ -250,6 +266,10 @@ export default async function plugin(bb: BbPluginApi) {
     ],
     async run(argv, ctx) {
       const [sub, ...rest] = argv;
+      if (sub === "run" && rest.includes("--as-scheduled")) {
+        const { res, mode } = await scheduledRun(ctx.signal);
+        return { exitCode: 0, stdout: `режим: ${mode.dry ? `сухой (${mode.reason})` : "с архивом"}\n` + formatRun(res, true) };
+      }
       if (sub === "run") {
         const r = await resolve();
         const i = rest.indexOf("--only");
@@ -261,14 +281,18 @@ export default async function plugin(bb: BbPluginApi) {
       if (sub === "status") {
         const r = await resolve();
         const last = await bb.storage.kv.get<RunResult>("last-run");
-        const conf = `срок подтредов ${r.cfg.subthreadHours} ч, верхних ${r.cfg.rootHours || "выключено"}, предел ${r.maxArchives}, сухой прогон ${r.dryRun ? "да" : "нет"}`;
+        const mode = scheduledMode(r.dryRun, (await bb.storage.kv.get<string>("dry-run-done-for")) ?? null, await installation());
+        const next = !mode.dry ? "с архивом" : mode.reason === "setting" ? "сухой (настройка)"
+          : mode.reason === "new installation" ? "сухой (первый после установки или обновления)" : "сухой (установку не удалось определить)";
+        const conf = `срок подтредов ${r.cfg.subthreadHours} ч, верхних ${r.cfg.rootHours || "выключено"}, предел ${r.maxArchives}, ` +
+          `сухой прогон в настройке ${r.dryRun ? "да" : "нет"}; следующий запуск по расписанию — ${next}`;
         return { exitCode: 0, stdout: [conf, last ? formatRun(last, true) : "запусков ещё не было"].join("\n") };
       }
       if (sub === "log") {
         const i = rest.indexOf("--limit");
         const n = i >= 0 ? Number(rest[i + 1]) || 50 : 50;
         const j = ((await bb.storage.kv.get<JournalEntry[]>("journal")) ?? []).slice(-n);
-        return { exitCode: 0, stdout: j.map(e => `${new Date(e.at).toISOString()} ${e.id}${e.restoredAt ? " (возвращён)" : ""} ${e.title.slice(0, 70)}`).join("\n") || "пусто" };
+        return { exitCode: 0, stdout: j.map(e => `${new Date(e.at).toISOString()} ${e.id}${e.dryRun ? " (сухой прогон, не убран)" : ""}${e.restoredAt ? " (возвращён)" : ""} ${e.title.slice(0, 70)}`).join("\n") || "пусто" };
       }
       if (sub === "task") {
         const state = rest.find(a => a === "open" || a === "closed");
@@ -279,8 +303,8 @@ export default async function plugin(bb: BbPluginApi) {
       }
       if (sub === "restore") {
         const journal = (await bb.storage.kv.get<JournalEntry[]>("journal")) ?? [];
-        const lastAt = Math.max(0, ...journal.map(e => e.at));
-        const ids = rest[0] === "--last-run" ? journal.filter(e => e.at === lastAt && !e.restoredAt).map(e => e.id) : rest.filter(a => a.startsWith("thr_"));
+        const lastAt = Math.max(0, ...journal.filter(e => !e.dryRun).map(e => e.at));
+        const ids = rest[0] === "--last-run" ? journal.filter(e => e.at === lastAt && !e.restoredAt && !e.dryRun).map(e => e.id) : rest.filter(a => a.startsWith("thr_"));
         if (!ids.length) return { exitCode: 2, stderr: "usage: bb thread-cleanup restore <thread-id>|--last-run" };
         const done: string[] = [], failed: string[] = [];
         for (const id of ids) {

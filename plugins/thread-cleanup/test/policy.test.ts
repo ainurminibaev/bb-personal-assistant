@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decide, HOUR_MS, inScope, parseHours, parseList, resultArrived, type CleanupConfig, type ThreadFacts, type ThreadRow } from "../policy.ts";
+import { decide, HOUR_MS, inScope, installationKey, parseHours, parseList, resultArrived, scheduledMode, type CleanupConfig, type ThreadFacts, type ThreadRow } from "../policy.ts";
 
 const NOW = 1_800_000_000_000;
 const cfg: CleanupConfig = { subthreadHours: 24, rootHours: 0, exemptProjects: [], exemptTitleMarkers: ["⏳"], protectedThreadIds: new Set(), taskStaleHours: 168 };
@@ -115,4 +115,18 @@ test("closed task goes, even though its parent was never woken", () => {
   const v = decide(task({ title: "готово, проверено" }), facts({ taskMark: "closed", parentLastTurnAt: null }), cfg, NOW);
   assert.equal(v.archive, true, String(v.keep));
   assert.equal(decide(task(), facts({ taskMark: "closed", lastActivityAt: NOW - HOUR_MS }), cfg, NOW).archive, false, "still the 24 h term");
+});
+
+test("first scheduled run after every install or update is dry, then the same installation archives", () => {
+  const v1 = installationKey({ installedAt: 1, resolved: "repo@v0.4.3", history: [{ version: "aaa", activatedAt: 1 }] });
+  const v2 = installationKey({ installedAt: 1, resolved: "repo@v0.4.4", history: [{ version: "aaa", activatedAt: 1 }, { version: "bbb", activatedAt: 5 }] });
+  const again = installationKey({ installedAt: 9, resolved: "repo@v0.4.3", history: [{ version: "aaa", activatedAt: 9 }] });
+  assert.deepEqual(scheduledMode(false, null, v1), { dry: true, reason: "new installation", remember: v1 });
+  assert.deepEqual(scheduledMode(false, v1, v1), { dry: false, reason: null, remember: null });
+  assert.equal(scheduledMode(false, v1, v2).dry, true, "update");
+  assert.equal(scheduledMode(false, v1, again).dry, true, "reinstall of the same version");
+  assert.deepEqual(scheduledMode(false, v1, null), { dry: true, reason: "unknown installation", remember: null });
+  assert.equal(scheduledMode(true, v1, v1).dry, true, "setting wins");
+  assert.equal(installationKey(null), null);
+  assert.equal(installationKey({ resolved: "x" }), null);
 });

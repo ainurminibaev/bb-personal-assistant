@@ -173,3 +173,24 @@ export function parseHours(value: unknown, fallback: number): number {
   const n = Number(String(value ?? "").trim());
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
+
+/**
+ * Mode of a scheduled run. The first scheduled run after every new install,
+ * reinstall or version change is a dry run that records what would go; only
+ * after that does the same installation archive. An unknown installation
+ * (source not readable) is always a dry run.
+ */
+export function scheduledMode(settingDry: boolean, doneFor: string | null, installation: string | null):
+  { dry: boolean; reason: "setting" | "new installation" | "unknown installation" | null; remember: string | null } {
+  if (settingDry) return { dry: true, reason: "setting", remember: null };
+  if (!installation) return { dry: true, reason: "unknown installation", remember: null };
+  if (doneFor !== installation) return { dry: true, reason: "new installation", remember: installation };
+  return { dry: false, reason: null, remember: null };
+}
+
+/** Identity of the installed copy: when and from what it was installed, and the active version. */
+export function installationKey(source: { installedAt?: number | null; resolved?: string | null; history?: { version?: string; activatedAt?: number }[] } | null): string | null {
+  if (!source || !source.installedAt) return null;
+  const active = [...(source.history ?? [])].sort((a, b) => (b.activatedAt ?? 0) - (a.activatedAt ?? 0))[0];
+  return JSON.stringify([source.installedAt, source.resolved ?? "", active?.version ?? ""]);
+}
