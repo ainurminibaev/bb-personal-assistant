@@ -229,8 +229,10 @@ class Scope:
         return False
 
     def schedules(self):
+        """Pending schedules of this conversation: on and with a next run; a one-off that already ran is not one."""
         con = open_ro(os.path.join(self.data_dir, "plugins", "automations", "data.db")) if self.data_dir else None
-        rows = con.execute("select target_thread_id from automations where enabled=1").fetchall() if con else []
+        rows = con.execute("select target_thread_id from automations where enabled=1 and next_run_at is not null"
+                           ).fetchall() if con else []
         return sum(1 for (t,) in rows if t and self.owns(t))
 
     def running_children(self):
@@ -311,7 +313,7 @@ def guest_bb_allowed(args, scope):
         # The bridge delivers a schedule's result back to the topic or chat where it was set; "guestSchedules": false turns them off.
         if head[1] in ("create", "resume", "run") and limit("guestSchedules", 1) != 1:
             return False
-        if head[1] == "create" and scope.schedules() >= limit("maxSchedules", 5):
+        if head[1] == "create" and scope.schedules() >= limit("maxSchedules", 20):
             return False
         if head[1] in ("create", "list"):
             return bool(target) and scope.owns(target)
