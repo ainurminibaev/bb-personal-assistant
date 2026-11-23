@@ -7,8 +7,11 @@ import { refreshGuardCopies } from "./guard-refresh";
 import { deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
 import { toolsReport } from "./tools-status";
+import { registerServerSpeech } from "./server-speech";
 
 export default async function personalAssistant(bb: BbPluginApi) {
+  // Voice through the server's speech service (Codex first, local models as the fallback).
+  registerServerSpeech(bb);
   const settings = bb.settings.define({
     projectId: { type: "string", label: "Personal assistant project ID", default: "" },
     threadId: { type: "string", label: "Personal coordinator thread ID", default: "" },

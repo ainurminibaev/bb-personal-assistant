@@ -249,8 +249,12 @@ def main():
     )
     if args.provider or args.model:
         remember_agent(project["id"], args.provider, args.model)
-    # Voice transcripts through Codex first (С23): BB's "automatic" order would try the BB cloud first once signed in.
-    if args.provider == "codex":
+    # Voice transcripts: through the server's speech service when it is installed (Codex first, local models as the
+    # fallback); otherwise Codex first (С23) — BB's "automatic" order would try the BB cloud first once signed in.
+    if Path("/usr/local/bin/voice-to-text").exists():
+        subprocess.run(["bb", "settings", "ai-services", "set", "voice", "server-speech"], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif args.provider == "codex":
         subprocess.run(["bb", "settings", "ai-services", "set", "voice", "codex"], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # Tools of the agent's account (context-mode, skills, hooks, the credentials store) and the described MCP connections.

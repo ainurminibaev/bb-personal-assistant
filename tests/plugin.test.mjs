@@ -24,7 +24,7 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 10));
 
 async function load(binding, telegram = bridge()) {
   let command, instructions, changed, contributed;
-  const queries = [], schedules = [];
+  const queries = [], schedules = [], aiServices = [];
   await plugin({
     settings: { define: () => ({ get: async () => binding, onChange: fn => { changed = fn; } }) },
     agents: { configure: callback => { instructions = callback; }, registerTool: () => {},
@@ -32,6 +32,7 @@ async function load(binding, telegram = bridge()) {
     storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => [{ name: "main", file: "/data/plugins/personal-assistant/data.db" }], get() {}, run() {} }) }) },
     cli: { register: callback => { command = callback; } },
     background: { schedule: (name, cron) => { schedules.push([name, cron]); } },
+    experimental_aiServices: { register: declaration => { aiServices.push(declaration); return { dispose() {} }; } },
     sdk: { plugins: telegram.plugins, threads: { list: async query => {
       queries.push(query);
       return query.threadIds ? [{id: "owner", projectId: "personal"}] :
@@ -39,7 +40,7 @@ async function load(binding, telegram = bridge()) {
     } } },
   });
   await settle();
-  return { command, instructions, queries, schedules, changeBinding: next => changed(next),
+  return { command, instructions, queries, schedules, aiServices, changeBinding: next => changed(next),
            contact: threadId => contributed({threadId, projectId: "any"}) };
 }
 
@@ -144,4 +145,13 @@ test("the assistant's role reads the same marker that other threads are told to 
 test("guest schedule bursts are checked every minute, without a model turn", async () => {
   const { schedules } = await load({ projectId: "personal", threadId: "owner" });
   assert.deepEqual(schedules, [["guest-schedule-alerts", "* * * * *"]]);
+});
+
+test("voice through the server speech service: one transcription service, ready only when it is installed", async () => {
+  const { aiServices } = await load({projectId: "personal", threadId: "owner"});
+  assert.deepEqual(aiServices.map(s => s.id), ["server-speech"]);
+  assert.equal(typeof aiServices[0].transcribe, "function");
+  assert.equal(aiServices[0].complete, undefined);
+  const status = await aiServices[0].status();
+  assert.equal(typeof status.ready, "boolean");
 });
