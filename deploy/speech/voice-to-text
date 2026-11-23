@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""voice-to-text <audio-file> [--lang auto|ru|tt|en|ar] — speech service of the platform: one entry point per server.
+
+The Telegram bridge calls it (setting "voice router path"), agents call it the same way.
+stdout: the transcript only. stderr + syslog (tag voice-to-text): one line "route=… reason=… time" — no text, no keys.
+
+Settings — /etc/bb-speech/speech.env (written by deploy/speech/install.sh from the organization file):
+  SPEECH_ORDER=codex-first | local-only    codex-first: Codex cloud transcription, local models if it fails;
+                                           local-only: audio never leaves the server
+  SPEECH_PROFILES=ru,multi                 installed local models: ru (Russian + language ID), multi (Tatar and others)
+  SPEECH_LANG=ru                           language of the installation: used when there is no language ID
+  SPEECH_RU_URL, SPEECH_MULTI_URL          loopback addresses of the models
+  SPEECH_RU_MIN=0.60                       language-ID confidence for Russian
+Codex login: the caller's own ($CODEX_HOME/auth.json, else ~/.codex/auth.json); none -> local models at once.
+Codex cloud = the dictation endpoint of Codex Desktop, undocumented; audio goes to OpenAI.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+CONFIG = os.environ.get("SPEECH_CONFIG", "/etc/bb-speech/speech.env")
+CODEX_URL = os.environ.get("CODEX_TRANSCRIBE_URL", "https://chatgpt.com/backend-api/transcribe")
+TURKIC_LATIN = re.compile(r"[əƏıİşŞğĞçÇöÖüÜäÄñÑ]")
+CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+CTYPES = {".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg", ".wav": "audio/wav",
+          ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".webm": "audio/webm"}
+LANGS = ("auto", "ru", "tt", "en", "ar")
+T0 = time.monotonic()
+
+
+class Fail(Exception):
+    pass
+
+
+def settings():
+    conf = {"SPEECH_ORDER": "codex-first", "SPEECH_PROFILES": "ru", "SPEECH_LANG": "ru",
+            "SPEECH_RU_URL": "http://127.0.0.1:9003", "SPEECH_MULTI_URL": "http://127.0.0.1:9002",
+            "SPEECH_RU_MIN": "0.60"}
+    try:
+        with open(CONFIG) as f:
+            for line in f:
+                key, sep, value = line.strip().partition("=")
+                if sep and key in conf:
+                    conf[key] = value.strip().strip('"')
+    except OSError:
+        pass
+    for key in conf:                                   # the environment overrides the file (tests, manual runs)
+        conf[key] = os.environ.get(key, conf[key])
+    conf["profiles"] = {p.strip() for p in conf["SPEECH_PROFILES"].split(",") if p.strip()}
+    return conf
+
+
+def log(msg):
+    line = f"{msg} total={time.monotonic() - T0:.1f}s"
+    sys.stderr.write(f"[voice-to-text] {line}\n")
+    subprocess.run(["logger", "-t", "voice-to-text", "--", line], check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def post(url, field, path, headers=None, timeout=600):
+    """multipart POST of the audio file; returns (body, response headers)."""
+    with open(path, "rb") as f:
+        audio = f.read()
+    b = uuid.uuid4().hex
+    ctype = CTYPES.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
+    body = (f'--{b}\r\nContent-Disposition: form-data; name="{field}"; filename="{os.path.basename(path)}"\r\n'
+            f"Content-Type: {ctype}\r\n\r\n").encode() + audio + f"\r\n--{b}--\r\n".encode()
+    h = {"Content-Type": f"multipart/form-data; boundary={b}", **(headers or {})}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=body, headers=h, method="POST"),
+                                    timeout=timeout) as r:
+            return r.read().decode("utf-8", "replace").strip(), r.headers
+    except urllib.error.HTTPError as e:
+        raise Fail(f"http {e.code}")
+    except Exception as e:
+        raise Fail(type(e).__name__)
+
+
+def codex_auth():
+    home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+    return os.environ.get("CODEX_AUTH_FILE", os.path.join(home, "auth.json"))
+
+
+def codex(path):
+    try:
+        with open(codex_auth()) as f:
+            tok = json.load(f)["tokens"]
+    except Exception:
+        raise Fail("no codex login")
+    h = {"Authorization": f"Bearer {tok['access_token']}", "originator": "Codex Desktop",
+         "User-Agent": "Codex Desktop (bb-speech voice-to-text)"}
+    if tok.get("account_id"):
+        h["ChatGPT-Account-Id"] = tok["account_id"]
+    raw, _ = post(CODEX_URL, "file", path, h, timeout=90)
+    try:
+        text = (json.loads(raw).get("text") or "").strip()
+    except ValueError:
+        text = raw
+    if not text:
+        raise Fail("empty")
+    return text
+
+
+def ru(conf, path):
+    if "ru" not in conf["profiles"]:
+        raise Fail("ru model not installed")
+    text, h = post(f"{conf['SPEECH_RU_URL']}/asr?language=ru", "audio_file", path)
+    return text, f"infer={h.get('X-Infer-Sec', '?')}s"
+
+
+def multi(conf, path):
+    if "multi" not in conf["profiles"]:
+        raise Fail("multilingual model not installed")
+    text, h = post(f"{conf['SPEECH_MULTI_URL']}/asr", "audio_file", path)
+    return text, f"infer={h.get('X-Infer-Sec', '?')}s"
+
+
+def local(conf, path, lang, why):
+    """Local models: the language from --lang, else language ID (ru model), else the installation language."""
+    if lang == "auto" and "ru" in conf["profiles"] and "multi" in conf["profiles"]:
+        try:
+            raw, _ = post(f"{conf['SPEECH_RU_URL']}/detect-language", "audio_file", path, timeout=120)
+            d = json.loads(raw)
+            lang = "ru" if float(d.get("ru", 0)) >= float(conf["SPEECH_RU_MIN"]) else "other"
+            why += f"; lid={d.get('language_code')} ru={float(d.get('ru', 0)):.2f}"
+        except (Fail, ValueError, KeyError, TypeError) as e:
+            lang = conf["SPEECH_LANG"]
+            why += f"; lid failed: {e}"
+    elif lang == "auto":
+        lang = conf["SPEECH_LANG"]
+    if lang == "ru" and "ru" in conf["profiles"]:
+        try:
+            text, info = ru(conf, path)
+            return text, f"route=ru reason='{why}' {info}"
+        except Fail as e:
+            if "multi" not in conf["profiles"]:
+                raise
+            why += f"; ru failed: {e}"
+    if "multi" in conf["profiles"]:
+        text, info = multi(conf, path)
+        return text, f"route=multi reason='{why}' {info}"
+    text, info = ru(conf, path)                        # only ru installed: best effort for any language
+    return text, f"route=ru reason='{why}; no multilingual model' {info}"
+
+
+def run(conf, path, lang):
+    order = conf["SPEECH_ORDER"]
+    if lang in ("tt", "ar") and "multi" in conf["profiles"]:
+        text, info = multi(conf, path)
+        return text, f"order={order} route=multi reason='--lang {lang}' {info}"
+    if order != "codex-first":
+        text, info = local(conf, path, lang, "local-only")
+        return text, f"order={order} {info}"
+    t = time.monotonic()
+    try:
+        text = codex(path)
+    except Fail as e:
+        text, info = local(conf, path, lang, f"codex failed: {e} after {time.monotonic() - t:.1f}s")
+        return text, f"order={order} {info}"
+    if "multi" in conf["profiles"] and TURKIC_LATIN.search(text) and not CYRILLIC.search(text):
+        text, info = multi(conf, path)
+        return text, f"order={order} route=multi reason='codex returned Latin Turkic' {info}"
+    return text, f"order={order} route=codex reason=ok codex={time.monotonic() - t:.1f}s"
+
+
+def main(argv):
+    args, lang = list(argv), "auto"
+    for a in list(args):
+        if a.startswith("--lang="):
+            lang = a[7:]
+            args.remove(a)
+    if "--lang" in args:
+        i = args.index("--lang")
+        lang = args[i + 1] if i + 1 < len(args) else ""
+        del args[i:i + 2]
+    if len(args) != 1 or lang not in LANGS:
+        sys.stderr.write("usage: voice-to-text <audio-file> [--lang auto|ru|tt|en|ar]\n")
+        return 2
+    if not os.access(args[0], os.R_OK):
+        log(f"ERROR cannot read file {os.path.basename(args[0])}")
+        return 1
+    try:
+        text, info = run(settings(), args[0], lang)
+    except Fail as e:
+        log(f"ERROR all engines failed (last: {e}); check: systemctl status 'bb-speech-*.socket'")
+        return 1
+    if not text:
+        log("ERROR empty transcript")
+        return 1
+    log(f"file={os.path.basename(args[0])} {info}")
+    print(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
