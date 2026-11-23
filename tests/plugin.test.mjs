@@ -24,13 +24,14 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 10));
 
 async function load(binding, telegram = bridge()) {
   let command, instructions, changed, contributed;
-  const queries = [];
+  const queries = [], schedules = [];
   await plugin({
     settings: { define: () => ({ get: async () => binding, onChange: fn => { changed = fn; } }) },
     agents: { configure: callback => { instructions = callback; }, registerTool: () => {},
               contributeInstructions: provider => { contributed = provider; } },
     storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => [{ name: "main", file: "/data/plugins/personal-assistant/data.db" }], get() {}, run() {} }) }) },
     cli: { register: callback => { command = callback; } },
+    background: { schedule: (name, cron) => { schedules.push([name, cron]); } },
     sdk: { plugins: telegram.plugins, threads: { list: async query => {
       queries.push(query);
       return query.threadIds ? [{id: "owner", projectId: "personal"}] :
@@ -38,7 +39,7 @@ async function load(binding, telegram = bridge()) {
     } } },
   });
   await settle();
-  return { command, instructions, queries, changeBinding: next => changed(next),
+  return { command, instructions, queries, schedules, changeBinding: next => changed(next),
            contact: threadId => contributed({threadId, projectId: "any"}) };
 }
 
@@ -117,4 +118,9 @@ test("the assistant's role reads the same marker that other threads are told to 
   assert.match(policy, new RegExp(marker));
   assert.match(policy, /agent_roster_list/);           // roles: only while the roles list is installed
   assert.match(policy, /task-tracking skill/);         // kept as an ordinary tracked task
+});
+
+test("guest schedule bursts are checked every minute, without a model turn", async () => {
+  const { schedules } = await load({ projectId: "personal", threadId: "owner" });
+  assert.deepEqual(schedules, [["guest-schedule-alerts", "* * * * *"]]);
 });

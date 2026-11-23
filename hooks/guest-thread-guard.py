@@ -25,6 +25,8 @@ import time
 CACHE_SECONDS = 60
 ASSISTANT_REASON = ("This is a guest conversation of a personal assistant: no command line and no files outside "
                     "this conversation's folder. The owner can allow it; tell the person it is not available here.")
+SUBTHREADS_REASON = ("This conversation already has {n} subthreads working at once — the limit that keeps the server "
+                     "responsive. Wait until one finishes (`bb thread wait <id>`), then start the next; tell the person it is queued.")
 BLOCK_REASON = ("This is a guest conversation: BB only within its own thread, subthreads and schedules; no other conversations. "
                 "Start a subthread with `bb thread spawn --parent-self --prompt …` (its result comes back to this thread). "
                 "Earlier messages: `bb telegram-projects search-history`. Tell the person what is not available here.")
@@ -235,6 +237,13 @@ class Scope:
                            ).fetchall() if con else []
         return sum(1 for (t,) in rows if t and self.owns(t))
 
+    def recent_schedules(self, seconds=60):
+        """Schedules of this conversation created within the last minute."""
+        con = open_ro(os.path.join(self.data_dir, "plugins", "automations", "data.db")) if self.data_dir else None
+        since = int((time.time() - seconds) * 1000)
+        rows = con.execute("select target_thread_id from automations where created_at >= ?", (since,)).fetchall() if con else []
+        return sum(1 for (t,) in rows if t and self.owns(t))
+
     def running_children(self):
         rows = self.bb.execute("select id from threads where parent_thread_id=? and status='active'", (self.thread,)).fetchall() if self.bb else []
         return len(rows)
@@ -277,6 +286,7 @@ def guest_bb_allowed(args, scope):
     if len(head) == 2 and head[0] == "thread":
         if head[1] in ("spawn", "create"):
             if scope.running_children() >= limit("maxRunningSubthreads", 3):
+                scope.reason = SUBTHREADS_REASON.format(n=limit("maxRunningSubthreads", 3))
                 return False
             parent = "--parent-self" in args or scope.owns(flag(args, "--parent-thread") or "")
             project = flag(args, "--project")
@@ -313,13 +323,42 @@ def guest_bb_allowed(args, scope):
         # The bridge delivers a schedule's result back to the topic or chat where it was set; "guestSchedules": false turns them off.
         if head[1] in ("create", "resume", "run") and limit("guestSchedules", 1) != 1:
             return False
-        if head[1] == "create" and scope.schedules() >= limit("maxSchedules", 20):
-            return False
+        # No cap on schedules (owner, 23.11: "why limit?"); a burst only tells the owner once, see schedule_alert.
         if head[1] in ("create", "list"):
             return bool(target) and scope.owns(target)
         ids = positionals(args[2:])
         return bool(ids) and all(scope.owns_automation(a) for a in ids) and (target is None or scope.owns(target))
     return False
+
+
+ALERTS = "guest-thread-guard-alerts.jsonl"
+
+
+def schedule_alert(scope):
+    """A guest sets a schedule: it always goes through. Past the thresholds (pending on one conversation, or new
+    within a minute; settings warnSchedules and warnSchedulesPerMinute) one line is added next to the hook; the
+    platform plugin tells the owner once. The next line for this conversation comes only after it fell below."""
+    try:
+        pending, recent = scope.schedules() + 1, scope.recent_schedules() + 1
+        over = pending > limit("warnSchedules", 50) or recent > limit("warnSchedulesPerMinute", 10)
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ALERTS)
+        last = None
+        if os.path.exists(path):
+            with open(path) as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if entry.get("conversation") == scope.thread:
+                        last = entry.get("state")
+        state = "over" if over else "below"
+        if (state == "over" and last != "over") or (state == "below" and last == "over"):
+            with open(path, "a") as f:
+                f.write(json.dumps({"at": int(time.time() * 1000), "conversation": scope.thread, "state": state,
+                                    "pending": pending, "perMinute": recent}) + "\n")
+    except Exception:
+        pass  # the warning never stands in the way of the schedule
 
 
 def overrides_identity(command):
@@ -395,13 +434,18 @@ def main():
         scope = Scope(thread, bb, data_dir)
     except Exception:
         scope = Scope(None, None, "")
+    scope.reason = None
     for command in commands:
         if (any(not guest_bb_allowed(args, scope) for args in bb_calls(command))
                 or any(not guest_bb_allowed(args, scope) for args in embedded_bb_calls(command))
                 or touches_data_dir(command, data_dir)
                 or overrides_identity(command)):
-            print(BLOCK_REASON, file=sys.stderr)
+            print(scope.reason or BLOCK_REASON, file=sys.stderr)
             return 2
+    for command in commands:
+        for args in [*bb_calls(command), *embedded_bb_calls(command)]:
+            if args[:2] == ["automation", "create"]:
+                schedule_alert(scope)
     for path in paths:
         if touches_data_dir(path, data_dir):
             print(BLOCK_REASON, file=sys.stderr)

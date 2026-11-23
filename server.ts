@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { refreshGuardCopies } from "./guard-refresh";
+import { deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
 
 export default async function personalAssistant(bb: BbPluginApi) {
@@ -37,6 +38,12 @@ export default async function personalAssistant(bb: BbPluginApi) {
     const roots = projects.flatMap(p => (p as { sources?: { path?: string }[] }).sources ?? []).flatMap(s => s.path ? [s.path] : []);
     refreshGuardCopies(guard, roots);
   }).catch(() => { /* an unreadable workspace keeps its copy; setup.py refreshes it too */ });
+  // Schedules in guest conversations are not capped; a burst past the guard's thresholds reaches the owner once.
+  bb.background.schedule("guest-schedule-alerts", "* * * * *", async () => {
+    const projects = await bb.sdk.projects.list({});
+    const roots = projects.flatMap(p => (p as { sources?: { path?: string }[] }).sources ?? []).flatMap(s => s.path ? [s.path] : []);
+    await deliverScheduleAlerts(bb, roots);
+  });
   bb.cli.register({
     name: "personal-assistant",
     summary: "Check the coordinator and its project tasks without starting a model.",

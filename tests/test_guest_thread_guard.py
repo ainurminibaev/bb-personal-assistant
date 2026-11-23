@@ -30,8 +30,8 @@ class GuestGuard(unittest.TestCase):
         bb.commit(); bb.close()
         os.makedirs(os.path.join(data, "plugins", "automations"))
         au = sqlite3.connect(os.path.join(data, "plugins", "automations", "data.db"))
-        au.execute("create table automations(id text primary key, target_thread_id text, enabled integer, next_run_at integer)")
-        au.executemany("insert into automations values(?,?,1,1)", [("auto_mine", "thr_group"), ("auto_owner", "thr_owner")])
+        au.execute("create table automations(id text primary key, target_thread_id text, enabled integer, next_run_at integer, created_at integer)")
+        au.executemany("insert into automations values(?,?,1,1,0)", [("auto_mine", "thr_group"), ("auto_owner", "thr_owner")])
         au.commit(); au.close()
         self.data = data
         hooks = os.path.join(self.dir, "hooks"); os.makedirs(hooks)
@@ -129,30 +129,50 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-group", {"command": "bb automation list --target-thread thr_group"}), 0)
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread spawn --parent-self --prompt x"}), 0)
 
-    def test_twenty_pending_schedules_per_conversation_fired_one_offs_do_not_count(self):
+    def alerts(self):
+        path = os.path.join(os.path.dirname(self.hook), "guest-thread-guard-alerts.jsonl")
+        return [json.loads(l) for l in open(path)] if os.path.exists(path) else []
+
+    def test_no_cap_on_schedules_one_warning_past_the_threshold(self):
         cfg = os.path.join(os.path.dirname(self.hook), "guest-thread-guard.json")
-        with open(cfg, "w") as f:
-            json.dump({"dataDir": self.data}, f)
+        with open(cfg, "w") as f:  # an old installed limit must not refuse again after the update
+            json.dump({"dataDir": self.data, "maxSchedules": 1}, f)
         create = "bb automation create --project proj_team --name x --in 5m --target-thread thr_group --prompt p"
         au = sqlite3.connect(os.path.join(self.data, "plugins", "automations", "data.db"))
-        # 19 pending of this conversation (with auto_mine) and many one-offs that already ran.
-        au.executemany("insert into automations values(?,?,1,1)", [(f"auto_p{i}", "thr_group") for i in range(18)])
-        au.executemany("insert into automations values(?,?,0,null)", [(f"auto_done{i}", "thr_group") for i in range(30)])
-        au.executemany("insert into automations values(?,?,1,null)", [(f"auto_spent{i}", "thr_group") for i in range(5)])
+        au.executemany("insert into automations values(?,?,1,1,0)", [(f"auto_p{i}", "thr_group") for i in range(48)])
+        au.executemany("insert into automations values(?,?,0,null,0)", [(f"auto_done{i}", "thr_group") for i in range(30)])
         au.commit()
-        self.assertEqual(self.run_hook("s-group", {"command": create}), 0)  # 19 pending: the 20th may be set
-        au.execute("insert into automations values('auto_p20','thr_group',1,1)")
+        self.assertEqual(self.run_hook("s-group", {"command": create}), 0)  # 49 pending + this one = 50: no warning yet
+        self.assertEqual(self.alerts(), [])
+        au.execute("insert into automations values('auto_p50','thr_group',1,1,0)"); au.commit()
+        for _ in range(3):  # past 50: it still goes through, and the owner hears once
+            self.assertEqual(self.run_hook("s-group", {"command": create}), 0)
+        self.assertEqual([(a["conversation"], a["state"], a["pending"]) for a in self.alerts()], [("thr_group", "over", 51)])
+        au.execute("delete from automations where id like 'auto_p%'"); au.commit()
+        self.assertEqual(self.run_hook("s-group", {"command": create}), 0)
+        self.assertEqual([a["state"] for a in self.alerts()], ["over", "below"])  # fell below: the next crossing warns again
+
+    def test_many_new_schedules_within_a_minute_warn_once(self):
+        with open(os.path.join(os.path.dirname(self.hook), "guest-thread-guard.json"), "w") as f:
+            json.dump({"dataDir": self.data, "warnSchedulesPerMinute": 3}, f)
+        au = sqlite3.connect(os.path.join(self.data, "plugins", "automations", "data.db"))
+        now = int(__import__("time").time() * 1000)
+        au.executemany("insert into automations values(?,?,1,1,?)", [(f"auto_new{i}", "thr_group", now) for i in range(3)])
         au.commit()
-        self.assertEqual(self.run_hook("s-group", {"command": create}), 2)  # 20 pending: no more
-        with open(cfg, "w") as f:
-            json.dump({"dataDir": self.data, "maxSchedules": 25}, f)
-        self.assertEqual(self.run_hook("s-group", {"command": create}), 0)  # the limit is a setting
+        create = "bb automation create --project proj_team --name x --in 5m --target-thread thr_group --prompt p"
+        self.assertEqual(self.run_hook("s-group", {"command": create}), 0)
+        self.assertEqual([(a["state"], a["perMinute"]) for a in self.alerts()], [("over", 4)])
 
     def test_limits_per_conversation(self):
         with open(os.path.join(os.path.dirname(self.hook), "guest-thread-guard.json"), "w") as f:
             json.dump({"dataDir": self.data, "guestSchedules": True, "maxSchedules": 1, "maxRunningSubthreads": 0}, f)
-        self.assertEqual(self.run_hook("s-group", {"command": "bb automation create --project proj_team --name x --in 5m --target-thread thr_group --prompt p"}), 2)
-        self.assertEqual(self.run_hook("s-group", {"command": "bb thread spawn --parent-self --prompt x"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "bb automation create --project proj_team --name x --in 5m --target-thread thr_group --prompt p"}), 0)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("BB_")}
+        env["XDG_RUNTIME_DIR"] = self.dir
+        done = subprocess.run([sys.executable, self.hook], capture_output=True, text=True, env=env, input=json.dumps(
+            {"session_id": "s-group", "tool_name": "Bash", "tool_input": {"command": "bb thread spawn --parent-self --prompt x"}}))
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("subthreads working at once", done.stderr)  # the refusal names its reason
 
     def test_personal_assistant_guest_has_no_command_line_by_default(self):
         con = sqlite3.connect(os.path.join(self.data, "plugins", "telegram-projects", "data.db"))
