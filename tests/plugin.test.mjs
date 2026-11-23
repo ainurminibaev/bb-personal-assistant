@@ -112,21 +112,23 @@ test("an assistant installation tells every other thread the active assistant co
   const text = contact("new-thread-of-another-project");
   assert.match(text, /bb thread tell assistant-main/);
   assert.match(text, /Владельцу в Telegram от/);
-  assert.equal(contact("assistant-main"), null); // the assistant itself needs no detour
+  assert.doesNotMatch(contact("assistant-main"), /bb thread tell/); // the assistant itself needs no detour
+  assert.match(contact("assistant-main"), /\(С49\)/);              // the common rules reach it too
   telegram.owner = "assistant-reserve";            // the pair switched to the reserve thread
   contact("x"); await settle();
   assert.match(contact("y"), /bb thread tell assistant-reserve/);
   assert.equal((await command.run(["owner-thread"], {})).stdout, "assistant-reserve");
 });
 
-test("no instruction for an employee, without the bridge, or when switched off", async () => {
+test("no owner contact for an employee, without the bridge, or when switched off; the common rules stay", async () => {
   for (const telegram of [bridge({kind: "employee"}), bridge({off: true}), bridge({owner: null})]) {
     const { contact, command } = await load({}, telegram);
-    assert.equal(contact("t"), null);
+    assert.doesNotMatch(contact("t"), /Владельцу в Telegram от/);
+    assert.match(contact("t"), /\(С44\)/);
     assert.equal((await command.run(["owner-thread"], {})).exitCode, 1);
   }
   const { contact } = await load({ownerContact: false});
-  assert.equal(contact("t"), null);
+  assert.doesNotMatch(contact("t"), /Владельцу в Telegram от/);
 });
 
 test("the assistant's role reads the same marker that other threads are told to use", async () => {
