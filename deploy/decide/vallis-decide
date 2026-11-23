@@ -6,43 +6,57 @@ stdout: {"answers": [...], "provider": ..., "ms": ...}. No answer (service absen
 exit code 1 and the reason on stderr. --status prints the service state (which provider answers).
 The caller does not know the provider and needs no login of its own.
 """
+import http.client
 import json
 import os
+import socket
 import sys
-import urllib.error
-import urllib.request
 
 CONFIG = os.environ.get("DECIDE_CONFIG", "/etc/bb-decide/decide.env")
 
 
-def url():
-    port = "9014"
+def socket_path():
+    path = "/run/bb-decide.sock"
     try:
         with open(CONFIG) as f:
             for line in f:
                 k, _, v = line.strip().partition("=")
-                if k == "DECIDE_PORT" and v.strip():
-                    port = v.strip()
+                if k == "DECIDE_SOCKET" and v.strip():
+                    path = v.strip()
     except OSError:
         pass
-    return os.environ.get("DECIDE_URL", f"http://127.0.0.1:{port}")
+    return os.environ.get("DECIDE_SOCKET", path)
+
+
+class UnixConnection(http.client.HTTPConnection):
+    def __init__(self, path, timeout):
+        super().__init__("localhost", timeout=timeout)
+        self.path = path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.path)
 
 
 def call(path, payload=None, timeout=10.0):
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(url() + path, data=data, method="POST" if data else "GET",
-                                 headers={"Content-Type": "application/json"})
+    conn = UnixConnection(socket_path(), timeout)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        try:
-            reason = json.loads(e.read()).get("error")
-        except Exception:
-            reason = f"http {e.code}"
-        raise SystemExit(f"vallis-decide: {reason}")
+        body = json.dumps(payload).encode() if payload is not None else None
+        conn.request("POST" if body else "GET", path, body=body, headers={"Content-Type": "application/json"})
+        r = conn.getresponse()
+        data = r.read()
     except Exception as e:
         raise SystemExit(f"vallis-decide: service unavailable ({type(e).__name__})")
+    finally:
+        conn.close()
+    try:
+        out = json.loads(data)
+    except ValueError:
+        raise SystemExit("vallis-decide: bad answer")
+    if r.status != 200:
+        raise SystemExit(f"vallis-decide: {out.get('error') or r.status}")
+    return out
 
 
 def main(argv):

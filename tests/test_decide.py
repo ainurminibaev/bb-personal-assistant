@@ -2,6 +2,7 @@
 
 The service runs as a program on a free loopback port; OpenAI is a fake HTTP server, Claude and Codex are fake CLIs.
 """
+import getpass
 import json
 import os
 import socket
@@ -75,7 +76,8 @@ class DecideTest(unittest.TestCase):
         path.chmod(0o755)
         return str(path)
 
-    def start(self, providers, openai=None, claude=None, codex=None, key=False, claude_login=False, codex_login=False):
+    def start(self, providers, openai=None, claude=None, codex=None, key=False, claude_login=False, codex_login=False,
+              consumers=None):
         if key:
             (self.home / "openai.key").write_text("sk-test")
         if claude_login:
@@ -84,21 +86,20 @@ class DecideTest(unittest.TestCase):
         if codex_login:
             (self.home / ".codex").mkdir(exist_ok=True)
             (self.home / ".codex" / "auth.json").write_text("{}")
-        port = free_port()
-        env = {**os.environ, "HOME": str(self.home), "PORT": str(port), "DECIDE_PROVIDERS": providers,
+        sock = str(self.home / "decide.sock")
+        env = {**os.environ, "HOME": str(self.home), "DECIDE_SOCKET": sock, "DECIDE_PROVIDERS": providers,
+               "DECIDE_OPENAI_CONSUMERS": getpass.getuser() if consumers is None else consumers,
                "DECIDE_OPENAI_URL": openai.url if openai else "http://127.0.0.1:9/v1/decisions",
                "DECIDE_CLAUDE_BIN": claude or "/nonexistent", "DECIDE_CODEX_BIN": codex or "/nonexistent"}
         env.pop("CODEX_HOME", None)
         self.log = open(self.home / "log.txt", "w")
         p = subprocess.Popen([sys.executable, str(D / "server.py")], env=env, stderr=self.log)
         self.procs.append(p)
-        self.env = {**os.environ, "DECIDE_URL": f"http://127.0.0.1:{port}", "DECIDE_CONFIG": "/nonexistent"}
+        self.env = {**os.environ, "DECIDE_SOCKET": sock, "DECIDE_CONFIG": "/nonexistent"}
         for _ in range(50):
-            try:
-                socket.create_connection(("127.0.0.1", port), 0.2).close()
+            if os.path.exists(sock):
                 return
-            except OSError:
-                time.sleep(0.1)
+            time.sleep(0.1)
 
     def ask(self, request=REQUEST, *args):
         p = subprocess.run([sys.executable, str(D / "vallis-decide"), *args], input=json.dumps(request),
@@ -114,6 +115,22 @@ class DecideTest(unittest.TestCase):
         auth, body = fake.calls[0]
         self.assertEqual((auth, body["model"]), ("Bearer sk-test", "gpt-6-luna"))
         self.assertEqual(body["questions"], REQUEST["questions"])
+
+    def test_openai_key_only_for_allowed_accounts(self):
+        fake = FakeOpenAI(200, {"name": "reaction", "type": "choice", "choice": "😁"})
+        self.fakes.append(fake)
+        self.start("openai-decisions,claude", openai=fake, key=True, consumers="someone-else",
+                   claude=self.cli("claude", '{"reaction": "👍"}'), claude_login=True)
+        rc, out, _ = self.ask()
+        self.assertEqual((rc, out["provider"]), (0, "claude"))     # the key was not used for this account
+        self.assertEqual(fake.calls, [])
+
+    def test_openai_goes_to_one_address_only(self):
+        env = {**os.environ, "DECIDE_OPENAI_URL": "https://example.com/v1/other"}
+        out = subprocess.run([sys.executable, "-c", "import runpy,sys;sys.argv=['x'];"
+                              "m=runpy.run_path(sys.argv[0] if False else %r, run_name='m');print(m['OPENAI_URL'])"
+                              % str(D / "server.py")], env=env, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(out, "https://api.openai.com/v1/decisions")
 
     def test_cascade_openai_fails_then_claude(self):
         fake = FakeOpenAI(500)

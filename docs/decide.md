@@ -19,11 +19,12 @@ Cascade in the order of the organization file; the first ready provider answers,
 
 | Provider | Model | Credential — of the service itself |
 |---|---|---|
-| `openai-decisions` (default) | `gpt-6-luna` via `POST /v1/decisions` | API key: `install -m 600 -o bb-decide <file> /var/lib/bb-decide/openai.key` |
+| `openai-decisions` (default) | `gpt-6-luna` via `POST /v1/decisions` | API key: `install.sh --openai-key-from <file> --openai-consumers <accounts>`; used only for those accounts and only for that address |
 | `claude` | `claude-haiku-5-5` via `claude -p` | own login: `sudo -u bb-decide -H claude` |
 | `codex` | `gpt-6-luna` via `codex exec` | own login: `sudo -u bb-decide -H codex login --device-auth` |
 
-Logins of the owner, employees or agents are never copied to the service. Without any credential the state is
+The service learns the calling account from the kernel (Unix socket, SO_PEERCRED); the key is used only for the
+accounts listed in `--openai-consumers`. Logins of the owner, employees or agents are never copied to the service. Without any credential the state is
 `needs_setup`.
 
 ```yaml
@@ -37,6 +38,6 @@ decide:
 deploy/decide/install.sh --organization <organization repository>/organization.yml
 ```
 
-A loopback socket (port 9014 by default) starts the service on the first request; it exits after 5 idle minutes.
+A local socket (/run/bb-decide.sock) starts the service on the first request; it exits after 5 idle minutes.
 The service never stores or logs the request text: the log keeps the provider, the duration and the outcome.
 State: `/var/lib/bb-decide/state.json` and `setup.py tools status`. `install.sh remove [--purge]` removes it.

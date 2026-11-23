@@ -6,6 +6,9 @@ POST /decide   {"request": <Decisions-shaped request>, "timeout": seconds} -> {"
                           "choices": [{"value", "description"}] | "levels": [{"label", "description"}]}]}
 GET  /health   -> {"state", "reason", "providers": {name: ready}} and the same into the state file
 
+The service listens on a Unix socket; the caller's account comes from the kernel (SO_PEERCRED). The OpenAI key is
+used only for the accounts in DECIDE_OPENAI_CONSUMERS and only for POST https://api.openai.com/v1/decisions.
+
 Providers, in the order of DECIDE_PROVIDERS; the first ready one answers, an error or a timeout moves to the next:
   openai-decisions  POST /v1/decisions (gpt-6-luna) with the service's own API key
   claude            claude -p (fast model) under the service's own account login
@@ -15,8 +18,11 @@ systemd socket activation; exits after IDLE_TIMEOUT_SEC without requests.
 """
 import json
 import os
+import pwd
 import re
 import socket
+import socketserver
+import struct
 import subprocess
 import sys
 import tempfile
@@ -24,20 +30,22 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 
 HOME = os.environ.get("HOME", "/var/lib/bb-decide")
 PROVIDERS = [p.strip() for p in os.environ.get("DECIDE_PROVIDERS", "openai-decisions").split(",") if p.strip()]
 STATE_FILE = os.environ.get("DECIDE_STATE_FILE", os.path.join(HOME, "state.json"))
 OPENAI_KEY_FILE = os.environ.get("DECIDE_OPENAI_KEY_FILE", os.path.join(HOME, "openai.key"))
-OPENAI_URL = os.environ.get("DECIDE_OPENAI_URL", "https://api.openai.com/v1/decisions")
+OPENAI_URL = "https://api.openai.com/v1/decisions"     # the key goes to this one address, nothing else
+if os.environ.get("DECIDE_OPENAI_URL", "").startswith("http://127.0.0.1:"):   # tests: a local fake only
+    OPENAI_URL = os.environ["DECIDE_OPENAI_URL"]
+OPENAI_CONSUMERS = {u.strip() for u in os.environ.get("DECIDE_OPENAI_CONSUMERS", "").split(",") if u.strip()}
+SOCKET_PATH = os.environ.get("DECIDE_SOCKET", "/run/bb-decide.sock")
 OPENAI_MODEL = os.environ.get("DECIDE_OPENAI_MODEL", "gpt-6-luna")
 CLAUDE_BIN = os.environ.get("DECIDE_CLAUDE_BIN", "claude")
 CLAUDE_MODEL = os.environ.get("DECIDE_CLAUDE_MODEL", "claude-haiku-5-5")
 CODEX_BIN = os.environ.get("DECIDE_CODEX_BIN", "codex")
 CODEX_MODEL = os.environ.get("DECIDE_CODEX_MODEL", "gpt-6-luna")
-HOST = os.environ.get("HOST", "127.0.0.1")
-PORT = int(os.environ.get("PORT", "9014"))
 IDLE_TIMEOUT_SEC = float(os.environ.get("IDLE_TIMEOUT_SEC", "300"))
 MAX_BODY = 256 * 1024
 
@@ -100,8 +108,15 @@ def validate(req):
 # ---------- providers ----------
 
 def openai_decisions(req, deadline):
+    key = ""
     with open(OPENAI_KEY_FILE) as f:
-        key = f.read().strip()
+        for line in f:                       # a bare key or one line OPENAI_API_KEY=…
+            line = line.strip()
+            if line and not line.startswith("#"):
+                key = line.split("=", 1)[1].strip() if line.startswith("OPENAI_API_KEY=") else line
+                break
+    if not key:
+        raise Fail("no key")
     body = json.dumps({"model": OPENAI_MODEL, **{k: req[k] for k in ("input", "questions")}}).encode()
     request = urllib.request.Request(OPENAI_URL, data=body, method="POST",
                                      headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
@@ -205,12 +220,15 @@ def codex(req, deadline):
 ENGINES = {"openai-decisions": openai_decisions, "claude": claude, "codex": codex}
 
 
-def decide(req, timeout):
+def decide(req, timeout, caller=None):
     deadline = time.monotonic() + timeout
     r = ready()
     last = "no provider ready"
     for name in PROVIDERS:
         if name not in ENGINES or not r.get(name):
+            continue
+        if name == "openai-decisions" and caller not in OPENAI_CONSUMERS:
+            last = "openai-decisions: not allowed for this account"
             continue
         if time.monotonic() >= deadline:
             last = "timeout"
@@ -219,11 +237,11 @@ def decide(req, timeout):
         try:
             answers = ENGINES[name](req, deadline)
             ms = int((time.monotonic() - t) * 1000)
-            log(f"provider={name} ms={ms} outcome=ok")
+            log(f"provider={name} caller={caller} ms={ms} outcome=ok")
             return {"answers": answers, "provider": name, "ms": ms}
         except Fail as e:
             last = f"{name}: {e}"
-            log(f"provider={name} ms={int((time.monotonic() - t) * 1000)} outcome=failed ({e})")
+            log(f"provider={name} caller={caller} ms={int((time.monotonic() - t) * 1000)} outcome=failed ({e})")
     raise Fail(last)
 
 
@@ -238,6 +256,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+    def address_string(self):
+        return "local"
+
+    def caller(self):
+        """The calling account, from the kernel: it cannot be claimed by the client."""
+        try:
+            _pid, uid, _gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                                                          struct.calcsize("3i")))
+            return pwd.getpwuid(uid).pw_name
+        except (OSError, KeyError):
+            return None
 
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode()
@@ -268,7 +298,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length))
             req = validate(body.get("request"))
             timeout = min(60.0, max(1.0, float(body.get("timeout", 8))))
-            self._send(200, decide(req, timeout))
+            self._send(200, decide(req, timeout, self.caller()))
         except (ValueError, TypeError) as e:
             self._send(400, {"error": str(e)})
         except Fail as e:
@@ -288,14 +318,22 @@ def idle_watch(server):
             return
 
 
+class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+
 def main():
     if os.environ.get("LISTEN_FDS") and int(os.environ.get("LISTEN_PID", os.getpid())) == os.getpid():
-        sock = socket.socket(fileno=3)
-        server = ThreadingHTTPServer(sock.getsockname()[:2], Handler, bind_and_activate=False)
+        server = UnixHTTPServer(SOCKET_PATH, Handler, bind_and_activate=False)
         server.socket.close()
-        server.socket = sock
+        server.socket = socket.socket(fileno=3)
     else:
-        server = ThreadingHTTPServer((HOST, PORT), Handler)
+        try:
+            os.unlink(SOCKET_PATH)
+        except OSError:
+            pass
+        server = UnixHTTPServer(SOCKET_PATH, Handler)
+        os.chmod(SOCKET_PATH, 0o666)
     write_state()
     threading.Thread(target=idle_watch, args=(server,), daemon=True).start()
     server.serve_forever()

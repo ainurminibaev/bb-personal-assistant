@@ -1,12 +1,14 @@
 #!/bin/bash
 # Quick decision service of the platform (one per server): `vallis-decide` for agents, the bridge and plugins.
 #
-#   install.sh [--organization <organization.yml>] [--providers openai-decisions,claude,codex] [--port 9014]
+#   install.sh [--organization <organization.yml>] [--providers openai-decisions,claude,codex]
+#              [--openai-consumers <account,...>] [--openai-key-from <file>]
 #   install.sh status | remove [--purge]
 #
 # Providers come from the organization file (section decide: {providers: [...]}), the option overrides it; default
 # openai-decisions. Each provider needs a credential of this service itself, never anyone else's:
-#   openai-decisions  API key:  install -m 600 -o bb-decide <key file> /var/lib/bb-decide/openai.key
+#   openai-decisions  API key: --openai-key-from <file> (a bare key or OPENAI_API_KEY=…; never printed), used only for
+#                     the accounts in --openai-consumers and only for POST https://api.openai.com/v1/decisions
 #   claude            own login: sudo -u bb-decide -H claude   (log in once)
 #   codex             own login: sudo -u bb-decide -H codex login --device-auth
 # Without any of them the state is "needs_setup" and consumers keep their default (the bridge keeps 👀).
@@ -15,13 +17,14 @@ set -uo pipefail
 export LC_ALL=C.UTF-8
 here=$(cd "$(dirname "$0")" && pwd)
 opt=/opt/bb-decide; home=/var/lib/bb-decide; conf_dir=/etc/bb-decide; units=/etc/systemd/system; user=bb-decide
-providers=""; port=9014; organization=""; action=install; purge=0
+providers=""; organization=""; action=install; purge=0; consumers=""; key_from=""; sock=/run/bb-decide.sock
 case "${1:-}" in status|remove) action=$1; shift;; esac
 while [ $# -gt 0 ]; do
   case "$1" in
     --organization) organization=$2; shift 2;;
     --providers) providers=$2; shift 2;;
-    --port) port=$2; shift 2;;
+    --openai-consumers) consumers=$2; shift 2;;
+    --openai-key-from) key_from=$2; shift 2;;
     --purge) purge=1; shift;;
     *) echo "unknown option $1" >&2; exit 64;;
   esac
@@ -52,7 +55,7 @@ EOF
 fi
 providers=${providers:-openai-decisions}
 for p in ${providers//,/ }; do case "$p" in openai-decisions|claude|codex) ;; *) echo "unknown provider $p" >&2; exit 64;; esac; done
-[[ $port =~ ^[0-9]+$ ]] || { echo "port: a number" >&2; exit 64; }
+for u in ${consumers//,/ }; do id "$u" >/dev/null 2>&1 || { echo "no account $u" >&2; exit 64; }; done
 
 id "$user" >/dev/null 2>&1 || useradd --system --home-dir "$home" --shell /usr/sbin/nologin "$user"
 install -d -m 750 -o "$user" -g "$user" "$home"
@@ -65,16 +68,19 @@ for b in node codex claude; do d=$(dirname "$(command -v $b 2>/dev/null || echo 
 cat > "$conf_dir/decide.env" <<EOF
 # Quick decision service settings (deploy/decide/install.sh). Providers in cascade order.
 DECIDE_PROVIDERS=$providers
-DECIDE_PORT=$port
+DECIDE_SOCKET=$sock
+# Accounts allowed to use the OpenAI key (the caller's account comes from the kernel).
+DECIDE_OPENAI_CONSUMERS=$consumers
 EOF
 chmod 644 "$conf_dir/decide.env"
 
 cat > "$units/bb-decide.socket" <<EOF
 [Unit]
-Description=Quick decision service (loopback socket)
+Description=Quick decision service (local socket)
 
 [Socket]
-ListenStream=127.0.0.1:$port
+ListenStream=$sock
+SocketMode=0666
 Accept=no
 Backlog=32
 
@@ -111,6 +117,12 @@ ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 EOF
+# The key: moved straight from the given file into the service, never printed or copied elsewhere.
+if [ -n "$key_from" ]; then
+  [ -s "$key_from" ] || { echo "no key in $key_from" >&2; exit 66; }
+  install -m 600 -o "$user" -g "$user" /dev/null "$home/openai.key.tmp" && cat "$key_from" > "$home/openai.key.tmp" \
+    && mv "$home/openai.key.tmp" "$home/openai.key" && echo "[decide] OpenAI key installed for: ${consumers:-nobody}"
+fi
 systemctl daemon-reload
 systemctl enable -q --now bb-decide.socket || echo "[decide] socket did not start" >&2
 systemctl --no-block try-restart bb-decide.service 2>/dev/null
