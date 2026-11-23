@@ -73,7 +73,7 @@ One rule for the assistant and every employee (owner, 23.11).
 
 1. **Create** a schedule only for a need a person or a task named. In the same message say in plain words what will happen, where, when, and until which day.
 2. **Kind.** Something that repeats is one schedule with a repeat and an end date; a one-off schedule is for one event only — never a row of one-offs for a repeating thing.
-3. **Name** it so the owner understands it without explanation: what, for whom, where — «Напомнить команде о встрече с маркетингом — „Штурвальная“, ср 10:00». A task number only in brackets after the meaning, never instead of it. The same for the messages the schedule sends.
+3. **Name** it so the owner understands it without explanation: what, for whom, where — «Напомнить команде о встрече с маркетингом — „Общий чат команды“, ср 10:00». A task number only in brackets after the meaning, never instead of it. The same for the messages the schedule sends.
 4. **Show.** Asked «какие у тебя расписания», answer with a plain list: what, where, when it runs next, who asked, which task it belongs to.
 5. **Remove.** A schedule belongs to its task: when the task is closed or cancelled, remove its schedules in the same step. A repeating one ends by its end date. In the daily check name schedules with no task and no one who asked, and offer the owner to remove them.
 

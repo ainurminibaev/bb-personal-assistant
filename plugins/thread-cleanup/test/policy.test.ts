@@ -90,7 +90,7 @@ test("settings parsing", () => {
   assert.equal(parseHours("-1", 24), 24);
 });
 
-const task = (o: Partial<ThreadRow> = {}) => row({ parentNotifications: "stuck", title: "ждём ответа Виктора", ...o });
+const task = (o: Partial<ThreadRow> = {}) => row({ parentNotifications: "stuck", title: "ждём ответа Олега", ...o });
 
 test("open task without a schedule stays, however old; the owner hears after the stale term", () => {
   const v = decide(task(), facts(), cfg, NOW);

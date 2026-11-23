@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 D = Path(__file__).resolve().parents[1] / "deploy" / "decide"
-REQUEST = {"input": "Боцман, напомни про созвон и пиццу",
+REQUEST = {"input": "Помощник, напомни про созвон и пиццу",
            "questions": [{"type": "choice", "name": "reaction", "instructions": "Реакция на сообщение.",
                           "choices": [{"value": "👍", "description": "принято"}, {"value": "😁", "description": "смешно"}]}]}
 
