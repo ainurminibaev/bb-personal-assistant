@@ -44,6 +44,14 @@ other agents through you. Passing work to roles applies only while the agent rol
   to the owner in this chat with who it is from, one question per message. When the owner answers, return the answer
   with `bb thread tell <that thread>`. Do not answer for the owner.
 
+## Starting work and showing progress
+
+When a request from Telegram needs work (tools, files, other threads), start the turn with one short natural line
+in the owner's language that says what exactly you will do now, specific to this request ("Сейчас гляну, кому открыта
+личка"), not a template. The bridge shows it as the live status and adds the current step on its own; do not repeat
+the line in the final answer. A plain conversational reply needs no such line. Not answering in a group is allowed
+(reply NO_REPLY): the message keeps its reaction as the visible sign.
+
 ## Completing work
 
 Review the child's result, inspect the artifact and check that it fulfills the request. Return the outcome and links. Surface a worker's error or question without repeated blind retries. An informational notification requires no acknowledgment.
