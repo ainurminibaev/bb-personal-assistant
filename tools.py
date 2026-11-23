@@ -744,15 +744,32 @@ def install_cli(tool, account, admins=()):
     folder = _cli_dir(account)
     arch = ARCH.get(os.uname().machine)
     for program, spec in (tool.get("download") or {}).items():
-        if account.which(program) and spec["version"].lstrip("v") in account.run(
-                program, "--version", "--disable-version-check").stdout:
+        version_args = spec.get("version_args", ["--version", "--disable-version-check"])
+        if account.which(program) and spec["version"].lstrip("v") in account.run(program, *version_args).stdout:
             continue
         if not arch or arch not in spec.get("sha256", {}):
             return f"{program}: no pinned build for {os.uname().machine}"
         target = folder / program
         try:
-            _download(spec["url"].format(arch=arch), spec["sha256"][arch], target)
-        except (OSError, ValueError) as error:
+            if spec.get("files"):
+                # A pinned archive (tar.gz): its named programs go next to the command, nothing else is kept.
+                import tarfile
+                archive = folder / f".{program}-{spec['version']}.tar.gz"
+                _download(spec["url"].format(arch=arch), spec["sha256"][arch], archive)
+                try:
+                    with tarfile.open(archive) as tar:
+                        for member in spec["files"]:
+                            data = tar.extractfile(member.format(arch=arch))
+                            out = folder / Path(member).name
+                            out.write_bytes(data.read())
+                            out.chmod(0o755)
+                            if account.home in out.parents:
+                                account.give(out)
+                finally:
+                    archive.unlink(missing_ok=True)
+            else:
+                _download(spec["url"].format(arch=arch), spec["sha256"][arch], target)
+        except (OSError, ValueError, KeyError, AttributeError) as error:
             return f"{program} {spec['version']}: {error}"
         if account.home in target.parents:
             account.give(target)
@@ -767,7 +784,7 @@ def install_cli(tool, account, admins=()):
         return f"{target}: {error}"
     missing = [p for p in tool.get("requires", []) if not account.which(p)]
     if missing:
-        return f"not installed: {', '.join(missing)} (apt-get install age as root)"
+        return f"not installed: {', '.join(missing)}"
     done = account.run(str(target), "init")
     if done.returncode:
         return f"{target.name} init: {(done.stderr or done.stdout).strip()[-200:]}"

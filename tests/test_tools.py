@@ -408,3 +408,39 @@ class LeakCheck(unittest.TestCase):
                                  "source": "agent", "state": "present"}])
         self.assertEqual(tools.report("employee", [], [], "alpha", accesses=rows)["accesses"], rows)
         self.assertEqual(tools.access_rows(FakeAccount(tempfile.mkdtemp())), [])
+
+
+class PinnedArchive(unittest.TestCase):
+    """A pinned tar.gz download (age): its named programs land next to the command; a wrong sum installs nothing."""
+
+    def test_archive_programs_next_to_the_command(self):
+        import hashlib, io, tarfile
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+                for name in ("age/age", "age/age-keygen", "age/LICENSE"):
+                    data = b"#!/bin/sh\necho v1.3.2\n"
+                    info = tarfile.TarInfo(name); info.size = len(data); tar.addfile(info, io.BytesIO(data))
+            archive = d / "age.tar.gz"; archive.write_bytes(buf.getvalue())
+            arch = tools.ARCH.get(os.uname().machine)
+            spec = {"version": "v1.3.2", "version_args": ["--version"], "url": archive.as_uri(),
+                    "files": ["age/age", "age/age-keygen"], "sha256": {arch: hashlib.sha256(buf.getvalue()).hexdigest()}}
+            bin_dir = d / "bin"
+            (d / "cmd").write_text("#!/bin/sh\nexit 0\n")
+
+            class Acc:
+                home = d
+                def which(self, p): return str(bin_dir / p) if (bin_dir / p).exists() else None
+                def run(self, *a, **k): return subprocess.CompletedProcess(a, 0, "", "")
+                def give(self, p): pass
+            tool = {"download": {"age": spec}, "path": "cmd", "requires": ["age", "age-keygen"]}
+            with patch.object(tools, "_cli_dir", lambda account: bin_dir), patch.object(tools, "PACKAGE", d):
+                self.assertIsNone(tools.install_cli(tool, Acc()))
+                self.assertTrue((bin_dir / "age").exists() and (bin_dir / "age-keygen").exists())
+                self.assertFalse((bin_dir / "LICENSE").exists())
+                self.assertEqual(list(bin_dir.glob(".age-*")), [])               # the archive is not kept
+                (bin_dir / "age").unlink(); (bin_dir / "age-keygen").unlink()
+                spec["sha256"][arch] = "0" * 64
+                self.assertIn("sha256", tools.install_cli(tool, Acc()))
+                self.assertFalse((bin_dir / "age").exists())

@@ -31,6 +31,7 @@ def supports_coordinator_handoff(version):
 
 
 GUARD = Path("hooks") / "guest-thread-guard.py"
+VOICE_ROUTER = Path("/usr/local/bin/voice-to-text")   # the server's speech service router
 
 
 def clone_workspace(url, root):
@@ -55,7 +56,7 @@ def configure_bridge(kind, inbox):
         bb("plugin", "config", "telegram-projects", "set", "telegramInboxRoot", str(inbox))
     # Voice of the bridge goes through the server's speech service when it is installed (a path that no longer
     # exists, e.g. a retired local recognizer, is replaced; a working custom router stays).
-    router = Path("/usr/local/bin/voice-to-text")
+    router = VOICE_ROUTER
     current = values.get("voiceRouterPath") or ""
     if router.exists() and current != str(router) and (not current or not Path(current).exists()):
         bb("plugin", "config", "telegram-projects", "set", "voiceRouterPath", str(router))

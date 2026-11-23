@@ -121,8 +121,16 @@ tools:
     what: Хранилище доступов — пароли, ключи и входы агента, свои и выданные; значения не печатаются (С37)
     kind: cli
     path: deploy/vallis-secret         # из пакета платформы; навык secrets-store приходит с плагином платформы
-    requires: [age, age-keygen]        # пакет age из архива Ubuntu: apt-get install age (server-setup.sh ставит)
-    download:                          # sops — официальный выпуск, закреплённая версия и суммы из его checksums.txt
+    requires: [age, age-keygen]        # официальный выпуск age, ставится рядом с командой; системный пакет не нужен
+    download:                          # sops и age — официальные выпуски, закреплённые версии и суммы (sops — checksums.txt, age — digest выпуска на GitHub)
+      age:
+        version: v1.3.2
+        version_args: [--version]
+        url: https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-{arch}.tar.gz
+        files: [age/age, age/age-keygen]
+        sha256:
+          amd64: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
+          arm64: 6b8dc4333c53a5a57c9e5834e3a48f92605d7154014cd07269ff3327db5d37f4
       sops:
         version: v3.13.3
         url: https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.{arch}

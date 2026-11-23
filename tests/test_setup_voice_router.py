@@ -29,7 +29,8 @@ class VoiceRouterTest(unittest.TestCase):
                 return current_exists
             return real_exists(path)
 
-        with patch.object(setup, "bb", bb), patch.object(Path, "exists", exists), tempfile.TemporaryDirectory() as d:
+        with patch.object(setup, "bb", bb), patch.object(setup, "VOICE_ROUTER", Path("/usr/local/bin/voice-to-text")), \
+                patch.object(Path, "exists", exists), tempfile.TemporaryDirectory() as d:
             setup.configure_bridge("assistant", Path(d) / "inbox")
         return [c for c in calls if "voiceRouterPath" in c]
 

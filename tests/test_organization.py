@@ -125,6 +125,7 @@ class Organization(unittest.TestCase):
         import contextlib, io
         from unittest.mock import patch
         import setup
+        setup.VOICE_ROUTER = Path("/nonexistent/voice-to-text")   # this host's speech service must not leak into the test
         work = self.tmp / "install"
         plugins = {"telegram-projects": dict(id="telegram-projects", source="git:/mirror/bridge.git", enabled=True,
                                              version="0.9.53"),
