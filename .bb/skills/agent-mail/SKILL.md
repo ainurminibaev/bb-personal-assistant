@@ -14,6 +14,8 @@ address for this.
 The platform works with AgentMail (API documentation: https://docs.agentmail.to). The key is a setting of the
 organization or of the owner, never a value in a repository or in a chat:
 
+- the credentials store, when `vallis-secret` is installed: `vallis-secret list` shows `AGENTMAIL_API_KEY`;
+  call the API through `vallis-secret run AGENTMAIL_API_KEY -- <command>` (secrets-store skill), or
 - the `AGENTMAIL_API_KEY` variable of the environment you run in, or
 - the file `~/.secrets/agentmail.key` of your installation (a closed folder, mode 700, file 600).
 
@@ -27,12 +29,15 @@ a few minutes at most) and stop when the letter has come. Take only what the tas
 
 ## Where the new login goes
 
-- The address and every password you create go to `~/.secrets/accounts/<service>.json` (folder 700, file 600):
+- With the credentials store: every password you create is made and kept by
+  `vallis-secret put <SERVICE>_PASSWORD --generate --what "<service>: login <address>, for <purpose>"`; the mailbox
+  address and login go into `--what`, they are not secrets.
+- Without it: the address and every password go to `~/.secrets/accounts/<service>.json` (folder 700, file 600):
   service, address, login, password, date, purpose.
 - In your working notes write only that the account exists and where its login is stored — no values.
 
 ## Do not
 
 - Do not show the key, passwords or codes in a chat, a thread title, a commit or a document; a code is used, not quoted.
-- Do not create a second mailbox for the same purpose: check `~/.secrets/accounts/` first.
+- Do not create a second mailbox for the same purpose: check `vallis-secret list` (or `~/.secrets/accounts/`) first.
 - Do not subscribe the mailbox to newsletters and do not use it to write to people on your own.

@@ -39,6 +39,9 @@ tools:
 - `hook` — a hook script from a git tag, installed by its own `--apply` into the account's agent settings.
 - `service` — a service of the server, one per server outside any BB (speech, the local Telegram server). The services
   installer puts it; the list only shows its state (`check_commands`, `check_units`, the service's own `state_file`).
+- `cli` — a command from the platform package (`path`) into the account's program folder (on the PATH of its BB),
+  with the programs it needs: `requires` from system packages, `download` — a pinned release checked by `sha256`
+  per architecture. The credentials store (`secrets-store`: `vallis-secret`, sops, age) is such a line.
 - `setting` — what has to be configured after installation (`env` variable or `file` in the installation's closed
   folder); without it the line is `needs_setup`.
 
@@ -54,13 +57,30 @@ mcp:                                  # MCP connections: address and the name of
     url: https://tasks.example.com/mcp
     token_env: TASKS_TOKEN            # set in the environment of the employee's BB service
     employees: [support]              # or: all
+secrets:                              # the credentials store (С37): names and purpose only, never values
+  admin: [age1…]                      # administrators' age public keys: they can decrypt what agents keep
+  keys:
+    TASKS_TOKEN: {what: ключ трекера задач, to: [support]}    # or to: all
+    AGENTMAIL_API_KEY: {what: ключ почтового сервиса, to: all}
 
 # employees/<name>/employee.yml — the same two sections, for this employee only
 tools:
   add: [image-gen]                    # an employee's line wins over the organization's exclusion
 mcp:
   crm: {url: https://crm.example.com/mcp, token_env: CRM_TOKEN}
+secrets:
+  keys:
+    CRM_TOKEN: {what: ключ CRM}
 ```
+
+**Keys.** A described key's value lives in the account's store (`vallis-secret`, see `deploy/secrets-store.md`).
+An organization key is made by the administrator for the named employees' public keys
+(`vallis-secret grant NAME --to <recipients> --out <file>`), the file is brought to the employee's server and taken
+with `vallis-secret receive <file>`; an employee's own key is asked with `vallis-secret ask NAME`. When `token_env` of an
+MCP connection names a described key, Claude Code takes it from the store (`headersHelper`), Codex still reads the
+variable of the BB service. The installer puts the administrators' keys into `~/.config/vallis/admin.recipients`
+and a pre-commit check of the workspace's git copy that refuses a commit with a stored value
+(`vallis-secret leaks --git-staged`).
 
 An extra connection on the owner's request is a line in `employee.yml` and a new run of the installer. The installer
 writes the employee's MCP servers into `.mcp.json` (Claude Code) and `.codex/config.toml` (Codex) of the employee folder;
@@ -91,7 +111,8 @@ python3 tools.py status [--json] --kind agents --account <agent> \
 }
 ```
 
-Every line of `tools.yml` is listed, then every MCP connection of the description. `state` is one of:
+Every line of `tools.yml` is listed, then every MCP connection of the description, then every described key
+(`secret:<NAME>`: `installed` — in the store and decryptable, `needs_setup` — not there yet, `error` — does not open). `state` is one of:
 
 | state | meaning |
 |---|---|

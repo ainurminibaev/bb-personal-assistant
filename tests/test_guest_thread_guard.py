@@ -47,6 +47,23 @@ class GuestGuard(unittest.TestCase):
         return subprocess.run([sys.executable, self.hook], input=json.dumps({"session_id": session, "tool_name": "Bash", "tool_input": tool_input}),
                               capture_output=True, text=True, env=env).returncode
 
+    def test_credentials_store(self):
+        # everyone: the store and the age key are not read directly
+        for who in ("s-owner", "s-group"):
+            self.assertEqual(self.run_hook(who, {"command": "cat ~/.config/vallis/age.key"}), 2)
+            self.assertEqual(self.run_hook(who, {"command": "ls ~/.local/share/vallis/secrets/own"}), 2)
+            self.assertEqual(self.run_hook(who, {"command": "vallis-secret list && cat ~/.local/share/vallis/secrets/own/A.json"}), 2)
+            self.assertEqual(self.run_hook(who, {"command": "SOPS_AGE_KEY_FILE=x sops decrypt f"}), 2)
+            self.assertEqual(self.run_hook(who, {"file_path": "/var/lib/e/.config/vallis/age.key"}), 2)
+            self.assertEqual(self.run_hook(who, {"command": "vallis-secret list --json"}), 0)
+        # the owner's conversation uses keys, a guest's does not
+        self.assertEqual(self.run_hook("s-owner", {"command": "vallis-secret run KEY -- ./deploy.sh"}), 0)
+        self.assertEqual(self.run_hook("s-owner", {"command": ["bash", "-lc", "vallis-secret put A --generate --what x"]}), 0)
+        self.assertEqual(self.run_hook("s-group", {"command": "vallis-secret run KEY -- env"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "x; /usr/local/bin/vallis-secret file KEY /tmp/k"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "vallis-secret header KEY"}), 2)
+        self.assertEqual(self.run_hook("s-child", {"command": "vallis-secret run KEY -- true"}), 2)
+
     def test_group_thread_cannot_read_other_threads(self):
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread list"}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "$BB_CLI thread log thr_owner --json"}), 2)

@@ -23,11 +23,14 @@ export default async function personalAssistant(bb: BbPluginApi) {
   const contact = ownerContact(bb, () => binding.ownerContact !== false);
   bb.agents.contributeInstructions(({threadId}) => contact.instructions(threadId));
 
+  // The credentials store (С37): its skill only where the installer put vallis-secret on the PATH of this BB.
+  const store = (process.env.PATH ?? "").split(":").some(dir => dir && existsSync(join(dir, "vallis-secret")))
+    ? ["secrets-store"] : [];
   bb.agents.configure(({project, thread}) =>
     matches(project.id, thread.id)
-      ? { instructions: policy, skills: ["dispatch", "integrations", "task-tracking", "agent-mail"], tools: [] }
+      ? { instructions: policy, skills: ["dispatch", "integrations", "task-tracking", "agent-mail", ...store], tools: [] }
       // Every conversation keeps the tasks given in it and can get the agent's own mail: groups and people's chats too.
-      : { skills: ["task-tracking", "agent-mail"], tools: [] }
+      : { skills: ["task-tracking", "agent-mail", ...store], tools: [] }
   );
 
   // The built plugin runs from dist/; the guard ships next to it in the package root.

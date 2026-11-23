@@ -23,12 +23,15 @@ REGISTRY = Path(__file__).resolve().with_name("tools.yml")
 KINDS = ("assistant", "employee", "agents")
 STATES = ("installed", "excluded", "needs_login", "needs_setup", "error")
 FORMAT = 1
-TOOL_KINDS = ("plugin", "npm", "skill", "hook", "service")
+TOOL_KINDS = ("plugin", "npm", "skill", "hook", "service", "cli")
 SKILL_DIRS = (Path(".agents") / "skills", Path(".claude") / "skills")
 SOURCE_MARK = ".vallis-source"
 ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
 MCP_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 MCP_FIELDS = {"url", "token_env", "employees", "what"}
+SECRET_FIELDS = {"what", "to"}
+ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
+PACKAGE = Path(__file__).resolve().parent
 TOML_BEGIN = "# vallis: MCP from the organization description (managed by setup.py)"
 TOML_END = "# vallis: end"
 STATE_FILE = Path("local") / "tools-state.json"
@@ -142,6 +145,52 @@ def mcp_servers(organization, employee, name):
                     continue
             servers[server] = (level, url, str(token) if token else None)
     return servers, problems
+
+
+def described_secrets(organization, employee, name):
+    """Keys the description names for this installation, without values: ({NAME: (level, what)}, admins, problems).
+
+    organization.yml: secrets: {admin: [age public keys], keys: {NAME: {what, to: all | [employees]}}}
+    employee.yml (and an assistant's description): secrets: {keys: {NAME: {what}}}"""
+    keys, admins, problems = {}, [], []
+    for label, level, section in (("organization.yml", "organization", (organization or {}).get("secrets")),
+                                  ("employee.yml", "employee", (employee or {}).get("secrets"))):
+        if section is None:
+            continue
+        if not isinstance(section, dict):
+            problems.append(f"{label} secrets: expected admin and keys")
+            continue
+        for field in sorted(set(section) - {"admin", "keys"}):
+            problems.append(f"{label} secrets.{field}: unknown field, not used")
+        for key in _names(section, "admin"):
+            if level != "organization" or not key.startswith(("age1", "ssh-")):
+                problems.append(f"{label} secrets.admin: {key[:12]}… — age public keys, in organization.yml only")
+            elif key not in admins:
+                admins.append(key)
+        entries = section.get("keys") or {}
+        if not isinstance(entries, dict):
+            problems.append(f"{label} secrets.keys: one entry per key name")
+            continue
+        for key, entry in entries.items():
+            key = str(key)
+            if not ENV_NAME.fullmatch(key) or not isinstance(entry, dict) or not str(entry.get("what") or "").strip():
+                problems.append(f"{label} secrets.keys.{key}: a CAPITAL_NAME with what (and to in organization.yml)")
+                continue
+            unknown = sorted(set(entry) - SECRET_FIELDS)
+            if unknown:
+                problems.append(f"{label} secrets.keys.{key}: {', '.join(unknown)} not used; values never go into "
+                                "the repository, the store holds them")
+            if level == "organization":
+                who = entry.get("to")
+                if who is None:
+                    problems.append(f"organization.yml secrets.keys.{key}: to is missing (a list of names or all)")
+                    continue
+                if who != "all" and name not in [str(w) for w in (who if isinstance(who, list) else [who])]:
+                    continue
+            elif "to" in entry:
+                problems.append(f"employee.yml secrets.keys.{key}: to belongs to organization.yml")
+            keys[key] = (level, str(entry["what"]).strip())
+    return keys, admins, problems
 
 
 # --- running commands as the agent's account -------------------------------------------------------------
@@ -317,6 +366,47 @@ def _skill_state(name, tool, level, account, plugins):
     if missing:
         return _row(name, tool, level, "needs_setup", "not in " + ", ".join(missing), RERUN)
     return _row(name, tool, level, "installed")
+
+
+def _cli_name(tool):
+    return Path(tool["path"]).name
+
+
+def _cli_dir(account):
+    """Where the account's agents find programs: /usr/local/bin for an agent set up by root (agents' BB),
+    otherwise ~/.local/bin when it is on PATH, else the folder of node (the BB service's PATH has it)."""
+    if account.other or os.getuid() == 0:
+        return Path("/usr/local/bin")
+    local = account.home / ".local" / "bin"
+    if str(local) in os.environ.get("PATH", "").split(os.pathsep):
+        return local
+    node = shutil.which("node")
+    if node and account.home in Path(node).resolve().parents and os.access(os.path.dirname(node), os.W_OK):
+        return Path(os.path.dirname(node))
+    return local
+
+
+def _cli_state(name, tool, level, account):
+    program = _cli_name(tool)
+    if not account.which(program):
+        return _row(name, tool, level, "needs_setup", f"{program} is not on the PATH of {account.name}", RERUN)
+    missing = [p for p in tool.get("requires", []) if not account.which(p)]
+    if missing:
+        return _row(name, tool, level, "needs_setup", f"not installed: {', '.join(missing)}",
+                    "apt-get install age (as root), then " + RERUN)
+    missing = [p for p in tool.get("download", {}) if not account.which(p)]
+    if missing:
+        return _row(name, tool, level, "needs_setup", f"not installed: {', '.join(missing)}", RERUN)
+    listed = account.run(program, "list", "--json")
+    try:
+        count = len(json.loads(listed.stdout)["secrets"])
+    except (ValueError, KeyError, TypeError):
+        return _row(name, tool, level, "needs_setup", f"{program} list: {(listed.stderr or listed.stdout).strip()[-200:]}",
+                    f"{program} init, or {RERUN}")
+    key = account.home / ".config" / "vallis" / "age.key"
+    if not key.is_file() and not os.environ.get("VALLIS_AGE_KEY"):
+        return _row(name, tool, level, "needs_setup", "no age key of the account", f"{program} init")
+    return _row(name, tool, level, "installed", f"keys in the store: {count}")
 
 
 def _hook_state(name, tool, level, account):
@@ -518,6 +608,8 @@ def tool_state(name, tool, decision, account, plugins, bb_home, errors, data_dir
             row = _npm_state(name, tool, level, account)
         elif tool["kind"] == "skill":
             row = _skill_state(name, tool, level, account, plugins)
+        elif tool["kind"] == "cli":
+            row = _cli_state(name, tool, level, account)
         else:
             row = _hook_state(name, tool, level, account)
     except Exception as error:  # a broken check is a state, not a crash of the whole list
@@ -525,8 +617,15 @@ def tool_state(name, tool, decision, account, plugins, bb_home, errors, data_dir
     setting = tool.get("setting")
     if row["state"] == "installed" and setting:
         env, file = setting.get("env"), setting.get("file")
-        if not (env and os.environ.get(env)) and not (file and (account.home / file.removeprefix("~/")).is_file()):
-            where = " or ".join(x for x in (env and f"the {env} variable", file) if x)
+        stored = False
+        if env and account.which("vallis-secret"):
+            listed = account.run("vallis-secret", "list", "--json")
+            try:
+                stored = any(r["name"] == env for r in json.loads(listed.stdout)["secrets"])
+            except (ValueError, KeyError, TypeError):
+                stored = False
+        if not stored and not (env and os.environ.get(env)) and not (file and (account.home / file.removeprefix("~/")).is_file()):
+            where = " or ".join(x for x in (env and f"the store ({env})", env and f"the {env} variable", file) if x)
             row.update(state="needs_setup", reason=f"no {setting.get('what', 'setting')}: {where}",
                        action=f"put it into {where} (not into a repository)")
     if row["state"] != "installed" and name in errors and row["state"] != "error":
@@ -534,7 +633,7 @@ def tool_state(name, tool, decision, account, plugins, bb_home, errors, data_dir
     return row
 
 
-def install_tool(name, tool, account, plugins, bb, cache, source=None):
+def install_tool(name, tool, account, plugins, bb, cache, source=None, admins=()):
     """Install one selected line; returns an error text or None. Plugins go through bb, the rest to the account."""
     kind = tool["kind"]
     if kind == "service":
@@ -574,6 +673,8 @@ def install_tool(name, tool, account, plugins, bb, cache, source=None):
         if done.returncode:
             return f"{tool['package']} setup: {(done.stderr or done.stdout).strip()[-200:]}"
         return None
+    if kind == "cli":
+        return install_cli(tool, account, admins)
     if kind == "skill":
         if tool.get("plugin") or tool.get("present_with_plugin") in plugins:
             return None
@@ -603,6 +704,117 @@ def install_tool(name, tool, account, plugins, bb, cache, source=None):
     return None if done.returncode == 0 else f"{script.name} --apply: {(done.stderr or done.stdout).strip()[-200:]}"
 
 
+def _download(url, sha256, target):
+    import hashlib
+    import urllib.request
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".download-")
+    try:
+        digest = hashlib.sha256()
+        with os.fdopen(fd, "wb") as out, urllib.request.urlopen(url, timeout=120) as response:
+            for chunk in iter(lambda: response.read(1 << 16), b""):
+                digest.update(chunk)
+                out.write(chunk)
+        if digest.hexdigest() != sha256:
+            raise ValueError(f"sha256 of {url} does not match tools.yml")
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, target)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def install_cli(tool, account, admins=()):
+    """The command into the account's program folder, its pinned downloads next to it, the account's key."""
+    folder = _cli_dir(account)
+    arch = ARCH.get(os.uname().machine)
+    for program, spec in (tool.get("download") or {}).items():
+        if account.which(program) and spec["version"].lstrip("v") in account.run(
+                program, "--version", "--disable-version-check").stdout:
+            continue
+        if not arch or arch not in spec.get("sha256", {}):
+            return f"{program}: no pinned build for {os.uname().machine}"
+        target = folder / program
+        try:
+            _download(spec["url"].format(arch=arch), spec["sha256"][arch], target)
+        except (OSError, ValueError) as error:
+            return f"{program} {spec['version']}: {error}"
+        if account.home in target.parents:
+            account.give(target)
+    source = PACKAGE / tool["path"]
+    target = folder / _cli_name(tool)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        if not target.exists() or target.read_bytes() != source.read_bytes():
+            shutil.copyfile(source, target)
+        target.chmod(0o755)
+    except OSError as error:
+        return f"{target}: {error}"
+    missing = [p for p in tool.get("requires", []) if not account.which(p)]
+    if missing:
+        return f"not installed: {', '.join(missing)} (apt-get install age as root)"
+    done = account.run(str(target), "init")
+    if done.returncode:
+        return f"{target.name} init: {(done.stderr or done.stdout).strip()[-200:]}"
+    if admins:
+        config = account.home / ".config" / "vallis"
+        recipients = config / "admin.recipients"
+        text = "# administrators of the organization (organization.yml secrets.admin)\n" + "\n".join(admins) + "\n"
+        if not recipients.exists() or recipients.read_text(encoding="utf-8") != text:
+            recipients.write_text(text, encoding="utf-8")
+            recipients.chmod(0o644)
+            account.give(recipients)
+    return None
+
+
+LEAK_CHECK = """#!/bin/sh
+# vallis: values of the credentials store never go into a commit (managed by setup.py)
+command -v vallis-secret >/dev/null 2>&1 || exit 0
+exec vallis-secret leaks --git-staged
+"""
+
+
+def install_leak_check(repo):
+    """A pre-commit hook of the workspace's git copy; someone's own pre-commit hook is left alone (returns a note)."""
+    git = repo / ".git"
+    if not git.is_dir():
+        return None
+    hook = git / "hooks" / "pre-commit"
+    if hook.exists() and "vallis: values of the credentials store" not in hook.read_text(encoding="utf-8", errors="replace"):
+        return f"{hook} is someone's own: add `vallis-secret leaks --git-staged` to it"
+    hook.parent.mkdir(exist_ok=True)
+    hook.write_text(LEAK_CHECK, encoding="utf-8")
+    hook.chmod(0o755)
+    return None
+
+
+def secret_rows(account, keys, program="vallis-secret"):
+    """One row per described key: in the store and decryptable, or what to do."""
+    rows = []
+    if not keys:
+        return rows
+    listed = account.run(program, "list", "--json", "--verify") if account.which(program) else None
+    try:
+        present = {r["name"]: r for r in json.loads(listed.stdout)["secrets"]} if listed else {}
+    except (ValueError, KeyError, TypeError):
+        present = {}
+    for key, (level, what) in sorted(keys.items()):
+        tool = {"what": what, "kind": "secret"}
+        row = present.get(key)
+        if row and row.get("state") == "present":
+            rows.append(_row(f"secret:{key}", tool, level, "installed", f"{row.get('source', '')} {row.get('created', '')}".strip()))
+        elif row:
+            rows.append(_row(f"secret:{key}", tool, level, "error", row.get("state", ""),
+                             "the administrator grants it again to this account's key"))
+        elif level == "organization":
+            rows.append(_row(f"secret:{key}", tool, level, "needs_setup", "not in the store",
+                             f"the administrator: vallis-secret grant {key} …; here: vallis-secret receive <file>"))
+        else:
+            rows.append(_row(f"secret:{key}", tool, level, "needs_setup", "not in the store",
+                             f"vallis-secret ask {key} --what \"{what}\""))
+    return rows
+
+
 # --- MCP connections of the description ------------------------------------------------------------------
 
 def _tracked(root, path):
@@ -623,7 +835,7 @@ def _without_block(text):
     return re.sub(rf"\n?{re.escape(TOML_BEGIN)}.*?{re.escape(TOML_END)}\n?", "\n", text, flags=re.S).strip("\n")
 
 
-def write_mcp(root, servers):
+def write_mcp(root, servers, stored=()):
     """Described MCP connections into .mcp.json (Claude Code) and .codex/config.toml (Codex) of the folder.
 
     A file kept in git is not changed: the connection then waits for the file to leave git. Returns errors by server."""
@@ -648,7 +860,9 @@ def write_mcp(root, servers):
                     errors[server] = f".mcp.json already has its own {server}: remove it or rename the description"
                     continue
                 entry = {"type": "http", "url": url}
-                if token:
+                if token and token in stored:
+                    entry["headersHelper"] = f"vallis-secret header {token}"  # read by Claude Code, not the agent
+                elif token:
                     entry["headers"] = {"Authorization": f"Bearer ${{{token}}}"}
                 entries[server] = entry
             claude.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -672,7 +886,7 @@ def write_mcp(root, servers):
     return errors
 
 
-def mcp_state(root, servers, errors):
+def mcp_state(root, servers, errors, stored=()):
     rows = []
     try:
         claude = json.loads((root / ".mcp.json").read_text(encoding="utf-8")).get("mcpServers", {})
@@ -691,9 +905,16 @@ def mcp_state(root, servers, errors):
         elif server not in claude or server not in codex:
             missing = [f for f, have in ((".mcp.json", claude), (".codex/config.toml", codex)) if server not in have]
             rows.append(_row(name, tool, level, "needs_setup", "not in " + ", ".join(missing), RERUN))
+        elif token and token in stored and os.environ.get(token):
+            rows.append(_row(name, tool, level, "installed", f"Claude Code: from the store; Codex: {token}"))
+        elif token and token in stored:
+            rows.append(_row(name, tool, level, "needs_login",
+                             f"Claude Code reads {token} from the store; Codex reads the {token} variable",
+                             f"for Codex start the BB service through: vallis-secret run {token} -- <its command>"))
         elif token:
             rows.append(_row(name, tool, level, "needs_login", f"the key is read from {token}",
-                             f"set {token} in the environment of the BB service (not in the repository)"))
+                             f"put it into the store (vallis-secret ask {token} or grant/receive) and describe it in "
+                             f"secrets.keys, or set {token} in the environment of the BB service (not in the repository)"))
         else:
             rows.append(_row(name, tool, level, "installed"))
     return rows
@@ -731,10 +952,12 @@ def print_report(data, stream=sys.stdout):
         print(f"  ! {line}", file=stream)
 
 
-def states(registry, decisions, account, plugins, bb_home, errors, root=None, servers=None, mcp_errors=None, data_dir=None):
+def states(registry, decisions, account, plugins, bb_home, errors, root=None, servers=None, mcp_errors=None,
+           data_dir=None, keys=None):
     rows = [tool_state(n, t, decisions[n], account, plugins, bb_home, errors, data_dir) for n, t in registry.items()]
     if root is not None and servers:
-        rows += mcp_state(root, servers, mcp_errors or {})
+        rows += mcp_state(root, servers, mcp_errors or {}, set(keys or ()))
+    rows += secret_rows(account, keys or {})
     return rows
 
 
@@ -829,11 +1052,12 @@ def main(argv=None):
             kind = args.kind or (config.get("values", config).get("installKind") or "assistant")
         decisions, more = select(registry, kind, description, employee)
         servers, mcp_problems = mcp_servers(description, employee, name) if name else ({}, [])
+        keys, _, secret_problems = described_secrets(description, employee, name) if name else ({}, [], [])
         account = Account()
         errors = read_errors(root / STATE_FILE)
         rows = states(registry, decisions, account, plugin_list(bb), account.home, errors["tools"],
-                      root, servers, errors["mcp"], bb_data_dir(bb))
-        data = report(kind, rows, problems + more + mcp_problems, name)
+                      root, servers, errors["mcp"], bb_data_dir(bb), keys=keys)
+        data = report(kind, rows, problems + more + mcp_problems + secret_problems, name)
     if args.json:
         json.dump(data, sys.stdout, ensure_ascii=False, indent=2)
         print()

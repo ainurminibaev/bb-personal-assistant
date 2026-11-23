@@ -262,3 +262,94 @@ class States(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Secrets(unittest.TestCase):
+    """The credentials store line (С37): description without values, MCP keys from the store, installation and state."""
+
+    def setUp(self):
+        self.organization = {"secrets": {"admin": ["age1admin"], "keys": {
+            "TASKS_TOKEN": {"what": "трекер", "to": ["alpha"]},
+            "MAIL_KEY": {"what": "почта", "to": "all"},
+            "OTHER_KEY": {"what": "чужой", "to": ["beta"]}}}}
+        self.employee = {"secrets": {"keys": {"SITE_KEY": {"what": "сайт"}}}}
+
+    def test_description_names_keys_without_values(self):
+        keys, admins, problems = tools.described_secrets(self.organization, self.employee, "alpha")
+        self.assertEqual(problems, [])
+        self.assertEqual(admins, ["age1admin"])
+        self.assertEqual(keys, {"TASKS_TOKEN": ("organization", "трекер"), "MAIL_KEY": ("organization", "почта"),
+                                "SITE_KEY": ("employee", "сайт")})
+        bad = {"secrets": {"keys": {"X_KEY": {"what": "x", "value": "abc"}, "lower": {"what": "y"},
+                                    "Y_KEY": {"what": "y"}}, "admin": ["nope"]}}
+        _, _, problems = tools.described_secrets(bad, {"secrets": {"keys": {"Z": {"what": "z", "to": "all"}}}}, "alpha")
+        text = "\n".join(problems)
+        self.assertIn("X_KEY: value not used", text)
+        self.assertIn("keys.lower", text)
+        self.assertIn("Y_KEY: to is missing", text)
+        self.assertIn("secrets.admin", text)
+        self.assertIn("to belongs to organization.yml", text)
+
+    def test_mcp_key_from_the_store(self):
+        root = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        servers = {"tasks": ("organization", "https://tasks.example.com/mcp", "TASKS_TOKEN")}
+        self.assertEqual(tools.write_mcp(root, servers, {"TASKS_TOKEN"}), {})
+        entry = json.loads((root / ".mcp.json").read_text())["mcpServers"]["tasks"]
+        self.assertEqual(entry["headersHelper"], "vallis-secret header TASKS_TOKEN")
+        self.assertNotIn("headers", entry)
+        row = tools.mcp_state(root, servers, {}, {"TASKS_TOKEN"})[0]
+        self.assertEqual(row["state"], "needs_login")
+        self.assertIn("Claude Code reads TASKS_TOKEN from the store", row["reason"])
+
+    def account(self, home, bin_dir):
+        account = FakeAccount(home)
+        env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}",
+                   VALLIS_AGE_KEY=str(home / ".config/vallis/age.key"),
+                   VALLIS_SECRETS_DIR=str(home / ".local/share/vallis/secrets"),
+                   VALLIS_ADMIN_RECIPIENTS=str(home / ".config/vallis/admin.recipients"))
+        account.which = lambda p: __import__("shutil").which(p, path=env["PATH"])
+        account.run = lambda *a, **k: subprocess.run(list(a), env=env, text=True, capture_output=True)
+        return account
+
+    @unittest.skipUnless(__import__("shutil").which("age-keygen"), "age is needed")
+    def test_install_and_state(self):
+        import hashlib, shutil
+        home = Path(tempfile.mkdtemp())
+        bin_dir = home / "bin"
+        fake = home / "fake-sops"
+        fake.write_text(f"#!/bin/sh\n[ \"$1\" = --version ] && echo 'sops 3.13.3' && exit 0\n"
+                        f"exec {sys.executable} {Path(__file__).resolve().parent / 'fake_sops.py'} \"$@\"\n")
+        digest = hashlib.sha256(fake.read_bytes()).hexdigest()
+        tool = dict(REGISTRY["secrets-store"])
+        arch = tools.ARCH[os.uname().machine]
+        tool["download"] = {"sops": {"version": "v3.13.3", "url": fake.as_uri().replace(".", ".", 1) + "?{arch}",
+                                     "sha256": {arch: digest}}}
+        tool["download"]["sops"]["url"] = fake.as_uri()
+        account = self.account(home, bin_dir)
+        with patch.object(tools, "_cli_dir", lambda a: bin_dir):
+            row = tools.tool_state("secrets-store", tool, (True, "platform", ""), account, {}, home, {})
+            self.assertEqual(row["state"], "needs_setup")
+            self.assertIsNone(tools.install_cli(tool, account, ["age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]))
+            self.assertTrue((bin_dir / "vallis-secret").is_file() and (bin_dir / "sops").is_file())
+            self.assertIn("age1qqq", (home / ".config/vallis/admin.recipients").read_text())
+            (home / ".config/vallis/admin.recipients").unlink()
+            row = tools.tool_state("secrets-store", tool, (True, "platform", ""), account, {}, home, {})
+            self.assertEqual((row["state"], row["reason"]), ("installed", "keys in the store: 0"))
+            put = account.run("vallis-secret", "put", "SITE_KEY", "--generate", "--what", "сайт")
+            self.assertEqual(put.returncode, 0, put.stderr)
+            rows = {r["id"]: r["state"] for r in tools.secret_rows(
+                account, {"SITE_KEY": ("employee", "сайт"), "MAIL_KEY": ("organization", "почта")})}
+            self.assertEqual(rows, {"secret:SITE_KEY": "installed", "secret:MAIL_KEY": "needs_setup"})
+            # a wrong pinned sum leaves nothing behind
+            (bin_dir / "sops").unlink()
+            tool["download"]["sops"]["sha256"] = {arch: "0" * 64}
+            self.assertIn("does not match", tools.install_cli(tool, account))
+            self.assertFalse((bin_dir / "sops").exists())
+        shutil.rmtree(home, ignore_errors=True)
+
+    def test_pinned_sops_for_both_architectures(self):
+        sops = REGISTRY["secrets-store"]["download"]["sops"]
+        self.assertEqual(sorted(sops["sha256"]), ["amd64", "arm64"])
+        self.assertTrue(sops["url"].startswith("https://github.com/getsops/sops/releases/download/"))
+        self.assertIn(sops["version"], sops["url"])

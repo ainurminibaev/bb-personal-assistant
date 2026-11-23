@@ -19,7 +19,7 @@ install -d -m 0750 -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR" "$HOME_DIR/worksp
 install -d -m 0700 -o "$USER_NAME" -g "$USER_NAME" "$DATA" "$HOME_DIR/.secrets" "$HOME_DIR/telegram-inbox"
 install -d -m 0755 -o "$USER_NAME" -g "$USER_NAME" "$RUNTIME" "$RUNTIME/tools"
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 python3-yaml bubblewrap curl xz-utils sudo ca-certificates >/dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 python3-yaml bubblewrap curl xz-utils sudo ca-certificates age >/dev/null
 
 if [ ! -x "$RUNTIME/node/bin/node" ]; then
   tmp=$(mktemp -d)

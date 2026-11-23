@@ -16,6 +16,8 @@
 #            или навык, который приходит с плагином (plugin: <id>);
 #   setting — что нужно настроить после установки (переменная или файл в закрытой папке); нет — «нужна настройка».
 #   hook   — сценарий-хук из git-метки, ставится собственной командой --apply в настройки учётки;
+#   cli    — команда из пакета платформы в папку программ учётки (path), с нужными программами (requires —
+#            из пакетов системы, download — закреплённый выпуск со сверкой sha256);
 #   service — служба сервера, одна на сервер вне любого BB: ставит установщик общих служб, здесь — только состояние.
 # Описание формата и уровней — docs/tools.md.
 
@@ -114,6 +116,20 @@ tools:
                   libcups2t64|libcups2, libatspi2.0-0t64|libatspi2.0-0, libxcomposite1, libxdamage1, libxext6,
                   libxfixes3, libxrandr2, libxkbcommon0, libgbm1, libdrm2, libpango-1.0-0, libcairo2,
                   libasound2t64|libasound2, libx11-6, libxcb1, libglib2.0-0t64|libglib2.0-0, libdbus-1-3, libexpat1]
+
+  secrets-store:
+    what: Хранилище доступов — пароли, ключи и входы агента, свои и выданные; значения не печатаются (С37)
+    kind: cli
+    path: deploy/vallis-secret         # из пакета платформы; навык secrets-store приходит с плагином платформы
+    requires: [age, age-keygen]        # пакет age из архива Ubuntu: apt-get install age (server-setup.sh ставит)
+    download:                          # sops — официальный выпуск, закреплённая версия и суммы из его checksums.txt
+      sops:
+        version: v3.13.3
+        url: https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.{arch}
+        sha256:
+          amd64: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+          arm64: 53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77
+    installs: [assistant, employee, agents]
 
   speech:
     what: Расшифровка речи каскадом — выбор исполнителя, русская и татарская модели, Codex; одна служба на сервер

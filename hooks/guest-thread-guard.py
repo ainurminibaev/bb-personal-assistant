@@ -30,6 +30,26 @@ SUBTHREADS_REASON = ("This conversation already has {n} subthreads working at on
 BLOCK_REASON = ("This is a guest conversation: BB only within its own thread, subthreads and schedules; no other conversations. "
                 "Start a subthread with `bb thread spawn --parent-self --prompt …` (its result comes back to this thread). "
                 "Earlier messages: `bb telegram-projects search-history`. Tell the person what is not available here.")
+SECRETS_REASON = ("Credentials are used only through vallis-secret (run, file, list); the store folder and the age key "
+                  "are not read directly, and values are never printed. See the secrets-store skill.")
+GUEST_SECRETS_REASON = ("This is a guest conversation: credentials are not used or shown here, only `vallis-secret list`. "
+                        "Tell the person this is not available here.")
+SECRET_PATHS = re.compile(r"(vallis/age\.key|vallis/secrets(?:[/\s'\"]|$)|vallis/admin\.key|\bSOPS_AGE_KEY(?:_FILE)?\b)")
+SECRET_TOOL = re.compile(r"(?:^|[\s;&|(/`'\"])vallis-secret\s+([a-z-]+)")
+
+
+def secrets_problem(commands, paths, guest):
+    """Everyone: no direct reading of the store or the age key. A guest turn: vallis-secret list only."""
+    for command in commands:
+        uses = SECRET_TOOL.findall(command)
+        if guest and any(u != "list" for u in uses):
+            return GUEST_SECRETS_REASON
+        bare = SECRET_TOOL.sub(" ", command) if uses else command
+        if SECRET_PATHS.search(bare):
+            return SECRETS_REASON
+    if any(SECRET_PATHS.search(p) for p in paths):
+        return SECRETS_REASON
+    return None
 
 
 def data_dir_setting():
@@ -422,6 +442,10 @@ def main():
         guest, data_dir, thread, bb = is_guest(event)
     except Exception:
         guest, data_dir, thread, bb = True, data_dir_setting(), None, None
+    problem = secrets_problem(commands, paths, guest)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
     if not guest:
         return 0
     if assistant_guest_closed(data_dir):

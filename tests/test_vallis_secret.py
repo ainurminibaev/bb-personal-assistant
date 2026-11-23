@@ -200,6 +200,68 @@ class Base:
         row = json.loads(self.ok(self.alpha, "list", "--json").stdout)["secrets"][0]
         self.assertEqual(row["source"], "handed")
 
+    def test_header_for_claude_code(self):
+        self.put_canary(self.alpha, "TASKS_TOKEN")
+        done = self.call(self.alpha, "header", "TASKS_TOKEN")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), {"Authorization": "Bearer " + CANARY})
+
+    def test_leaks_finds_values_and_names_only_the_file(self):
+        self.put_canary(self.alpha)
+        work = self.tmp / "work"
+        work.mkdir()
+        (work / "clean.md").write_text("nothing here\n")
+        (work / "notes.md").write_text("password: " + CANARY + "\n")
+        done = self.call(self.alpha, "leaks", str(work))
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("SITE_PASSWORD found in", done.stdout)
+        self.assertIn("notes.md", done.stdout)
+        self.assertNotIn(CANARY, done.stdout + done.stderr)
+        (work / "notes.md").write_text("password: in the store\n")
+        self.ok(self.alpha, "leaks", str(work))
+
+    def test_leaks_in_a_staged_commit(self):
+        self.put_canary(self.alpha)
+        repo = self.tmp / "repo"
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        (repo / "a.txt").write_text("key=" + CANARY + "\n")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
+        done = subprocess.run([sys.executable, str(TOOL), "leaks", "--git-staged"], cwd=repo, env=self.alpha["env"],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("SITE_PASSWORD found in a.txt", done.stdout)
+        self.assertNotIn(CANARY, done.stdout + done.stderr)
+
+    def test_grant_to_named_and_receive(self):
+        to = self.tmp / "to.recipients"
+        to.write_text("# alpha only\n" + self.alpha["public"] + "\n")
+        out = self.tmp / "TASKS_TOKEN.json"
+        done = self.call(self.admin, "grant", "TASKS_TOKEN", "--what", "трекер", "--to", str(to), "--out", str(out),
+                         "--stdin", stdin=CANARY)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertNotIn(CANARY, out.read_text())
+        self.ok(self.alpha, "receive", str(out))
+        row = json.loads(self.ok(self.alpha, "list", "--json", "--verify").stdout)["secrets"][0]
+        self.assertEqual((row["name"], row["level"], row["source"], row["state"]),
+                         ("TASKS_TOKEN", "organization", "preset", "present"))
+        seen = self.tmp / "seen"
+        self.ok(self.alpha, "file", "TASKS_TOKEN", str(seen))
+        self.assertEqual(seen.read_text(), CANARY)
+        # not named: cannot take it
+        done = self.call(self.beta, "receive", str(out))
+        self.assertNotEqual(done.returncode, 0)
+        self.assertFalse((self.store(self.beta) / "org" / "TASKS_TOKEN.json").exists())
+        # an own key is not an organization key
+        self.put_canary(self.beta, "OWN_KEY")
+        done = self.call(self.beta, "receive", str(self.store(self.beta) / "own" / "OWN_KEY.json"))
+        self.assertIn("not an organization key", done.stderr)
+
+    def test_list_verify_marks_a_key_that_does_not_open(self):
+        self.put_canary(self.alpha)
+        shutil.copy(self.store(self.alpha) / "own" / "SITE_PASSWORD.json", self.store(self.beta) / "own" / "X_KEY.json")
+        row = json.loads(self.ok(self.beta, "list", "--json", "--verify").stdout)["secrets"][0]
+        self.assertEqual(row["state"], "cannot decrypt")
+
 
 class WithFakeSops(Base, unittest.TestCase):
     sops = None
