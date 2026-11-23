@@ -63,7 +63,7 @@ starts subthreads the same way; they stay within its own reach.
 
 ## Voice messages
 
-A voice message longer than the breakdown threshold (`/etc/vallis/voice-breakdown.env`, 180 s by default) gets the
+A voice message longer than the breakdown threshold (`$(vallis-pdf --settings)`, 180 s by default) gets the
 voice-breakdown skill: a scheme «Как я понял, что хочет <имя>» as a picture and a PDF with the details, then act on it.
 A shorter one gets it only when someone who may give you tasks asks for it (in the voice message itself or right
 after). Transcribe audio files yourself with `voice-to-text <file>` (the server's speech service).

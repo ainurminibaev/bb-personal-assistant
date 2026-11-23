@@ -6,6 +6,7 @@
                                                              a picture of an HTML card (the voice scheme) through the
                                                              installed Chrome, offline, only this file
     vallis-pdf --template                                    print the path of the scheme template
+    vallis-pdf --settings                                    print the path of the voice breakdown settings
     vallis-pdf --check                                       which parts really start: {"PDF", "чтение PDF", "схема"}
 
 The installer puts pandoc, WeasyPrint (with Pillow), poppler-utils, fonts and the libraries the system lacks next to
@@ -179,6 +180,9 @@ def check():
 
 
 def main(argv):
+    if argv == ["--settings"]:
+        print(os.path.join(HERE, "voice-breakdown.env"))
+        return 0
     if argv == ["--check"]:
         return check()
     if argv == ["--template"]:

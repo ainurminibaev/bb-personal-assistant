@@ -7,9 +7,12 @@
 #                lacks: Ubuntu packages downloaded (apt-get download) and unpacked here                  → lib/, fonts/
 #   schema picture: the browser of the BB browser tool (tools.yml «browser»), offline.
 # The commands go to /usr/local/bin; `vallis-pdf --check` says which parts really start (tools status reads it).
-#   install.sh [--breakdown-seconds 180] [--breakdown-delivery photo-then-pdf|documents]
-#   install.sh remove
-# The voice breakdown settings (the skill voice-breakdown reads them): /etc/vallis/voice-breakdown.env.
+#   install.sh [--prefix <dir>] [--bin <dir>] [--breakdown-seconds 180] [--breakdown-delivery photo-then-pdf|documents]
+#   install.sh [--prefix <dir>] [--bin <dir>] remove
+# --prefix: the folder of the installation (default /opt/vallis-pdf, one per server); a folder in an account's home
+# installs for that account only, without root (--bin then defaults to <prefix>/bin — put it on that agent's PATH).
+# The voice breakdown settings (the skill voice-breakdown reads them): <prefix>/voice-breakdown.env, its path from
+# `vallis-pdf --settings`.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd); opt=/opt/vallis-pdf; seconds=180; delivery=photo-then-pdf
 bin=/usr/local/bin; readers=(pdftotext pdfinfo pdftoppm pdfimages)
@@ -17,19 +20,28 @@ PANDOC_VERSION=3.14
 PANDOC_SHA256_amd64=c5f4720cdefb3f7bdc5d07202ef579feef0d1370773c873804dd8fdaa8c4f1b8
 PIP_WHEEL=pip-26.3-py3-none-any.whl
 PIP_SHA256=f3b60b20ffaadd4415ed7957212a38ac63fa4c5fa375bd0f4a797777940fad13
-[ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 77; }
 ours() { [ "$(readlink "$1" 2>/dev/null)" = "$2" ]; }
-if [ "${1:-}" = remove ]; then
-  for r in "${readers[@]}"; do ours "$bin/$r" "$opt/poppler/$r" && rm -f "$bin/$r"; done
-  rm -rf "$opt" "$bin/vallis-pdf"; echo removed; exit 0
-fi
+action=install; bin_set=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    remove) action=remove; shift;;
+    --prefix) opt=${2%/}; shift 2;;
+    --bin) bin=${2%/}; bin_set=1; shift 2;;
     --breakdown-seconds) seconds=$2; shift 2;;
     --breakdown-delivery) delivery=$2; shift 2;;
     *) echo "unknown option $1" >&2; exit 64;;
   esac
 done
+[ "$opt" != /opt/vallis-pdf ] && [ -z "$bin_set" ] && bin=$opt/bin
+case "$opt" in /*) ;; *) echo "--prefix: an absolute path" >&2; exit 64;; esac
+# Root only for the server's shared folders; a prefix and bin in one's own home need none.
+writable() { local d=$1; while [ ! -e "$d" ]; do d=$(dirname "$d"); done; [ -w "$d" ]; }   # nearest existing folder
+{ writable "$opt" && writable "$bin"; } || [ "$(id -u)" = 0 ] \
+  || { echo "run as root (or give --prefix/--bin in a folder you can write)" >&2; exit 77; }
+if [ "$action" = remove ]; then
+  for r in "${readers[@]}"; do ours "$bin/$r" "$opt/poppler/$r" && rm -f "$bin/$r"; done
+  ours "$bin/vallis-pdf" "$opt/vallis-pdf" && rm -f "$bin/vallis-pdf"; rm -rf "$opt"; echo removed; exit 0
+fi
 [[ $seconds =~ ^[0-9]+$ ]] || { echo "seconds: a number" >&2; exit 64; }
 case "$delivery" in photo-then-pdf|documents) ;; *) echo "delivery: photo-then-pdf or documents" >&2; exit 64;; esac
 [ "$(uname -m)" = x86_64 ] || { echo "the pinned builds are for Linux x86-64 only" >&2; exit 1; }
@@ -96,6 +108,7 @@ grep -q '"PDF": true' "$work/check.json" && grep -q '"чтение PDF": true' "
   || fail "put together, but does not start: $(cat "$work/check.json")"
 rm -rf "$opt.old"; [ -d "$opt" ] && mv "$opt" "$opt.old"
 mv "$new" "$opt"; rm -rf "$opt.old"; chmod 755 "$opt"
+install -d -m 755 "$bin"
 ln -sfn "$opt/vallis-pdf" "$bin/vallis-pdf"
 # Reading PDF: our commands unless the server has its own on PATH.
 for r in "${readers[@]}"; do
@@ -104,7 +117,6 @@ for r in "${readers[@]}"; do
     [ -n "$own" ] || ln -sfn "$opt/poppler/$r" "$bin/$r"
   fi
 done
-install -d -m 755 /etc/vallis
-printf '# Voice breakdown (skill voice-breakdown): automatic from this length; delivery photo-then-pdf or documents.\nVOICE_BREAKDOWN_SECONDS=%s\nVOICE_BREAKDOWN_DELIVERY=%s\n' "$seconds" "$delivery" > /etc/vallis/voice-breakdown.env
-chmod 644 /etc/vallis/voice-breakdown.env
+printf '# Voice breakdown (skill voice-breakdown): automatic from this length; delivery photo-then-pdf or documents.\nVOICE_BREAKDOWN_SECONDS=%s\nVOICE_BREAKDOWN_DELIVERY=%s\n' "$seconds" "$delivery" > "$opt/voice-breakdown.env"
+chmod 644 "$opt/voice-breakdown.env"
 echo "vallis-pdf installed in $opt (breakdown from $seconds s, delivery $delivery): $("$opt/vallis-pdf" --check 2>/dev/null)"
