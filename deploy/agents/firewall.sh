@@ -8,6 +8,7 @@
 #   firewall.sh protect <группа systemd>                  защищённый BB: все его сокеты, включая случайные порты
 #                                                          (например system.slice/bb-host-daemon-….service)
 #   firewall.sh remove-agent <учётка>                     убрать учётку и применить
+#   firewall.sh remove-port <N>                           закрыть агентам разрешённый порт и применить
 #   firewall.sh apply | remove | status
 # Состояние: /etc/bb-agents/firewall.conf (строки «agent <учётка>», «port <N>», «untrusted <учётка>», «protect <группа>»).
 # Защищённый BB: новое соединение учётки агента или BB агентов (не ответ) помечается на выходе и отклоняется на входе, если сокет
@@ -108,6 +109,9 @@ case "${1:-status}" in
     grep -qx "protect $g" "$conf" || echo "protect $g" >> "$conf"; apply;;
   remove-agent)
     need_root; agent=${2:?учётка}; [ -f "$conf" ] && sed -i "/^agent $agent\$/d" "$conf"; apply;;
+  remove-port)
+    need_root; port=${2:?порт}; [[ $port =~ ^[0-9]+$ ]] || { echo "порт — число" >&2; exit 64; }
+    [ -f "$conf" ] && sed -i "/^port $port\$/d" "$conf"; apply;;
   apply) apply;;
   remove)
     need_root; nft list table inet bb_agents >/dev/null 2>&1 && nft delete table inet bb_agents || true;;
@@ -116,5 +120,5 @@ case "${1:-status}" in
     need_root; "$self" remove; systemctl disable bb-agents-firewall.service >/dev/null 2>&1 || true
     rm -f "$unit" "$rules"; systemctl daemon-reload;;
   status) nft list table inet bb_agents 2>/dev/null || echo "таблица bb_agents не загружена";;
-  *) echo "add-agent | remove-agent | apply | remove | uninstall | status" >&2; exit 64;;
+  *) echo "add-agent | remove-agent | remove-port | apply | remove | uninstall | status" >&2; exit 64;;
 esac
