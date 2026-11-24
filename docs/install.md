@@ -110,6 +110,11 @@ agent's PATH. If the app is in testing mode, the agent's address must be in its 
 - Codex login: its own login is the default; a copy of another employee's `auth.json` works only on the owner's word
   and both must be checked after the next token refresh (about 8 days after the last one).
 - Mail: an inbox of its own (AgentMail); the key goes into its credentials store.
+- Quick decisions: `sudo deploy/decide/install.sh add-consumer <user>` — the account joins the ones allowed to use
+  the service's OpenAI key (the others stay; a copy of decide.env is kept; the service restarts). Without it
+  `vallis-decide` answers «not allowed for this account» and the bridge silently picks no reactions and topic icons.
+- The bridge's list of the organization's bots (`agentBots`): the other employees' bots, so their messages in groups
+  are accepted.
 
 ## A confirmation code for the owner
 

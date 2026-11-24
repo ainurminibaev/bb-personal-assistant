@@ -4,6 +4,9 @@
 #   install.sh [--organization <organization.yml>] [--providers openai-decisions,claude,codex]
 #              [--openai-consumers <account,...>] [--openai-key-from <file|->]
 #   install.sh status | remove [--purge]
+#   install.sh add-consumer <account>   — one more account may use the OpenAI key (a new employee on this server);
+#                                         the list keeps the others, the service restarts. Without it vallis-decide
+#                                         answers «not allowed for this account» and the bridge picks no reactions.
 #
 # Providers come from the organization file (section decide: {providers: [...]}), the option overrides it; default
 # openai-decisions. Each provider needs a credential of this service itself, never anyone else's:
@@ -18,7 +21,7 @@ export LC_ALL=C.UTF-8
 here=$(cd "$(dirname "$0")" && pwd)
 opt=/opt/bb-decide; home=/var/lib/bb-decide; conf_dir=/etc/bb-decide; units=/etc/systemd/system; user=bb-decide
 providers=""; organization=""; action=install; purge=0; consumers=""; key_from=""; sock=/run/bb-decide.sock
-case "${1:-}" in status|remove) action=$1; shift;; esac
+case "${1:-}" in status|remove) action=$1; shift;; add-consumer) action=add; consumers=${2:-}; shift; [ $# -gt 0 ] && shift;; esac
 while [ $# -gt 0 ]; do
   case "$1" in
     --organization) organization=$2; shift 2;;
@@ -38,6 +41,21 @@ if [ "$action" = remove ]; then
   rm -rf "$opt"; [ "$purge" = 1 ] && { rm -rf "$home" "$conf_dir"; userdel "$user" 2>/dev/null; }
   echo "decide service removed"; exit 0
 fi
+
+# The accounts already allowed stay: a new install or a new employee adds to the list, never replaces it.
+old_consumers=$(sed -n 's/^DECIDE_OPENAI_CONSUMERS=//p' "$conf_dir/decide.env" 2>/dev/null)
+merge() { printf '%s\n' ${1//,/ } ${2//,/ } | awk 'NF && !seen[$0]++' | paste -sd, -; }
+if [ "$action" = add ]; then
+  [ -n "$consumers" ] || { echo "usage: install.sh add-consumer <account>" >&2; exit 64; }
+  id "$consumers" >/dev/null 2>&1 || { echo "no account $consumers" >&2; exit 64; }
+  [ -f "$conf_dir/decide.env" ] || { echo "decide service is not installed: run install.sh first" >&2; exit 69; }
+  all=$(merge "$old_consumers" "$consumers")
+  cp -p "$conf_dir/decide.env" "$conf_dir/decide.env.bak-$(date -u +%Y%m%d%H%M%S)"
+  sed -i "s/^DECIDE_OPENAI_CONSUMERS=.*/DECIDE_OPENAI_CONSUMERS=$all/" "$conf_dir/decide.env"
+  systemctl restart bb-decide.service 2>/dev/null || true
+  echo "[decide] OpenAI key allowed for: $all"; exit 0
+fi
+consumers=$(merge "$old_consumers" "$consumers")
 
 if [ -n "$organization" ] && [ -z "$providers" ]; then
   providers=$(python3 - "$organization" <<'EOF'

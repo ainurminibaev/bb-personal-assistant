@@ -224,3 +224,24 @@ class DecideTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Consumers(unittest.TestCase):
+    """A new employee is added to the accounts allowed to use the OpenAI key; the others stay."""
+
+    def merge(self, old, new):
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "deploy", "decide", "install.sh")
+        line = next(l for l in open(script, encoding="utf-8") if l.startswith("merge()"))
+        return subprocess.run(["bash", "-c", line + f'\nmerge "{old}" "{new}"'], capture_output=True, text=True).stdout.strip()
+
+    def test_added_without_losing_the_others(self):
+        self.assertEqual(self.merge("botsman", "kowalski"), "botsman,kowalski")
+        self.assertEqual(self.merge("botsman,kowalski", "kowalski"), "botsman,kowalski")
+        self.assertEqual(self.merge("", "kowalski"), "kowalski")
+        self.assertEqual(self.merge("botsman", ""), "botsman")
+
+    def test_add_consumer_is_a_command(self):
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "deploy", "decide", "install.sh")
+        text = open(script, encoding="utf-8").read()
+        self.assertIn("add-consumer)", text)
+        self.assertIn("systemctl restart bb-decide.service", text)
