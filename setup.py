@@ -291,7 +291,12 @@ def main():
     if note:
         secret_problems.append(note)
     servers, mcp_problems = tools.mcp_servers(description, employee, args.employee) if clone is not None else ({}, [])
-    mcp_errors = tools.write_mcp(root, servers, set(keys)) if clone is not None else {}
+    processes = tools.mcp_processes(REGISTRY, decisions, account)
+    mcp_errors = (tools.write_mcp(root, {**servers, **processes}, set(keys))
+                  if clone is not None or processes else {})
+    for name in processes:
+        if name in mcp_errors:
+            tool_errors[name] = mcp_errors.pop(name)
     tools.save_errors(root / tools.STATE_FILE, tool_errors, mcp_errors)
     if clone is not None:
         facts = organization.collect_facts(bb, project["id"], args.machine)
@@ -304,8 +309,11 @@ def main():
             print("  Not compared by this version: " + ", ".join(organization.not_compared(employee)) + ".")
     rows = tools.states(REGISTRY, decisions, account, {p["id"]: p for p in bb("plugin", "list")["plugins"]},
                         account.home, tool_errors, root, servers, mcp_errors, data_dir, keys=keys)
-    report = tools.report(args.kind, rows, tool_problems + mcp_problems + secret_problems, args.employee,
-                          accesses=tools.access_rows(account))
+    spaces, space_problems = (tools.described_spaces(description, employee, args.employee)
+                              if clone is not None else ({}, []))
+    space_list = tools.space_rows(spaces, rows, clone, description, employee)
+    report = tools.report(args.kind, rows, tool_problems + mcp_problems + secret_problems + space_problems,
+                          args.employee, spaces=space_list, accesses=tools.access_rows(account))
     tools.save_report(root, report)
     tools.print_report(report)
     print("The same list later: python3 setup.py tools status [--json] --workspace " + str(root))

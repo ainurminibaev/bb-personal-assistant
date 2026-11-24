@@ -42,6 +42,11 @@ tools:
 - `cli` — a command from the platform package (`path`) into the account's program folder (on the PATH of its BB),
   with the programs it needs: `requires` from system packages, `download` — a pinned release checked by `sha256`
   per architecture. The credentials store (`secrets-store`: `vallis-secret`, sops, age) is such a line.
+- `mcp` — an MCP process (`command`) written into `.mcp.json` and `.codex/config.toml` of the installation next to the
+  described MCP connections; its keys (`secrets`) come from the credentials store when it starts
+  (`vallis-secret run … --`), its login lives in a closed folder (`login.dir`) the MCP keeps itself. States:
+  `needs_setup` (a program or a key is missing), `needs_login` (no login yet), `installed`. Google Drive, Docs and
+  Sheets (`google-workspace`, off by default; skill `google-workspace` for the login) is such a line.
 - `setting` — what has to be configured after installation (`env` variable or `file` in the installation's closed
   folder); without it the line is `needs_setup`.
 
@@ -86,6 +91,31 @@ An extra connection on the owner's request is a line in `employee.yml` and a new
 writes the employee's MCP servers into `.mcp.json` (Claude Code) and `.codex/config.toml` (Codex) of the employee folder;
 a file kept in git is not changed and the line says so.
 
+## Spaces
+
+Tools are what the agent uses; spaces are where it works (tracker, knowledge, drive, chats, repositories, mail).
+A space only refers to what is described elsewhere — no addresses, keys or values here:
+
+```yaml
+# organization.yml
+spaces:
+  tasks:
+    what: задачник команды
+    kind: tracker                       # tracker | knowledge | drive | chats | repositories | mail | other
+    via: mcp:tracker                    # mcp:<server> | tool:<tools.yml line> | connections:<name> | folder:<path> | groups
+    to: all                             # or [employees]
+    access: write                       # read | write: what was agreed; the check never writes to the system
+    map: shared/knowledge/where.md#задачник   # where "what lies where" is described
+# employees/<name>/employee.yml
+spaces:
+  exclude: [drive]                      # an organization space this employee does not get
+  chats: {what: чаты и группы, kind: chats, via: groups, access: write}
+```
+
+A space is `ready` when what `via` refers to is installed (groups: the employee has groups) and its `map` file is
+there; otherwise it takes the state of that line (`needs_login`, `needs_setup`, `error`) or `needs_setup` with
+the reason. An excluded space is not listed. `what` and `reason` are words without paths or addresses.
+
 ## State
 
 ```
@@ -113,6 +143,9 @@ python3 tools.py status [--json] --kind agents --account <agent> \
 
 `"accesses"` lists the agent's own credentials from its store (`vallis-secret list`): `name`, `what`, `level`,
 `source`, `state` — never values. It is what the agent answers «what accesses do you have» with (С43).
+
+`"spaces"` lists the spaces of the installation (`id`, `what`, `kind`, `level`, `via`, `access`, `map`, `state`,
+`reason`, `action`); empty for an installation without a description.
 
 Every line of `tools.yml` is listed, then every MCP connection of the description, then every described key
 (`secret:<NAME>`: `installed` — in the store and decryptable, `needs_setup` — not there yet, `error` — does not open). `state` is one of:

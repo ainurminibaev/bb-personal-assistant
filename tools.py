@@ -23,13 +23,19 @@ REGISTRY = Path(__file__).resolve().with_name("tools.yml")
 KINDS = ("assistant", "employee", "agents")
 STATES = ("installed", "excluded", "needs_login", "needs_setup", "error")
 FORMAT = 1
-TOOL_KINDS = ("plugin", "npm", "skill", "hook", "service", "cli")
+TOOL_KINDS = ("plugin", "npm", "skill", "hook", "service", "cli", "mcp")
 SKILL_DIRS = (Path(".agents") / "skills", Path(".claude") / "skills")
 SOURCE_MARK = ".vallis-source"
 ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
 MCP_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 MCP_FIELDS = {"url", "token_env", "employees", "what"}
 SECRET_FIELDS = {"what", "to"}
+SPACE_KINDS = ("tracker", "knowledge", "drive", "chats", "repositories", "mail", "other")
+SPACE_FIELDS = {"what", "kind", "via", "to", "access", "map"}
+SPACE_VIA = re.compile(r"(mcp|tool|connections):[a-z0-9][a-z0-9_-]*|folder:[\w./-]+|groups")
+SPACE_STATES = {"installed": ("ready", ""), "needs_login": ("needs_login", "нужен вход"),
+                "needs_setup": ("needs_setup", "нужна настройка"), "error": ("error", "ошибка подключения"),
+                "excluded": ("needs_setup", "инструмент выключен")}
 ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 PACKAGE = Path(__file__).resolve().parent
 TOML_BEGIN = "# vallis: MCP from the organization description (managed by setup.py)"
@@ -191,6 +197,97 @@ def described_secrets(organization, employee, name):
                 problems.append(f"employee.yml secrets.keys.{key}: to belongs to organization.yml")
             keys[key] = (level, str(entry["what"]).strip())
     return keys, admins, problems
+
+
+def described_spaces(organization, employee, name):
+    """Where the agent works (С53): ({id: entry}, problems). An entry only refers to what is described elsewhere.
+
+    organization.yml: spaces: {ID: {what, kind, via, to: all | [employees], access: read | write, map}}
+    employee.yml: spaces: {exclude: [ID], ID: {what, kind, via, access, map}}"""
+    spaces, problems = {}, []
+    excluded = []
+    for label, level, section in (("organization.yml", "organization", (organization or {}).get("spaces")),
+                                  ("employee.yml", "employee", (employee or {}).get("spaces"))):
+        if section is None:
+            continue
+        if not isinstance(section, dict):
+            problems.append(f"{label} spaces: one entry per space")
+            continue
+        for key, entry in section.items():
+            key = str(key)
+            if key == "exclude" and level == "employee":
+                excluded += _names(section, "exclude")
+                continue
+            if not MCP_NAME.fullmatch(key) or not isinstance(entry, dict):
+                problems.append(f"{label} spaces.{key}: a lowercase name with what, kind and via")
+                continue
+            unknown = sorted(set(entry) - SPACE_FIELDS)
+            if unknown:
+                problems.append(f"{label} spaces.{key}: {', '.join(unknown)} not used")
+            what, kind, via = str(entry.get("what") or "").strip(), entry.get("kind"), str(entry.get("via") or "")
+            access = entry.get("access", "read")
+            if not what or kind not in SPACE_KINDS or not SPACE_VIA.fullmatch(via) or access not in ("read", "write"):
+                problems.append(f"{label} spaces.{key}: what, kind ({'|'.join(SPACE_KINDS)}), via "
+                                "(mcp:, tool:, connections:, folder: or groups) and access (read | write)")
+                continue
+            if ".." in via or ".." in str(entry.get("map") or ""):
+                problems.append(f"{label} spaces.{key}: paths stay inside the organization repository")
+                continue
+            if level == "organization":
+                who = entry.get("to")
+                if who is None:
+                    problems.append(f"organization.yml spaces.{key}: to is missing (a list of names or all)")
+                    continue
+                if who != "all" and name not in [str(w) for w in (who if isinstance(who, list) else [who])]:
+                    continue
+            elif "to" in entry:
+                problems.append(f"employee.yml spaces.{key}: to belongs to organization.yml")
+            spaces[key] = {"level": level, "what": what, "kind": kind, "via": via, "access": access,
+                           "map": str(entry["map"]) if entry.get("map") else ""}
+    for key in excluded:
+        if key not in spaces:
+            problems.append(f"employee.yml spaces.exclude: {key} is not a space of this employee")
+        spaces.pop(key, None)
+    return spaces, problems
+
+
+def space_rows(spaces, tool_rows, clone=None, organization=None, employee=None):
+    """One row per space: its state comes from what via refers to, and from the map file being there.
+
+    what and reason are words without paths or addresses: a guest's view shows them."""
+    tools_by_id = {r["id"]: r for r in tool_rows}
+    rows = []
+    for key, space in spaces.items():
+        via, state, reason, action = space["via"], "ready", "", ""
+        kind, _, target = via.partition(":")
+        if kind in ("mcp", "tool"):
+            row = tools_by_id.get(f"mcp:{target}" if kind == "mcp" else target)
+            if row is None:
+                state, reason = "needs_setup", "подключение не описано"
+                action = f"describe {via} in organization.yml or employee.yml"
+            else:
+                state, reason = SPACE_STATES.get(row["state"], ("error", "ошибка подключения"))
+                action = row.get("action", "")
+        elif kind == "connections":
+            if not ((organization or {}).get("connections") or {}).get(target):
+                state, reason, action = "needs_setup", "подключение не описано", f"add connections.{target}"
+        elif kind == "folder":
+            if clone is None or not (clone / target).is_dir():
+                state, reason, action = "needs_setup", "папки нет", f"create {target} in the organization repository"
+        else:  # groups: the employee's groups and the bridge's settings for each
+            groups = (employee or {}).get("groups") or []
+            if groups:
+                reason = f"групп: {len(groups)}"
+            else:
+                state, reason, action = "needs_setup", "групп нет", "list the groups in employee.yml groups"
+        if state == "ready" and space["map"]:
+            path = space["map"].split("#", 1)[0]
+            if clone is None or not (clone / path).is_file():
+                state, reason, action = "needs_setup", "нет описания, что где лежит", f"write {path}"
+        rows.append({"id": key, "what": space["what"], "kind": space["kind"], "level": space["level"],
+                     "via": via, "access": space["access"], "map": space["map"],
+                     "state": state, "reason": reason, "action": action})
+    return rows
 
 
 # --- running commands as the agent's account -------------------------------------------------------------
@@ -427,6 +524,82 @@ def _cli_state(name, tool, level, account):
     return _row(name, tool, level, "installed", f"keys in the store: {count}")
 
 
+def mcp_processes(registry, decisions, account):
+    """MCP processes of the selected tools.yml lines: {name: {"level", "command", "env"}}.
+
+    Keys of the line come from the credentials store at start (vallis-secret run), never from the settings files."""
+    out = {}
+    for name, tool in registry.items():
+        if tool["kind"] != "mcp" or not decisions.get(name, (False,))[0]:
+            continue
+        command = [str(c) for c in tool["command"]]
+        if tool.get("secrets"):
+            command = ["vallis-secret", "run", *tool["secrets"], "--", *command]
+        env = {k: str(account.home / v[2:]) if str(v).startswith("~/") else str(v)
+               for k, v in (tool.get("env") or {}).items()}
+        out[name] = {"level": decisions[name][1], "command": command, "env": env}
+    return out
+
+
+def _login_dir(tool, account):
+    folder = (tool.get("login") or {}).get("dir")
+    return account.home / folder[2:] if folder and folder.startswith("~/") else (Path(folder) if folder else None)
+
+
+def prepare_mcp(tool, account):
+    """The closed folder for the line's login (the MCP writes and refreshes the login there itself)."""
+    folder = _login_dir(tool, account)
+    if folder:
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        folder.chmod(0o700)
+        account.give(folder)
+    missing = [p for p in tool.get("requires", []) if not account.which(p)]
+    return f"not installed: {', '.join(missing)}" if missing else None
+
+
+def _mcp_tool_state(name, tool, level, account):
+    missing = [p for p in tool.get("requires", []) if not account.which(p)]
+    if missing:
+        return _row(name, tool, level, "needs_setup", f"not installed: {', '.join(missing)}", RERUN)
+    stored = {}
+    if tool.get("secrets") or (tool.get("login") or {}).get("backup"):
+        listed = account.run("vallis-secret", "list", "--json") if account.which("vallis-secret") else None
+        try:
+            stored = {r["name"]: r for r in json.loads(listed.stdout)["secrets"]} if listed else {}
+        except (ValueError, KeyError, TypeError):
+            stored = {}
+    lacking = [k for k in tool.get("secrets", []) if k not in stored]
+    if lacking:
+        return _row(name, tool, level, "needs_setup", "no key of the application in the credentials store",
+                    "the administrator grants " + ", ".join(lacking) + " (vallis-secret grant / receive)")
+    login = tool.get("login") or {}
+    what = login.get("what", "a login")
+    folder = _login_dir(tool, account)
+    if folder and not (folder.is_dir() and any(p.is_file() for p in folder.iterdir())):
+        return _row(name, tool, level, "needs_login", f"no login: {what}",
+                    "log in with the owner's yes (google-workspace skill)")
+    days = login.get("max_age_days")
+    if days:
+        import datetime
+        copy = stored.get(login.get("backup") or "")
+        try:
+            since = datetime.date.fromisoformat(str((copy or {}).get("updated") or "")[:10])
+        except ValueError:
+            since = None
+        if since is None:
+            return _row(name, tool, level, "installed",
+                        f"the login lasts {days} days and its date is unknown: keep its copy in the store")
+        age = (datetime.date.today() - since).days
+        if age >= days:
+            return _row(name, tool, level, "needs_login",
+                        f"the login has expired: the application is in testing mode and a login lasts {days} days",
+                        "log in again with the owner's yes (google-workspace skill)")
+        if age >= days - 1:
+            return _row(name, tool, level, "installed", "the login expires tomorrow: ask the owner to log in again")
+        return _row(name, tool, level, "installed", f"the login lasts {days - age} more day(s)")
+    return _row(name, tool, level, "installed")
+
+
 def _hook_state(name, tool, level, account):
     script = Path(tool["path"]).name
     settings = account.home / ".claude" / "settings.json"
@@ -629,6 +802,8 @@ def tool_state(name, tool, decision, account, plugins, bb_home, errors, data_dir
             row = _skill_state(name, tool, level, account, plugins)
         elif tool["kind"] == "cli":
             row = _cli_state(name, tool, level, account)
+        elif tool["kind"] == "mcp":
+            row = _mcp_tool_state(name, tool, level, account)
         else:
             row = _hook_state(name, tool, level, account)
     except Exception as error:  # a broken check is a state, not a crash of the whole list
@@ -694,6 +869,8 @@ def install_tool(name, tool, account, plugins, bb, cache, source=None, admins=()
         return None
     if kind == "cli":
         return install_cli(tool, account, admins)
+    if kind == "mcp":
+        return prepare_mcp(tool, account)  # the settings files are written with the described MCP (write_mcp)
     if kind == "skill":
         if tool.get("plugin") or tool.get("present_with_plugin") in plugins:
             return None
@@ -881,8 +1058,17 @@ def _tracked(root, path):
 
 def _toml_block(servers):
     lines = [TOML_BEGIN]
-    for server, (_, url, token) in sorted(servers.items()):
-        lines += [f"[mcp_servers.{json.dumps(server)}]", f"url = {json.dumps(url)}"]
+    for server, spec in sorted(servers.items()):
+        lines.append(f"[mcp_servers.{json.dumps(server)}]")
+        if isinstance(spec, dict):  # an MCP process of a tools.yml line
+            lines += [f"command = {json.dumps(spec['command'][0])}", f"args = {json.dumps(spec['command'][1:])}",
+                      "startup_timeout_sec = 120", "tool_timeout_sec = 180"]
+            if spec.get("env"):
+                lines.append(f"[mcp_servers.{json.dumps(server)}.env]")
+                lines += [f"{json.dumps(k)} = {json.dumps(v)}" for k, v in sorted(spec["env"].items())]
+            continue
+        _, url, token = spec
+        lines.append(f"url = {json.dumps(url)}")
         if token:
             lines.append(f"bearer_token_env_var = {json.dumps(token)}")
     return "\n".join(lines + [TOML_END]) + "\n"
@@ -912,10 +1098,15 @@ def write_mcp(root, servers, stored=()):
             entries = data.setdefault("mcpServers", {})
             for server in managed - set(servers):
                 entries.pop(server, None)
-            for server, (_, url, token) in servers.items():
+            for server, spec in servers.items():
                 if server in entries and server not in managed:
                     errors[server] = f".mcp.json already has its own {server}: remove it or rename the description"
                     continue
+                if isinstance(spec, dict):
+                    entries[server] = {"type": "stdio", "command": spec["command"][0], "args": spec["command"][1:],
+                                       "env": dict(spec.get("env") or {})}
+                    continue
+                _, url, token = spec
                 entry = {"type": "http", "url": url}
                 if token and token in stored:
                     entry["headersHelper"] = f"vallis-secret header {token}"  # read by Claude Code, not the agent
@@ -954,7 +1145,10 @@ def mcp_state(root, servers, errors, stored=()):
         codex = tomllib.loads((root / ".codex" / "config.toml").read_text(encoding="utf-8")).get("mcp_servers", {})
     except (OSError, ValueError):
         codex = {}
-    for server, (level, url, token) in sorted(servers.items()):
+    for server, spec in sorted(servers.items()):
+        if isinstance(spec, dict):
+            continue  # an MCP process of a tools.yml line has the line's own row
+        level, url, token = spec
         tool = {"what": url, "kind": "mcp"}
         name = f"mcp:{server}"
         if server in errors:
@@ -994,8 +1188,9 @@ def save_errors(path, tools_errors, mcp_errors=None):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def report(kind, rows, problems, who=None, accesses=None):
-    return {"format": FORMAT, "kind": kind, "for": who, "tools": rows, "accesses": accesses or [], "problems": problems}
+def report(kind, rows, problems, who=None, spaces=None, accesses=None):
+    return {"format": FORMAT, "kind": kind, "for": who, "tools": rows, "spaces": spaces or [],
+            "accesses": accesses or [], "problems": problems}
 
 
 REPORT_FILE = STATE_FILE.parent / "tools-report.json"
@@ -1019,6 +1214,13 @@ def print_report(data, stream=sys.stdout):
         text = f"  {row['id']:<{width}}  {row['state']:<11}  {row['level']}"
         details = "; ".join(x for x in (row["reason"], f"to do: {row['action']}" if row["action"] else "") if x)
         print(text + (f"  — {details}" if details else ""), file=stream)
+    if data.get("spaces"):
+        width = max(len(r["id"]) for r in data["spaces"])
+        print("Spaces:", file=stream)
+        for row in data["spaces"]:
+            text = f"  {row['id']:<{width}}  {row['state']:<11}  {row['access']:<5}  {row['what']}"
+            details = "; ".join(x for x in (row["reason"], f"to do: {row['action']}" if row["action"] else "") if x)
+            print(text + (f"  — {details}" if details else ""), file=stream)
     if data.get("accesses"):
         print("Accesses (names and purpose, no values):", file=stream)
         for row in data["accesses"]:
@@ -1132,8 +1334,10 @@ def main(argv=None):
         errors = read_errors(root / STATE_FILE)
         rows = states(registry, decisions, account, plugin_list(bb), account.home, errors["tools"],
                       root, servers, errors["mcp"], bb_data_dir(bb), keys=keys)
-        data = report(kind, rows, problems + more + mcp_problems + secret_problems, name,
-                      accesses=access_rows(account))
+        spaces, space_problems = described_spaces(description, employee, name) if name else ({}, [])
+        space_list = space_rows(spaces, rows, root.parent.parent if name else None, description, employee)
+        data = report(kind, rows, problems + more + mcp_problems + secret_problems + space_problems, name,
+                      spaces=space_list, accesses=access_rows(account))
         save_report(root, data)
     if args.json:
         json.dump(data, sys.stdout, ensure_ascii=False, indent=2)

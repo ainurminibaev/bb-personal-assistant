@@ -18,6 +18,8 @@
 #   hook   — сценарий-хук из git-метки, ставится собственной командой --apply в настройки учётки;
 #   cli    — команда из пакета платформы в папку программ учётки (path), с нужными программами (requires —
 #            из пакетов системы, download — закреплённый выпуск со сверкой sha256);
+#   mcp    — MCP-процесс (command) в .mcp.json и .codex/config.toml установки; ключи (secrets) — из хранилища
+#            доступов при запуске (vallis-secret run), вход (login.dir) — закрытая папка, которую ведёт сам MCP;
 #   service — служба сервера, одна на сервер вне любого BB: ставит установщик общих служб, здесь — только состояние.
 # Описание формата и уровней — docs/tools.md.
 
@@ -138,6 +140,25 @@ tools:
           amd64: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
           arm64: 53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77
     installs: [assistant, employee, agents]
+
+  google-workspace:
+    what: Google Drive, документы и таблицы своего Google-аккаунта агента (С51)
+    kind: mcp
+    command: [uvx, --python, "3.12", workspace-mcp==2.5.0, --single-user,
+              --tools, drive, docs, sheets, --tool-tier, extended]
+    requires: [uvx, vallis-secret]
+    secrets: [GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET]   # приложение Google организации, из хранилища
+    env:
+      WORKSPACE_MCP_CREDENTIALS_DIR: ~/.secrets/google-workspace
+      WORKSPACE_MCP_PORT: "8000"               # постоянный порт входа: его открывает проброс BB на время входа
+      WORKSPACE_MCP_PORT_FALLBACK_COUNT: "0"
+    login:
+      what: свой Google-аккаунт агента (навык google-workspace, с «да» владельца)
+      dir: ~/.secrets/google-workspace
+      backup: GOOGLE_WORKSPACE_LOGIN    # копия входа в хранилище; её дата — дата входа
+      max_age_days: 7                   # приложение Google в режиме Testing: вход живёт 7 дней (убрать после публикации)
+    default: false
+    installs: [assistant, employee]
 
   speech:
     what: Расшифровка речи каскадом — выбор исполнителя, русская и татарская модели, Codex; одна служба на сервер

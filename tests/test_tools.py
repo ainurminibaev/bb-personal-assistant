@@ -445,3 +445,140 @@ class PinnedArchive(unittest.TestCase):
                 spec["sha256"][arch] = "0" * 64
                 self.assertIn("sha256", tools.install_cli(tool, Acc()))
                 self.assertFalse((bin_dir / "age").exists())
+class Spaces(unittest.TestCase):
+    """Where the agent works (С53): spaces refer to tools, MCP, connections, folders and groups; one row each."""
+
+    def setUp(self):
+        self.clone = Path(tempfile.mkdtemp())
+        (self.clone / "shared" / "knowledge").mkdir(parents=True)
+        (self.clone / "shared" / "knowledge" / "where.md").write_text("# Где что лежит\n")
+        self.organization = {"connections": {"github": {"org": "example"}}, "spaces": {
+            "tasks": {"what": "задачник команды", "kind": "tracker", "via": "mcp:tracker", "to": "all",
+                      "access": "write", "map": "shared/knowledge/where.md#задачник"},
+            "knowledge": {"what": "знания команды", "kind": "knowledge", "via": "folder:shared/knowledge", "to": "all",
+                          "access": "write"},
+            "drive": {"what": "диск организации", "kind": "drive", "via": "tool:google-workspace", "to": ["alpha"],
+                      "access": "read", "map": "shared/knowledge/drive.md"},
+            "repos": {"what": "репозитории", "kind": "repositories", "via": "connections:github", "to": "all"},
+            "other": {"what": "чужое", "kind": "other", "via": "groups", "to": ["beta"]}}}
+        self.employee = {"groups": [-100, -200], "spaces": {
+            "exclude": ["repos"],
+            "chats": {"what": "чаты и группы", "kind": "chats", "via": "groups", "access": "write"}}}
+
+    def test_description(self):
+        spaces, problems = tools.described_spaces(self.organization, self.employee, "alpha")
+        self.assertEqual(problems, [])
+        self.assertEqual(sorted(spaces), ["chats", "drive", "knowledge", "tasks"])
+        self.assertEqual(spaces["drive"]["access"], "read")
+        self.assertEqual(spaces["chats"]["level"], "employee")
+        bad = {"spaces": {"x": {"what": "x", "kind": "nope", "via": "groups", "to": "all"},
+                          "y": {"what": "y", "kind": "drive", "via": "https://drive", "to": "all"},
+                          "z": {"what": "z", "kind": "drive", "via": "folder:../etc", "to": "all"},
+                          "w": {"what": "w", "kind": "drive", "via": "groups"},
+                          "v": {"what": "v", "kind": "drive", "via": "groups", "to": "all", "token": "abc"}}}
+        spaces, problems = tools.described_spaces(bad, {"spaces": {"exclude": ["none"]}}, "alpha")
+        text = "\n".join(problems)
+        for part in ("spaces.x:", "spaces.y:", "inside the organization repository", "w: to is missing",
+                     "v: token not used", "none is not a space"):
+            self.assertIn(part, text)
+        self.assertEqual(sorted(spaces), ["v"])
+
+    def test_rows_take_the_state_of_what_they_refer_to(self):
+        spaces, _ = tools.described_spaces(self.organization, self.employee, "alpha")
+        tool_rows = [{"id": "mcp:tracker", "state": "installed", "action": ""},
+                     {"id": "google-workspace", "state": "needs_login", "reason": "no login: ~/.secrets/x",
+                      "action": "log in"}]
+        rows = {r["id"]: r for r in tools.space_rows(spaces, tool_rows, self.clone, self.organization, self.employee)}
+        self.assertEqual(rows["tasks"]["state"], "ready")
+        self.assertEqual(rows["knowledge"]["state"], "ready")
+        self.assertEqual((rows["drive"]["state"], rows["drive"]["reason"]), ("needs_login", "нужен вход"))
+        self.assertEqual((rows["chats"]["state"], rows["chats"]["reason"]), ("ready", "групп: 2"))
+        for row in rows.values():  # words without paths or addresses: a guest sees what and reason
+            self.assertNotIn("/", row["reason"] + row["what"])
+        tool_rows[1]["state"] = "installed"
+        rows = {r["id"]: r for r in tools.space_rows(spaces, tool_rows, self.clone, self.organization, self.employee)}
+        self.assertEqual((rows["drive"]["state"], rows["drive"]["reason"]), ("needs_setup", "нет описания, что где лежит"))
+        rows = {r["id"]: r for r in tools.space_rows(spaces, [], self.clone, self.organization, {"spaces": {}})}
+        self.assertEqual(rows["tasks"]["reason"], "подключение не описано")
+        self.assertEqual(rows["chats"]["reason"], "групп нет")
+
+    def test_report_carries_spaces(self):
+        data = tools.report("employee", [], [], "alpha", [{"id": "tasks"}])
+        self.assertEqual(data["format"], 1)
+        self.assertEqual(data["spaces"], [{"id": "tasks"}])
+        self.assertEqual(tools.report("agents", [], [])["spaces"], [])
+
+
+class McpProcess(unittest.TestCase):
+    """A tools.yml line of kind mcp (С51): written into both settings files, keys from the store, login state."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.tool = REGISTRY["google-workspace"]
+
+    def test_off_by_default_and_added_by_the_description(self):
+        decisions, _ = tools.select(REGISTRY, "employee")
+        self.assertFalse(decisions["google-workspace"][0])
+        decisions, _ = tools.select(REGISTRY, "employee", {"tools": {"add": ["google-workspace"]}})
+        self.assertEqual(decisions["google-workspace"], (True, "organization", ""))
+        processes = tools.mcp_processes(REGISTRY, decisions, FakeAccount(self.home))
+        spec = processes["google-workspace"]
+        self.assertEqual(spec["command"][:5], ["vallis-secret", "run", "GOOGLE_OAUTH_CLIENT_ID",
+                                               "GOOGLE_OAUTH_CLIENT_SECRET", "--"])
+        self.assertIn("workspace-mcp==2.5.0", spec["command"])
+        self.assertEqual(spec["env"]["WORKSPACE_MCP_CREDENTIALS_DIR"], str(self.home / ".secrets/google-workspace"))
+
+    def test_written_without_values_next_to_described_servers(self):
+        root = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        decisions, _ = tools.select(REGISTRY, "employee", {}, {"tools": {"add": ["google-workspace"]}})
+        processes = tools.mcp_processes(REGISTRY, decisions, FakeAccount(self.home))
+        servers = {"wiki": ("organization", "https://wiki.example.com/mcp", None), **processes}
+        self.assertEqual(tools.write_mcp(root, servers), {})
+        claude = json.loads((root / ".mcp.json").read_text())["mcpServers"]
+        self.assertEqual(claude["google-workspace"]["type"], "stdio")
+        self.assertEqual(claude["google-workspace"]["command"], "vallis-secret")
+        import tomllib
+        codex = tomllib.loads((root / ".codex" / "config.toml").read_text())["mcp_servers"]
+        self.assertEqual(codex["google-workspace"]["command"], "vallis-secret")
+        self.assertIn("workspace-mcp==2.5.0", codex["google-workspace"]["args"])
+        self.assertIn("WORKSPACE_MCP_CREDENTIALS_DIR", codex["google-workspace"]["env"])
+        self.assertEqual(codex["wiki"]["url"], "https://wiki.example.com/mcp")
+        self.assertNotIn("CLIENT_SECRET\" =", (root / ".codex" / "config.toml").read_text())
+        rows = tools.mcp_state(root, servers, {})
+        self.assertEqual([r["id"] for r in rows], ["mcp:wiki"])  # the line has its own row
+        # off again: both entries go away
+        tools.write_mcp(root, {"wiki": servers["wiki"]})
+        self.assertNotIn("google-workspace", json.loads((root / ".mcp.json").read_text())["mcpServers"])
+        self.assertNotIn("google-workspace", (root / ".codex" / "config.toml").read_text())
+
+    def test_states(self):
+        account = FakeAccount(self.home, programs={"vallis-secret"})
+        row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
+        self.assertEqual(row["state"], "needs_setup")
+        self.assertIn("uvx", row["reason"])
+        account.programs.add("uvx")
+        listed = {"secrets": [{"name": "GOOGLE_OAUTH_CLIENT_ID"}]}
+        account.run = lambda *a, **k: subprocess.CompletedProcess(a, 0, json.dumps(listed), "")
+        row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
+        self.assertEqual(row["state"], "needs_setup")
+        self.assertIn("GOOGLE_OAUTH_CLIENT_SECRET", row["action"])
+        listed["secrets"].append({"name": "GOOGLE_OAUTH_CLIENT_SECRET"})
+        self.assertIsNone(tools.prepare_mcp(self.tool, account))
+        folder = self.home / ".secrets" / "google-workspace"
+        self.assertEqual(oct(folder.stat().st_mode & 0o777), "0o700")
+        row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
+        self.assertEqual(row["state"], "needs_login")
+        (folder / "agent@example.com.json").write_text("{}")
+        row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
+        self.assertEqual(row["state"], "installed")
+        self.assertIn("date is unknown", row["reason"])
+        import datetime
+        for age, state, part in ((2, "installed", "5 more day"), (6, "installed", "expires tomorrow"),
+                                 (7, "needs_login", "testing mode")):
+            day = (datetime.date.today() - datetime.timedelta(days=age)).isoformat()
+            listed["secrets"] = [{"name": "GOOGLE_OAUTH_CLIENT_ID"}, {"name": "GOOGLE_OAUTH_CLIENT_SECRET"},
+                                 {"name": "GOOGLE_WORKSPACE_LOGIN", "updated": day}]
+            row = tools.tool_state("google-workspace", self.tool, (True, "organization", ""), account, {}, self.home, {})
+            self.assertEqual(row["state"], state, age)
+            self.assertIn(part, row["reason"])
