@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { refreshGuardCopies } from "./guard-refresh";
-import { deliverScheduleAlerts } from "./schedule-alerts";
+import { deliver, deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
 import { toolsReport } from "./tools-status";
 import { codeToOwner } from "./code-to-owner";
@@ -14,6 +14,7 @@ import { CASE_USAGE, runCase } from "./case-command";
 import { openCasesHint } from "./cases";
 import { pauseControl } from "./pause";
 import { formatRegistry, organizationOf, registry } from "./team";
+import { formatUsage, usage } from "./usage";
 import { turnRules } from "./turn-rules";
 import { registerServerSpeech } from "./server-speech";
 
@@ -131,6 +132,8 @@ export default async function personalAssistant(bb: BbPluginApi) {
   }).catch(() => { /* an unreadable workspace keeps its copy; setup.py refreshes it too */ });
   // Schedules in guest conversations are not capped; a burst past the guard's thresholds reaches the owner once.
   bb.background.schedule("guest-schedule-alerts", "* * * * *", async () => {
+    // С94: after «включи» — one line to the owner about schedule runs skipped because they waited past their period.
+    await pause.report(text => deliver(bb, text)).catch(() => null);
     await refreshFolders().catch(() => {});
     const projects = await bb.sdk.projects.list({});
     const roots = projects.flatMap(p => (p as { sources?: { path?: string }[] }).sources ?? []).flatMap(s => s.path ? [s.path] : []);
@@ -146,11 +149,17 @@ export default async function personalAssistant(bb: BbPluginApi) {
       { name: "alerts", usage: "bb personal-assistant alerts", summary: "Warnings about many schedules in guest conversations sent to the owner." },
       { name: "code-to-owner", usage: "bb personal-assistant code-to-owner [--from TEXT] [--minutes N]", summary: "A confirmation code from your own mailbox to the owner only, in his private chat (С85); you never see the code." },
       { name: "team", usage: "bb personal-assistant team [--guest]", summary: "Who does what in the organization: position, duties, who gives tasks, curator, owner, state (from the passports)." },
+      { name: "usage", usage: "bb personal-assistant usage [--today] [--json]", summary: "What this employee spent today and in 7 days: turns, tokens, the share of the model subscription window." },
       { name: "pause", usage: "bb personal-assistant pause [--reason TEXT] | resume | pause-status", summary: "The owner stops this employee and starts it again; data and waiting messages are kept." },
       { name: "case", usage: CASE_USAGE, summary: "Case cards of tracked tasks on disk: open, set, close, show, list, find, check (this chat's cases)." },
       { name: "tools", usage: "bb personal-assistant tools [--guest]", summary: "What this agent can use: tools and accesses from the installer's last check, in words, without values." },
     ],
     async run(argv, ctx) {
+      if (argv[0] === "usage" && argv.slice(1).every(a => a === "--json" || a === "--today")) {
+        const day = await usage(bb, 1);
+        const week = argv.includes("--today") ? null : await usage(bb, 7);
+        return { exitCode: 0, stdout: argv.includes("--json") ? JSON.stringify({ day, week }) : formatUsage(day, week) };
+      }
       if (argv[0] === "pause" || argv[0] === "resume" || argv[0] === "pause-status") {
         const i = argv.indexOf("--reason");
         return pause.command(argv[0] === "pause-status" ? "status" : argv[0], ctx.threadId, i > 0 ? argv[i + 1] : undefined);

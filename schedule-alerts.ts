@@ -59,7 +59,7 @@ const sendToOwnerAnswer = z.object({ ok: z.boolean(), reason: z.string().optiona
  * Assistant: its conversation with the owner. Employee: the bridge's sendToOwner (the owner's private chat with
  * the employee's bot, no model turn). A bridge without it, or a refusal: a BB notification, the reason in the log.
  */
-async function deliver(bb: BbPluginApi, text: string): Promise<string> {
+export async function deliver(bb: BbPluginApi, text: string): Promise<string> {
   const owner = await readOwnerThread(bb.sdk);
   if (owner) {
     await bb.sdk.threads.send({ threadId: owner, input: [{ type: "text", text }] } as never);
