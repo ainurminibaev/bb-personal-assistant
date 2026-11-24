@@ -254,7 +254,8 @@ class States(unittest.TestCase):
         said["чтение PDF"] = True                          # the scheme needs the account's browser: not required
         row = state()
         self.assertEqual((row["state"], row["reason"]), ("installed", "PDF: стоит; чтение PDF: стоит; схема: не стоит"))
-        self.assertEqual(REGISTRY["pdf"]["check_run"], ["/usr/local/bin/vallis-pdf", "--check"])
+        self.assertEqual(REGISTRY["pdf"]["check_run"], ["vallis-pdf", "--check"])
+        self.assertIn("vallis-pdf", REGISTRY["pdf"]["check_commands"])        # an account install (--prefix) counts
         self.account.run = lambda *args, **kw: subprocess.CompletedProcess(args, 1, "", "boom")
         self.assertEqual(state()["state"], "error")
 

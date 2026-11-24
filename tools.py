@@ -323,8 +323,11 @@ def _service_state(name, tool, level, account):
                     f"systemctl start {' '.join(idle)}")
     # A service that says itself which of its parts really start (pdf: `vallis-pdf --check` → {"PDF": true, ...}).
     if tool.get("check_run"):
+        command = list(tool["check_run"])
+        if "/" not in command[0] and found:          # the command found above (the account's PATH or a server path)
+            command[0] = found[0]
         try:
-            said = account.run(*tool["check_run"], timeout=300)
+            said = account.run(*command, timeout=300)
             parts = json.loads(said.stdout)
             if not isinstance(parts, dict) or not parts:
                 raise ValueError
