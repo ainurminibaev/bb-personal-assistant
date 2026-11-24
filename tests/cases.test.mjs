@@ -176,7 +176,9 @@ test("a schedule made from a Telegram chat becomes a case by itself; the agent i
   assert.doesNotMatch(list.stdout, /Уборка/);                         // not from a Telegram chat: stays a schedule
   const id = list.stdout.split(" | ")[0];
   assert.match((await run("group-task", "show", id)).stdout, /"auto_q"/);
-  assert.match(sent.at(-1).input[0].text, new RegExp(`привязано к делу ${id}.*NO_REPLY`));
+  assert.match(sent.at(-1).input[0].text, new RegExp(`привязано к делу ${id}.*людям о ней не пиши`));
+  assert.equal(sent.at(-1).mode, "steer");                            // never a turn of its own → never a message to people
+  assert.doesNotMatch(sent.at(-1).input[0].text, /NO_REPLY/);         // it joins a running answer: must not silence it
   assert.equal(sent.at(-1).threadId, "group-task");
   const before = sent.length;
   await tick();                                                        // once only
