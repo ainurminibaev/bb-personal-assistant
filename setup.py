@@ -71,6 +71,10 @@ def configure_curators(description, employee):
     values = values.get("values", values)
     if "curators" in values and ids and values.get("curators") != ",".join(ids):
         bb("plugin", "config", "telegram-projects", "set", "curators", ",".join(ids))
+    # Leads shared chats by default (passport leads_chats): only when the passport says it; otherwise the bridge's auto.
+    lead = employee.get("leads_chats")
+    if isinstance(lead, bool) and "leadsChatsByDefault" in values and values.get("leadsChatsByDefault") != ("yes" if lead else "no"):
+        bb("plugin", "config", "telegram-projects", "set", "leadsChatsByDefault", "yes" if lead else "no")
 
 
 def remember_agent(project_id, provider, model):
