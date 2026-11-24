@@ -96,6 +96,14 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread update thr_owner --title x"}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread update thr_child --clear-parent-thread"}), 2)
 
+    def test_guest_sees_who_does_what_but_cannot_pause(self):
+        ok = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 0, c)
+        no = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 2, c)
+        ok("bb personal-assistant team --guest")
+        no("bb personal-assistant team")
+        no("bb personal-assistant pause")
+        no("bb personal-assistant resume")
+
     def test_guest_marks_only_its_own_task_subthreads(self):
         ok = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 0, c)
         no = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 2, c)

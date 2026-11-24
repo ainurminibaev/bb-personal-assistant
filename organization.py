@@ -16,6 +16,12 @@ from pathlib import Path
 
 EMPLOYEE_FIELDS = {"kind", "machine", "bot", "provider", "model", "timezone", "groups",
                    "quiet_hours", "reminders", "description", "tools", "mcp", "secrets", "spaces"}
+# С94: the passport — who does what, who gives tasks, who curates, who owns, the state. In employee.yml or in
+# employees/<name>/passport.yml (the passport file wins); `bb personal-assistant team` prints the registry from them.
+PASSPORT_FIELDS = {"name", "position", "state", "owner", "curator", "tasks_from", "tasks_to", "duties",
+                   "not_allowed", "grants_within", "chats", "accounts", "connections"}
+PASSPORT_STATES = ("active", "paused", "retired")
+EMPLOYEE_FIELDS = EMPLOYEE_FIELDS | PASSPORT_FIELDS
 NOT_COMPARED = ("quiet_hours", "reminders")
 SKILL_DIRS = (Path(".claude") / "skills", Path(".agents") / "skills")
 EXCLUDE_BEGIN = "# vallis-organization: installation files (managed by setup.py)"
@@ -163,7 +169,30 @@ def read_organization(clone, employee):
                                 f"{'Codex' if name == 'AGENTS.md' else 'Claude Code'}")
     for key in sorted(set(config) - EMPLOYEE_FIELDS):
         problems.append(f"employee.yml {key}: unknown field, not used")
+    passport_file = root / "passport.yml"
+    passport = load_yaml(passport_file) if passport_file.is_file() else {}
+    for key in sorted(set(passport) - PASSPORT_FIELDS):
+        problems.append(f"passport.yml {key}: unknown field, not used")
+    config = {**config, **{k: v for k, v in passport.items() if k in PASSPORT_FIELDS}}
+    if config.get("state", "active") not in PASSPORT_STATES:
+        problems.append(f"passport state {config.get('state')}: one of {', '.join(PASSPORT_STATES)}")
     return organization, config, problems
+
+
+def curator_ids(organization, config):
+    """Telegram IDs of the employee's curators for the bridge (`curators`): passport names looked up in
+    organization.yml `people: {<name>: {telegram: <id>}}`. Returns the IDs and the names that have none."""
+    names = config.get("curator") or []
+    names = [names] if isinstance(names, str) else list(names)
+    people = organization.get("people") or {}
+    ids, missing = [], []
+    for name in names:
+        tid = (people.get(name) or {}).get("telegram") if isinstance(people.get(name), dict) else None
+        if tid:
+            ids.append(str(tid))
+        else:
+            missing.append(name)
+    return ids, missing
 
 
 def _same(a, b):

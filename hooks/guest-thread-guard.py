@@ -330,6 +330,9 @@ def guest_bb_allowed(args, scope):
     if head == ["personal-assistant", "tools"]:
         # С43: a guest sees what it can apply here — only the guest view, no installation details.
         return args[2:] == ["--guest"]
+    if head == ["personal-assistant", "team"]:
+        # С94: who does what — the guest view, without accounts and connections; pause and resume stay the owner's.
+        return args[2:] == ["--guest"]
     if head == ["thread-cleanup", "task"]:
         # A guest marks only its own task sub-threads open or closed.
         targets = [a for a in positionals(args[2:]) if a.startswith("thr_")]
