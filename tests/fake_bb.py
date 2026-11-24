@@ -8,6 +8,12 @@ if sys.argv[1:3] == ["telegram-projects", "search-history"]:
     import fake_history as tool
 elif sys.argv[1:3] == ["telegram-projects", "send"]:
     import fake_send as tool
+elif sys.argv[1:3] == ["personal-assistant", "commitments"]:
+    # As the platform's plugin does: the same program, with the installation's folder and the thread BB names.
+    import subprocess
+    tool = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "deploy", "vallis-commitments")
+    env = dict(os.environ, VALLIS_COMMITMENTS_HOME=os.environ["FAKE_INSTALLATION"] + "/local/commitments")
+    sys.exit(subprocess.run([sys.executable, tool, *sys.argv[3:]], env=env).returncode)
 else:
     print("unexpected bb command " + " ".join(sys.argv[1:3]), file=sys.stderr)
     sys.exit(2)

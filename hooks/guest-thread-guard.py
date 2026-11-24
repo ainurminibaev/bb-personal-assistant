@@ -55,15 +55,15 @@ def secrets_problem(commands, paths, guest):
 COMMITMENTS_REASON = ("This is a guest conversation: of the commitments only `vallis-commitments mine` works here "
                       "(--chat <this chat> or --person <the person of this private chat>); the whole list is read "
                       "in the owner's conversation. Tell the person what is not available here.")
-COMMITMENTS = re.compile(r"(\bvallis-commitments\b|vallis/commitments(?:[/\s'\"]|$)|\bVALLIS_COMMITMENTS_|\bVALLIS_PDF\b)")
-COMMITMENTS_MINE = re.compile(r"(?:^|[\s;&|(/`'\"])vallis-commitments\s+mine\b")
+COMMITMENTS = re.compile(r"(\bvallis-commitments\b|\bpersonal-assistant\s+commitments\b|(?:vallis|local)/commitments(?:[/\s'\"]|$)|\bVALLIS_COMMITMENTS_|\bVALLIS_PDF\b)")
+COMMITMENTS_MINE = re.compile(r"(?:^|[\s;&|(/`'\"])(?:vallis-commitments|(?:bb|\$BB_CLI|\"\$BB_CLI\")\s+personal-assistant\s+commitments)\s+mine\b")
 
 
 COMMITMENTS_PLACE_REASON = ("The list of commitments lives in one place of the installation "
-                            "(~/.local/share/vallis/commitments): no variable or other home moves it, or the other "
+                            "(the platform's plugin keeps it): no variable or other home moves it, or the other "
                             "conversations would not see it. Run vallis-commitments as it is; if it cannot write "
                             "its folder, tell the owner.")
-COMMITMENTS_MOVED = re.compile(r"\bVALLIS_COMMITMENTS_|\b(?:HOME|XDG_DATA_HOME|BB_CLI)=\S*[^;&|]*\bvallis-commitments\b")
+COMMITMENTS_MOVED = re.compile(r"\bVALLIS_COMMITMENTS_|\b(?:HOME|BB_CLI|BB_THREAD_ID|BB_SERVER_URL)=\S*[^;&|]*\b(?:vallis-commitments|personal-assistant\s+commitments)\b")
 
 
 def commitments_place_problem(commands):

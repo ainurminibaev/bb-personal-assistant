@@ -22,14 +22,14 @@ function bridge({kind = "assistant", owner = "assistant-main", off = false} = {}
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 10));
 
-async function load(binding, telegram = bridge()) {
+async function load(binding, telegram = bridge(), dataFile = "/data/plugins/personal-assistant/data.db") {
   let command, instructions, changed, contributed, rpcHandlers;
   const queries = [], schedules = [], aiServices = [], services = [], stops = [];
   await plugin({
     settings: { define: () => ({ get: async () => binding, onChange: fn => { changed = fn; } }) },
     agents: { configure: callback => { instructions = callback; }, registerTool: () => {},
               contributeInstructions: provider => { contributed = provider; } },
-    storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => [{ name: "main", file: "/data/plugins/personal-assistant/data.db" }], get() {}, run() {} }) }) },
+    storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => [{ name: "main", file: dataFile }], get() {}, run() {} }) }) },
     cli: { register: callback => { command = callback; } },
     rpc: { register: (_contract, handlers) => { rpcHandlers = handlers; } },
     background: { schedule: (name, cron) => { schedules.push([name, cron]); },
@@ -200,4 +200,38 @@ test("the bridge asks for the rules in force by project; a project outside an or
   // A project outside an organization still gets the platform's common rules (they are for every conversation).
   assert.match((await rpc().turnRules({ projectId: "unknown" })).text, /^### Общие правила платформы/);
   assert.deepEqual(await rpc().pauseStatus({}), { paused: false, since: null });
+});
+
+test("commitments run on the server's side: the installation's folder and the calling thread, not the agent's", async () => {
+  const { mkdtempSync, writeFileSync, readFileSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(`${tmpdir()}/vallis-plugin-`);
+  // A stand-in for bb: writes down who called and answers as the bridge does for a chat this conversation reads.
+  const fake = `${dir}/bb`;
+  writeFileSync(fake, `#!/bin/sh\nprintf '%s %s\\n' "$BB_THREAD_ID" "$*" >> ${dir}/calls\necho '{"messages":[{"chat":-1009990001111,"authorId":9002}]}'\n`, {mode: 0o755});
+  const saved = {...process.env};
+  Object.assign(process.env, {BB_CLI: fake, BB_THREAD_ID: "agents-own-thread", VALLIS_COMMITMENTS_HOME: `${dir}/elsewhere`, HOME: `${dir}/home`});
+  try {
+    const owner = {projectId: "personal", threadId: "owner"};
+    const { command } = await load(owner, bridge(), `${dir}/plugins/personal-assistant/data.db`);
+    const store = `${dir}/plugins/personal-assistant/local/commitments`;
+    assert.match((await command.run(["commitments", "guide"], owner)).stdout, /vallis-commitments collect/);
+    assert.equal((await command.run(["commitments", "chats", "add", "-1009990001111", "--title", "Команда"], owner)).exitCode, 0);
+    assert.ok(existsSync(`${store}/config.json`));                 // the one folder of the installation
+    assert.ok(!existsSync(`${dir}/elsewhere`) && !existsSync(`${dir}/home`));
+    const added = await command.run(["commitments", "add", "--chat", "-1009990001111", "--who", "Борис", "--who-id", "9002",
+      "--what", "прислать смету", "--message", "102"], owner);
+    assert.equal(added.exitCode, 0, added.stderr);
+    // a group's conversation sees the same list, and the bridge is asked in the name of the thread BB gave
+    const mine = await command.run(["commitments", "mine", "--chat", "-1009990001111"], {projectId: "team", threadId: "group-thread"});
+    assert.match(mine.stdout, /1\. Борис: прислать смету/);
+    assert.match(readFileSync(`${dir}/calls`, "utf8"), /^group-thread telegram-projects search-history --chat -1009990001111 --last 1$/m);
+    assert.doesNotMatch(readFileSync(`${dir}/calls`, "utf8"), /agents-own-thread/);
+    const refused = await command.run(["commitments", "close", "99", "--by", "x"], owner);
+    assert.equal(refused.exitCode, 1);
+    assert.match(refused.stderr, /no commitment 99/);
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
 });

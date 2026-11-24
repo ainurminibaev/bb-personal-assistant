@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { COMMITMENTS_USAGE, commitmentsScript, runCommitments } from "./commitments-command";
 import { refreshGuardCopies } from "./guard-refresh";
 import { deliver, deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
@@ -164,9 +165,15 @@ export default async function personalAssistant(bb: BbPluginApi) {
       { name: "usage", usage: "bb personal-assistant usage [--today] [--json]", summary: "What this employee spent today and in 7 days: turns, tokens, the share of the model subscription window." },
       { name: "pause", usage: "bb personal-assistant pause [--reason TEXT] | resume | pause-status", summary: "The owner stops this employee and starts it again; data and waiting messages are kept." },
       { name: "case", usage: CASE_USAGE, summary: "Case cards of tracked tasks on disk: open, set, close, show, list, find, check (this chat's cases)." },
+      { name: "commitments", usage: COMMITMENTS_USAGE, summary: "Commitments between people and the daily digests: the work of vallis-commitments on the server's side, in the installation's folder." },
       { name: "tools", usage: "bb personal-assistant tools [--guest]", summary: "What this agent can use: tools and accesses from the installer's last check, in words, without values." },
     ],
     async run(argv, ctx) {
+      if (argv[0] === "commitments") {
+        // One list per installation (С91, С92): the coordinator project's folder, else this plugin's own data folder.
+        if (binding.projectId && !folders.has(binding.projectId)) await refreshFolders().catch(() => {});
+        return runCommitments(commitmentsScript(dirname(fileURLToPath(import.meta.url))), casesRoot(), argv.slice(1), ctx);
+      }
       if (argv[0] === "usage" && argv.slice(1).every(a => a === "--json" || a === "--today")) {
         const day = await usage(bb, 1);
         const week = argv.includes("--today") ? null : await usage(bb, 7);
