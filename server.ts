@@ -10,6 +10,8 @@ import { deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
 import { toolsReport } from "./tools-status";
 import { codeToOwner } from "./code-to-owner";
+import { CASE_USAGE, runCase } from "./case-command";
+import { openCasesHint } from "./cases";
 import { turnRules } from "./turn-rules";
 import { registerServerSpeech } from "./server-speech";
 
@@ -74,7 +76,8 @@ export default async function personalAssistant(bb: BbPluginApi) {
   // A new session gets the organization's rules as they are now (a running session keeps what it started with:
   // the bridge brings later edits on every Telegram turn).
   bb.agents.contributeInstructions(({threadId, projectId}) =>
-    [contact.instructions(threadId), accessLine(), common, turnRules(folders.get(projectId), "")?.text ?? null]
+    [contact.instructions(threadId), accessLine(), common, turnRules(folders.get(projectId), "")?.text ?? null,
+      openCasesHint(folders.get(projectId))]
       .filter(Boolean).join("\n\n") || null);
   bb.rpc.register(rpcContract, {
     turnRules: async ({ projectId }) => {
@@ -115,9 +118,15 @@ export default async function personalAssistant(bb: BbPluginApi) {
       { name: "owner-thread", usage: "bb personal-assistant owner-thread", summary: "The assistant conversation that reaches the owner in Telegram now." },
       { name: "alerts", usage: "bb personal-assistant alerts", summary: "Warnings about many schedules in guest conversations sent to the owner." },
       { name: "code-to-owner", usage: "bb personal-assistant code-to-owner [--from TEXT] [--minutes N]", summary: "A confirmation code from your own mailbox to the owner only, in his private chat (С85); you never see the code." },
+      { name: "case", usage: CASE_USAGE, summary: "Case cards of tracked tasks on disk: open, set, close, show, list, find, check (this chat's cases)." },
       { name: "tools", usage: "bb personal-assistant tools [--guest]", summary: "What this agent can use: tools and accesses from the installer's last check, in words, without values." },
     ],
     async run(argv, ctx) {
+      if (argv[0] === "case") {
+        if (ctx.projectId && !folders.has(ctx.projectId)) await refreshFolders().catch(() => {});
+        return runCase(bb, argv.slice(1), ctx, ctx.projectId ? folders.get(ctx.projectId) : undefined,
+          id => Boolean(binding.threadId) && id === binding.threadId);
+      }
       if (argv[0] === "code-to-owner") {
         // С85: never in a guest conversation — the guest guard does not let it through; here only the owner's bridge.
         return codeToOwner(argv.slice(1), (method, input) =>
