@@ -13,6 +13,7 @@ import { codeToOwner } from "./code-to-owner";
 import { CASE_USAGE, runCase } from "./case-command";
 import { openCasesHint } from "./cases";
 import { pauseControl } from "./pause";
+import { autoCases } from "./auto-case";
 import { formatRegistry, organizationOf, registry } from "./team";
 import { formatUsage, usage } from "./usage";
 import { turnRules } from "./turn-rules";
@@ -143,6 +144,8 @@ export default async function personalAssistant(bb: BbPluginApi) {
   bb.background.schedule("guest-schedule-alerts", "* * * * *", async () => {
     // С94: after «включи» — one line to the owner about schedule runs skipped because they waited past their period.
     await pause.report(text => deliver(bb, text)).catch(() => null);
+    // С65: a schedule made from a Telegram chat becomes a case by itself, without the agent's will.
+    await autoCases(bb, casesRoot()).catch(() => []);
     await refreshFolders().catch(() => {});
     const projects = await bb.sdk.projects.list({});
     const roots = projects.flatMap(p => (p as { sources?: { path?: string }[] }).sources ?? []).flatMap(s => s.path ? [s.path] : []);

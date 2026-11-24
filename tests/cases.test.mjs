@@ -19,7 +19,8 @@ async function setup({ conversations = null, binding = { projectId: "proj", thre
     "plain": { id: "plain", title: "Обычный тред", parentThreadId: null },
     "plain-next": { id: "plain-next", title: "Обычный тред", parentThreadId: null, sourceThreadId: "plain" },
   };
-  const state = { owner: "owner-chat", live: new Set(["auto_a"]) };
+  const state = { owner: "owner-chat", live: new Set(["auto_a"]), made: [] };
+  const sent = [], minute = [];
   let command, contributed;
   await plugin({
     settings: { define: () => ({ get: async () => binding, onChange() {} }) },
@@ -27,19 +28,19 @@ async function setup({ conversations = null, binding = { projectId: "proj", thre
     storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => pluginDir ? [{ name: "main", file: join(pluginDir, "data.db") }] : [], get() {}, run() {} }) }), kv: { get: async () => undefined, set: async () => {} } },
     cli: { register: c => { command = c; } },
     rpc: { register() {} },
-    background: { schedule() {}, service() {} },
+    background: { schedule: (name, cron, fn) => { if (name === "guest-schedule-alerts") minute.push(fn); }, service() {} },
     experimental_aiServices: { register: () => ({ dispose() {} }) },
     sdk: {
       projects: { list: async () => [{ id: "proj", sources: [{ path: root, isDefault: true }] },
                                      { id: "group-proj", sources: [{ path: mkdtempSync(join(tmpdir(), "group-")), isDefault: true }] }],
                   get: async () => ({ sources: [{ path: root }] }) },
-      threads: { get: async ({ threadId }) => threads[threadId], list: async () => [] },
+      threads: { get: async ({ threadId }) => threads[threadId], list: async () => [], send: async a => { sent.push(a); return {}; } },
       plugins: {
         getSettings: async () => ({ values: { installKind: "assistant" } }),
         callRpc: async ({ pluginId, method, input, outputSchema }) => {
           if (pluginId === "telegram-projects" && method === "status")
             return outputSchema.parse({ chatBindings: [{ topicId: 0, threadId: state.owner }] });
-          if (pluginId === "automations") return outputSchema.parse([...state.live].map(id => ({ id, enabled: true })));
+          if (pluginId === "automations") return outputSchema.parse(state.made.length ? state.made : [...state.live].map(id => ({ id, enabled: true })));
           if (pluginId === "telegram-projects" && method === "conversationOf" && conversations)
             return outputSchema.parse(conversations[input.threadId] ?? null);
           throw Error("plugin_not_found");
@@ -50,7 +51,8 @@ async function setup({ conversations = null, binding = { projectId: "proj", thre
   await new Promise(r => setTimeout(r, 20));
   const run = async (threadId, ...argv) => command.run(["case", ...argv], { threadId, projectId: threadId.startsWith("moved") ? "group-proj" : "proj" });
   const terminal = async (...argv) => command.run(["case", ...argv], {});
-  return { root, run, terminal, state, hint: threadId => contributed({ threadId, projectId: "proj" }) };
+  const tick = async () => { for (const fn of minute) await fn(); };
+  return { root, run, terminal, state, sent, tick, hint: threadId => contributed({ threadId, projectId: "proj" }) };
 }
 
 test("a case opened in a task subthread lives on disk: card and index line, written together", async () => {
@@ -159,4 +161,29 @@ test("without any setting the cases live in the plugin's own data folder: a stan
   assert.equal(list.exitCode, 0, list.stderr);
   assert.match(list.stdout, /Итог к 10:00/);
   assert.equal((await terminal("check")).exitCode, 0);
+});
+
+test("a schedule made from a Telegram chat becomes a case by itself; the agent is told its id", async () => {
+  const { run, terminal, state, sent, tick } = await setup();
+  const now = Date.now();
+  state.made.push(
+    { id: "auto_q", name: "Итог по вопросам поставщику", enabled: true, createdByThreadId: "group-task", createdAt: now,
+      nextRunAt: now + 86400000, trigger: { triggerType: "once" } },
+    { id: "auto_svc", name: "Уборка", enabled: true, createdByThreadId: "plain", createdAt: now, trigger: { triggerType: "schedule" } });
+  await tick();
+  const list = await terminal("list");
+  assert.match(list.stdout, /Итог по вопросам поставщику/);          // the agent only created a schedule
+  assert.doesNotMatch(list.stdout, /Уборка/);                         // not from a Telegram chat: stays a schedule
+  const id = list.stdout.split(" | ")[0];
+  assert.match((await run("group-task", "show", id)).stdout, /"auto_q"/);
+  assert.match(sent.at(-1).input[0].text, new RegExp(`привязано к делу ${id}.*NO_REPLY`));
+  assert.equal(sent.at(-1).threadId, "group-task");
+  const before = sent.length;
+  await tick();                                                        // once only
+  assert.equal(sent.length, before);
+  // A schedule named «<case id>: <step>» joins that case instead of opening another.
+  state.made.push({ id: "auto_step", name: `${id}: напомнить поставщику`, enabled: true, createdByThreadId: "group-task", createdAt: now });
+  await tick();
+  assert.equal((await terminal("list")).stdout.split("\n").filter(l => l.includes("поставщику")).length, 1);
+  assert.match((await run("group-task", "show", id)).stdout, /"auto_step"/);
 });
