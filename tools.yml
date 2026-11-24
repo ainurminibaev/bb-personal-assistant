@@ -139,6 +139,14 @@ tools:
           arm64: 53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77
     installs: [assistant, employee, agents]
 
+  commitments:
+    what: Поручения и договорённости людей из групп — список и ежедневная сводка, только чтение переписки (С91, С92) — vallis-commitments
+    kind: cli
+    path: deploy/vallis-commitments    # из пакета платформы; навык commitments приходит с плагином платформы, только разговору владельца
+    check: [list]                      # команда отвечает; сама ничего не читает, пока владелец не назвал группу
+    check_note: группы называет владелец словами; расписание сводки ставит агент
+    installs: [assistant, employee]
+
   speech:
     what: Расшифровка речи каскадом — выбор исполнителя, русская и татарская модели, Codex; одна служба на сервер
     kind: service

@@ -64,6 +64,15 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-group", {"command": "vallis-secret header KEY"}), 2)
         self.assertEqual(self.run_hook("s-child", {"command": "vallis-secret run KEY -- true"}), 2)
 
+    def test_commitments_of_all_chats_only_in_the_owner_conversation(self):
+        for command in ("vallis-commitments list", "x; /usr/local/bin/vallis-commitments render --chat -1009990001111",
+                        "cat ~/.local/share/vallis/commitments/ledger.json", "VALLIS_COMMITMENTS_DIR=/tmp/x python3 tool"):
+            self.assertEqual(self.run_hook("s-group", {"command": command}), 2, command)
+            self.assertEqual(self.run_hook("s-child", {"command": command}), 2, command)
+            self.assertEqual(self.run_hook("s-owner", {"command": command}), 0, command)
+        self.assertEqual(self.run_hook("s-group", {"file_path": "/var/lib/e/.local/share/vallis/commitments/digests/2026-03-10.md"}), 2)
+        self.assertEqual(self.run_hook("s-group", {"command": "git log --grep commitments"}), 0)
+
     def test_group_thread_cannot_read_other_threads(self):
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread list"}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "$BB_CLI thread log thr_owner --json"}), 2)

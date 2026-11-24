@@ -82,6 +82,25 @@ test("the credentials store skill comes only where vallis-secret is on the PATH"
   }
 });
 
+test("the commitments skill comes only to the owner's conversation, where vallis-commitments is on the PATH", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(`${tmpdir()}/vallis-`);
+  writeFileSync(`${dir}/vallis-commitments`, "#!/bin/sh\n", {mode: 0o755});
+  const path = process.env.PATH;
+  process.env.PATH = `${dir}:${path}`;
+  try {
+    const owner = {projectId: "personal", threadId: "owner"};
+    const { instructions } = await load(owner);
+    const config = (projectId, threadId) => instructions({project: {id: projectId}, thread: {id: threadId}});
+    assert.ok(config(owner.projectId, owner.threadId).skills.includes("commitments"));
+    assert.ok(!config(owner.projectId, "group").skills.includes("commitments"));
+    assert.ok(!config("other", "group").skills.includes("commitments"));
+  } finally {
+    process.env.PATH = path;
+  }
+});
+
 test("work from a group cannot query personal task names through this command", async () => {
   const owner = {projectId: "personal", threadId: "owner"};
   const { command, queries } = await load(owner);
