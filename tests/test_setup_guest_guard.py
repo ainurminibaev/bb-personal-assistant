@@ -80,3 +80,16 @@ class ConversationFolders(unittest.TestCase):
         other_home = Path(tempfile.mkdtemp())
         install_guest_guard(package, Path(tempfile.mkdtemp()), "/data/bb", home=other_home)
         self.assertFalse((other_home / ".claude" / "settings.json").exists())
+
+
+class SameFolder(unittest.TestCase):
+    def test_a_link_path_and_its_real_path_are_one_project(self):
+        import os
+        from setup import same_folder
+        real = Path(tempfile.mkdtemp())
+        link = Path(tempfile.mkdtemp()) / "stand"
+        os.symlink(real, link)
+        self.assertTrue(same_folder(str(link), real))
+        self.assertTrue(same_folder(str(real), link))
+        self.assertFalse(same_folder(str(Path(tempfile.mkdtemp())), real))
+        self.assertFalse(same_folder(None, real))

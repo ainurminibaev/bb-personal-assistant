@@ -46,6 +46,16 @@ def clone_workspace(url, root):
     root.chmod(0o700)
 
 
+def same_folder(path, root):
+    """A project registered with a link path is the same folder as its real path (a stand under a link, 25.11)."""
+    if not path:
+        return False
+    try:
+        return Path(path).resolve() == Path(root).resolve()
+    except OSError:
+        return str(path) == str(root)
+
+
 def conversation_folders(kind, root, clone, home=None):
     """С76: where the own folders of groups and people's chats live, and the role rules they read.
 
@@ -240,7 +250,7 @@ def main():
         if plugin and (plugin["source"] != expected or not plugin["enabled"]):
             raise SystemExit(f"Check the installed source and enabled state of {plugin_id}.")
     projects = [p for p in bb("project", "list") if any(
-        s.get("hostId") == args.machine and s.get("path") == str(root)
+        s.get("hostId") == args.machine and same_folder(s.get("path"), root)
         for s in p.get("sources", [])
     )]
     if len(projects) > 1:
