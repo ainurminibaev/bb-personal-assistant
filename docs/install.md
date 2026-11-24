@@ -81,3 +81,31 @@ Speech, the quick decision service and PDF are one per server and are set up by 
   package is needed.
 - **After a plugin update.** `bb personal-assistant tools` checks the tools again when its saved check is older than the
   loaded plugin; no BB restart is needed for the platform plugin's background work.
+
+## Google Drive, Docs and Sheets
+
+As the agent's account, with the OAuth app keys in its credentials store (`GOOGLE_OAUTH_CLIENT_ID`,
+`GOOGLE_OAUTH_CLIENT_SECRET`): `deploy/google/google-connect link --email <agent's address>` prints the consent link.
+A person signs in to the agent's Google account, presses «Allow» and sends back the address of the localhost page it
+opens; put it in a file and run `deploy/google/google-connect finish <file>` at once (the code lives minutes). The
+servers are workspace-mcp 2.5.0 and mcp-google-sheets 0.6.3, as on the owner's installation; `uv` must be on the
+agent's PATH. If the app is in testing mode, the agent's address must be in its test users, and
+`http://localhost:8765/` an allowed redirect URI of the client. Restart BB for running conversations.
+
+## A second employee on the same server
+
+- `deploy/server-setup.sh <user> <port>` with a free port pair: `<port>` for the server, `<port>+1` for BB's host
+  daemon (the first BB keeps 38886/38887).
+- Without access to the organization's GitHub yet: give `--organization` a local copy (a git bundle cloned bare into
+  the employee's home) and switch the copy's origin to GitHub when the access is given.
+- The server's local Telegram Bot API (one per server): the employee's account gets only passage (`--x`) on its data
+  folders and read access to its own bot's folder (ACL with defaults), never the group of that server; set
+  `telegramApiRoot` and `telegramLocalRoot` of its bridge like the first employee's.
+- Codex login: its own login is the default; a copy of another employee's `auth.json` works only on the owner's word
+  and both must be checked after the next token refresh (about 8 days after the last one).
+- Mail: an inbox of its own (AgentMail); the key goes into its credentials store.
+
+## A confirmation code for the owner
+
+`bb personal-assistant code-to-owner [--from <sender>] [--minutes N]` sends a code from the agent's own mailbox to the
+owner's private chat only; the agent never sees it, a guest conversation cannot run it (С85).
