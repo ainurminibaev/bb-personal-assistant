@@ -49,7 +49,8 @@ async function setup({ conversations = null } = {}) {
   });
   await new Promise(r => setTimeout(r, 20));
   const run = async (threadId, ...argv) => command.run(["case", ...argv], { threadId, projectId: threadId.startsWith("moved") ? "group-proj" : "proj" });
-  return { root, run, state, hint: threadId => contributed({ threadId, projectId: "proj" }) };
+  const terminal = async (...argv) => command.run(["case", ...argv], {});
+  return { root, run, terminal, state, hint: threadId => contributed({ threadId, projectId: "proj" }) };
 }
 
 test("a case opened in a task subthread lives on disk: card and index line, written together", async () => {
@@ -135,4 +136,16 @@ test("with the bridge's conversationOf a chat is its numbers: a renamed topic ke
   assert.doesNotMatch((await run("alex-2", "list")).stdout, /первого Александра/);
   // The group moved into a project and folder of its own (С76): cases stay in the installation's folder.
   assert.match((await run("moved-group", "list")).stdout, /Отчёт группы/);
+});
+
+test("a terminal of the server sees every chat's cases from the installation's folder; a case is opened only from its chat", async () => {
+  const { run, terminal } = await setup();
+  await run("task-1", "open", "--title", "Дело лички");
+  await run("group-task", "open", "--title", "Дело группы");
+  const list = await terminal("list");
+  assert.equal(list.exitCode, 0, list.stderr);
+  assert.match(list.stdout, /Дело лички/);
+  assert.match(list.stdout, /Дело группы/);
+  assert.match((await terminal("open", "--title", "x")).stderr, /from its conversation/);
+  assert.equal((await terminal("check")).exitCode, 0);
 });

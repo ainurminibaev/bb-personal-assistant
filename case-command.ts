@@ -67,16 +67,22 @@ export const CASE_USAGE = "bb personal-assistant case open --title … [--by …
 export async function runCase(bb: BbPluginApi, argv: string[], ctx: { threadId?: string; projectId?: string },
   root: string | undefined, coordinator: (threadId: string) => boolean): Promise<{ exitCode: number; stdout?: string; stderr?: string }> {
   const [sub, ...rest] = argv;
-  if (!root) return { exitCode: 1, stderr: "This thread has no installation folder (project source)." };
-  if (!ctx.threadId || !ctx.projectId) return { exitCode: 1, stderr: "Run it from a thread of the installation." };
+  if (!root) return { exitCode: 1, stderr: ctx.threadId
+    ? "This thread has no installation folder (project source)."
+    : "From a terminal: set projectId (the coordinator project) in the personal-assistant plugin settings — the cases live in its folder." };
+  if (!ctx.projectId) return { exitCode: 1, stderr: "No project: run it from a thread of the installation or set projectId in the plugin settings." };
   const f = flags(rest);
-  const chat = await chatOf(bb.sdk, ctx.threadId);
-  const all = f.has("--all");
-  if (all && !coordinator(ctx.threadId)) return { exitCode: 1, stderr: "--all is for the coordinator thread of this installation; here you see the cases of this chat." };
+  // A terminal of the server (no thread) is a person with access to the account: it sees every chat's cases, like
+  // the coordinator; a case is opened only from its conversation.
+  const terminal = !ctx.threadId;
+  if (terminal && sub === "open") return { exitCode: 1, stderr: "A case is opened from its conversation: the chat it belongs to is that conversation's." };
+  const chat = terminal ? "" : await chatOf(bb.sdk, ctx.threadId!);
+  const all = terminal || f.has("--all");
+  if (!terminal && all && !coordinator(ctx.threadId!)) return { exitCode: 1, stderr: "--all is for the coordinator thread of this installation; here you see the cases of this chat." };
   const scope = all ? null : chat;
   const mine = (id: string) => {
     const c = readCard(root, id);
-    if (!all && c.chat !== chat && !coordinator(ctx.threadId!)) throw new Error(`the case ${id} belongs to another chat`);
+    if (!all && c.chat !== chat && !coordinator(ctx.threadId ?? "")) throw new Error(`the case ${id} belongs to another chat`);
     return c;
   };
   try {
