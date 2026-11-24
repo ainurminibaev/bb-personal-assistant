@@ -41,7 +41,7 @@ asks for a digest now («сведи сегодня») — do the same here, for 
 
 ## The owner speaks about the list
 
-- «Что обещали в <группе>?», «что просрочено?» — `vallis-commitments list [--chat <chat ID>]`; answer in a few lines,
+- «Что обещали в <группе>?», «что обещал Борис?», «что просрочено?» — `vallis-commitments list [--chat <chat ID>] [--who <name>]`; answer in a few lines,
   with numbers. `vallis-commitments render` gives the full digest of today without reading the chat again.
 - «12 снято», «7 сделано», «5 — срок до пятницы», «3 не поручение» — `close <number> [--cancelled] --by "<owner's name>"`,
   `update <number> --due <date> --by …`, `update <number> --sure` for a confirmed uncertain one. Several numbers in one

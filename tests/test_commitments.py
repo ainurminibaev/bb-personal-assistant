@@ -224,6 +224,12 @@ class Commitments(unittest.TestCase):
         self.assertEqual(self.out("reopen", smeta, "--by", "Анна Лебедева")["state"], "open")
         self.assertIn("no commitment 99", self.run_tool("close", 99, "--by", "владелец", ok=False).stderr)
 
+    def test_what_one_person_promised(self):
+        self.first_day()
+        self.assertEqual([i["what"] for i in self.out("list", "--who", "борис", "--json")], ["прислать смету по складу"])
+        self.assertIn("1. Борис Орлов: прислать смету по складу — для Анна Лебедева — срок 2026-03-12",
+                      self.run_tool("list", "--who", "Орлов").stdout)
+
     def test_every_change_is_journaled(self):
         smeta, dogovor, _ = self.first_day()
         self.out("close", dogovor, "--cancelled", "--by", "Вера Сомова")

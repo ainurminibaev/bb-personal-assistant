@@ -23,7 +23,8 @@ The text of the chat is not copied into the list — only the wording of the com
                          [--sure] [--by NAME] [--message N] [--note TEXT] [--date D]
                                                      «решили иначе», a new due date, a confirmed uncertain record
   vallis-commitments reopen ID --by NAME [--note TEXT]
-  vallis-commitments list [--chat CHAT] [--all] [--json]
+  vallis-commitments list [--chat CHAT] [--who NAME] [--all] [--json]
+                                                     open commitments; --who: of one person (part of the name)
   vallis-commitments render [--date YYYY-MM-DD] [--chat CHAT] [--comment TEXT | --comment-file PATH] [--out PATH]
                                                      the digest of the day in Markdown: new, closed, changed, overdue,
                                                      due soon, open, to clarify; kept by date in digests/
@@ -450,7 +451,8 @@ def cmd_reopen(args):
 def cmd_list(args):
     root = home()
     cfg, book = config(root), ledger(root)
-    items = [i for i in book["items"] if (args.all or i["state"] == OPEN) and (not args.chat or i["chat"] == group(args.chat))]
+    items = [i for i in book["items"] if (args.all or i["state"] == OPEN) and (not args.chat or i["chat"] == group(args.chat))
+             and (not args.who or args.who.casefold() in i["who"].casefold())]
     if args.json:
         print(json.dumps(items, ensure_ascii=False, indent=1))
         return
@@ -642,7 +644,7 @@ def main(argv=None):
     p.add_argument("id"); p.add_argument("--by", required=True); p.add_argument("--note")
 
     p = sub.add_parser("list"); p.set_defaults(run=cmd_list)
-    p.add_argument("--chat"); p.add_argument("--all", action="store_true"); p.add_argument("--json", action="store_true")
+    p.add_argument("--chat"); p.add_argument("--who"); p.add_argument("--all", action="store_true"); p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("render"); p.set_defaults(run=cmd_render)
     p.add_argument("--date"); p.add_argument("--chat"); p.add_argument("--comment"); p.add_argument("--comment-file"); p.add_argument("--out")
