@@ -131,8 +131,14 @@ async function countTurns(sdk: BbPluginApi["sdk"], since: number): Promise<numbe
   for (let offset = 0; ; offset += 100) {
     const page = await sdk.threads.list({ includeHidden: true, limit: 100, offset }) as unknown as { id: string; updatedAt: number }[];
     for (const t of page.filter(t => t.updatedAt >= since)) {
-      const ev = await sdk.threads.events.list({ threadId: t.id, types: ["turn/completed"], order: "desc", limit: "500" }) as unknown as { createdAt: number }[];
-      turns += ev.filter(e => e.createdAt >= since).length;
+      // BB gives at most 100 events a page: page back until the period starts.
+      for (let before: string | undefined; ;) {
+        const ev = await sdk.threads.events.list({ threadId: t.id, types: ["turn/completed"], order: "desc", limit: "100",
+          ...(before ? { beforeSeq: before } : {}) } as never) as unknown as { createdAt: number; seq: number }[];
+        turns += ev.filter(e => e.createdAt >= since).length;
+        if (ev.length < 100 || ev[ev.length - 1].createdAt < since) break;
+        before = String(ev[ev.length - 1].seq);
+      }
     }
     if (page.length < 100) break;
   }
