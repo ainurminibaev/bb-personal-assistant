@@ -63,8 +63,11 @@ export async function codeToOwner(argv: string[], rpc: Rpc, now = Date.now()) {
   const list = await fetch(`${API}/inboxes/${encodeURIComponent(inbox)}/messages?limit=20`, { headers: H }).catch(() => undefined);
   if (!list?.ok) return { exitCode: 1, stderr: "Почтовый сервис не ответил." };
   const messages = ((await list.json()) as { messages?: any[] }).messages ?? [];
-  const fresh = messages.filter(m => now - Date.parse(m.timestamp ?? m.created_at ?? 0) <= minutes * 60_000)
-    .filter(m => !from || `${m.from ?? ""} ${m.subject ?? ""}`.toLowerCase().includes(from));
+  const at = (m: any) => Date.parse(m.timestamp ?? m.created_at ?? 0) || 0;
+  // Newest first whatever order the mail service lists them in: an older code is already invalid.
+  const fresh = messages.filter(m => now - at(m) <= minutes * 60_000)
+    .filter(m => !from || `${m.from ?? ""} ${m.subject ?? ""}`.toLowerCase().includes(from))
+    .sort((a, b) => at(b) - at(a));
   const letter = fresh[0];
   if (!letter) return { exitCode: 1, stderr: `За ${minutes} мин подходящего письма нет — попросите владельца запросить код заново.` };
   const full = await fetch(`${API}/inboxes/${encodeURIComponent(inbox)}/messages/${encodeURIComponent(letter.message_id)}`,

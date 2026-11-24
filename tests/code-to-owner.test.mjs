@@ -38,3 +38,23 @@ test("С85: the code goes only to the owner's private chat; the agent sees no co
   assert.equal(late.exitCode, 1);
   assert.equal(sent.length, 0);
 });
+
+test("С85: the newest letter wins whatever order the mail service lists them in", async () => {
+  const now = Date.parse("2026-11-24T13:20:00Z");
+  process.env.AGENTMAIL_API_KEY = "test-key";
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith("/inboxes")) return { ok: true, json: async () => ({ inboxes: [{ inbox_id: "agent@agentmail.to" }] }) };
+    if (u.includes("/messages?")) return { ok: true, json: async () => ({ messages: [
+      { message_id: "old", timestamp: "2026-11-24T13:05:00Z", subject: "Код" },
+      { message_id: "new", timestamp: "2026-11-24T13:19:00Z", subject: "Код" }] }) };
+    asked.push(decodeURIComponent(u.split("/messages/")[1]));
+    return { ok: true, json: async () => ({ subject: "Код", text: asked.at(-1) === "new" ? "Ваш код 222222" : "Ваш код 111111" }) };
+  };
+  const sent = [];
+  const rpc = async (method, input) => method === "status" ? { chatBindings: [{ topicId: 0, threadId: "thr_owner" }] } : (sent.push(input), {});
+  assert.equal((await codeToOwner([], rpc, now)).exitCode, 0);
+  assert.deepEqual(asked, ["new"]);
+  assert.match(sent[0].text, /222222/);
+});
