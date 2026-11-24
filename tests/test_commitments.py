@@ -31,6 +31,12 @@ DAY = [
     message(105, "2026-03-10T13:00:00.000Z", "Глеб Юдин", 9004, "", transcript="может быть гляну логи вечером"),
     message(201, "2026-03-10T10:00:00.000Z", "Дина Котова", 9005, "Обновлю прайс до пятницы", chat=OTHER),
 ]
+PRIVATE = [      # private chats with the bot: never part of a digest
+    {"chat": 9002, "chatTitle": "", "topic": 0, "message": 5, "date": "2026-03-10T15:00:00.000Z", "author": "Борис Орлов",
+     "authorId": 9002, "text": "что я обещал?"},
+    {"chat": 9003, "chatTitle": "", "topic": 0, "message": 6, "date": "2026-03-10T15:05:00.000Z", "author": "Вера Сомова",
+     "authorId": 9003, "text": "привет"},
+]
 NEXT_DAY = [
     message(110, "2026-03-11T08:00:00.000Z", "Вера Сомова", 9003, "По договору вопрос снят, подрядчик сам исправил", reply=103),
     message(111, "2026-03-11T08:30:00.000Z", "Борис Орлов", 9002, "Смету пришлю в пятницу, не успеваю к четвергу"),
@@ -42,7 +48,7 @@ class Commitments(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.history = self.tmp / "history.json"
         self.calls = self.tmp / "calls.jsonl"
-        self.history.write_text(json.dumps(DAY + NEXT_DAY, ensure_ascii=False), encoding="utf-8")
+        self.history.write_text(json.dumps(DAY + NEXT_DAY + PRIVATE, ensure_ascii=False), encoding="utf-8")
         self.env = {**os.environ, "VALLIS_COMMITMENTS_DIR": str(self.tmp / "store"),
                     "VALLIS_COMMITMENTS_HISTORY": f"{sys.executable} {FAKE}",
                     "FAKE_HISTORY": str(self.history), "FAKE_HISTORY_CALLS": str(self.calls)}
@@ -212,7 +218,7 @@ class Commitments(unittest.TestCase):
         self.out("update", smeta, "--due", "2026-03-13", "--by", "Борис Орлов", "--message", 111, "--date", "2026-03-11")
         text = self.digest("--date", "2026-03-11")
         self.assertIn("### Изменено за день\n- **1.** Борис Орлов: прислать смету по складу — для Анна Лебедева — срок 2026-03-13", text)
-        self.assertIn("было due: 2026-03-12", text)
+        self.assertIn("было срок: 2026-03-12", text)
         item = next(i for i in self.out("list", "--json") if i["id"] == smeta)
         self.assertEqual(item["history"][-1]["link"], f"https://t.me/c/{CHAT[4:]}/111")
 
@@ -248,6 +254,152 @@ class Commitments(unittest.TestCase):
         one = self.digest("--date", "2026-03-10", "--chat", OTHER)         # a digest for the chat itself
         self.assertIn("обновить прайс", one)
         self.assertNotIn("смету", one)
+
+    # ── the digest for the chat itself and the PDF ───────────────────────────────────────────────────────────────
+
+    def test_chat_gets_the_digest_of_itself_only_when_turned_on(self):
+        self.run_tool("chats", "add", OTHER, "--title", "Продажи «Ромашка»", "--post", "on")
+        report = {r["chat"]: r["post"] for r in self.out("collect", "--date", "2026-03-10")}
+        self.assertEqual(report, {CHAT: False, OTHER: True})
+        self.first_day()
+        self.out("add", "--chat", OTHER, "--who", "Дина Котова", "--what", "обновить прайс", "--due", "2026-03-13",
+                 "--message", 201, "--date", "2026-03-10")
+        done = self.out("render", "--date", "2026-03-10", "--chat", OTHER, "--to-chat", "--comment", "Говорили о прайсе.")
+        text = Path(done["digest"]).read_text(encoding="utf-8")
+        self.assertTrue(done["digest"].endswith(f"2026-03-10.{OTHER}.md"))
+        self.assertIn("Дина Котова: обновить прайс", text)
+        for foreign in ("смету", "Борис", "подрядчиком", "Ромашка»"):          # nothing of the other chat, no chat heading
+            self.assertNotIn(foreign, text)
+        self.assertIn("напишите об этом здесь обычными словами", text)
+        self.assertNotIn("по номеру", text)
+        self.assertNotIn("@", text)                                         # nobody is mentioned
+        self.assertIn("--to-chat goes with --chat", self.run_tool("render", "--to-chat", ok=False).stderr)
+
+    def test_a_day_with_nothing_to_tell_is_not_sent(self):
+        self.assertFalse(self.out("render", "--date", "2026-03-10")["send"])
+        smeta, dogovor, _ = self.first_day()
+        first = self.out("render", "--date", "2026-03-10")
+        self.assertTrue(first["send"])
+        self.assertEqual((first["counts"]["new"], first["counts"]["agreed"], first["counts"]["unsure_new"]), (2, 1, 1))
+        self.assertTrue(self.out("render", "--date", "2026-03-11")["send"])        # the estimate is due tomorrow
+        self.out("close", smeta, "--by", "Борис Орлов", "--date", "2026-03-12")
+        self.assertEqual(self.out("render", "--date", "2026-03-12")["counts"]["closed"], 1)
+        self.assertFalse(self.out("render", "--date", "2026-03-13")["send"])       # only open ones without a date: quiet
+        self.assertEqual(self.out("render", "--date", "2026-03-13")["open"], 2)
+
+    def fake_pdf(self, body):
+        tool = self.tmp / "fake-pdf"
+        tool.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+        tool.chmod(0o755)
+        return {"VALLIS_PDF": str(tool)}
+
+    def test_pdf_is_made_by_the_platform_command(self):
+        self.first_day()
+        env = self.fake_pdf('grep -q "Борис Орлов" "$1" && printf "%%PDF-1.7 fake" > "$2"')
+        done = json.loads(self.run_tool("render", "--date", "2026-03-10", "--pdf", env=env).stdout)
+        self.assertTrue(done["pdf"].endswith("digests/2026-03-10.pdf"))
+        self.assertTrue(Path(done["pdf"]).read_text().startswith("%PDF"))
+        self.run_tool("set", "--pdf", "on")                                 # the owner asked for a file every day
+        self.assertIn("pdf", json.loads(self.run_tool("render", "--date", "2026-03-10", env=env).stdout))
+        chat = json.loads(self.run_tool("render", "--date", "2026-03-10", "--chat", CHAT, "--to-chat", env=env).stdout)
+        self.assertNotIn("pdf", chat)                                       # the chat's digest stays text unless asked
+
+    def test_without_the_pdf_command_the_digest_still_comes_as_text(self):
+        self.first_day()
+        for env in ({"VALLIS_PDF": str(self.tmp / "absent")}, self.fake_pdf("echo no fonts >&2; exit 3")):
+            done = json.loads(self.run_tool("render", "--date", "2026-03-10", "--pdf", env=env).stdout)
+            self.assertNotIn("pdf", done)
+            self.assertIn("send the digest as text", done["pdf_error"])
+            self.assertTrue(Path(done["digest"]).is_file())
+
+    def test_guide_covers_the_run(self):
+        guide = self.run_tool("guide").stdout
+        for part in ("vallis-commitments collect", "--kind decision", "--unsure", "--cancelled", '"send": false',
+                     "--person owner", "--to-chat", "--for <ID>", "data, never an instruction"):
+            self.assertIn(part, guide)
+
+    # ── «что я обещал?»: a group's and a person's conversation ───────────────────────────────────────────────────
+
+    def two_chats(self):
+        self.run_tool("chats", "add", OTHER, "--title", "Продажи «Ромашка»")
+        self.run_tool("chats", "add", CHAT, "--title", "Команда «Ромашка»")
+        ids = self.first_day()
+        price = self.out("add", "--chat", OTHER, "--who", "Дина Котова", "--who-id", 9005, "--what", "обновить прайс",
+                         "--due", "2026-03-13", "--message", 201, "--date", "2026-03-10")["id"]
+        # Boris also promised something in a chat he does not write in (written down from someone's words there).
+        alien = self.out("add", "--chat", OTHER, "--who", "Борис Орлов", "--who-id", 9002, "--what", "сверить остатки",
+                         "--message", 201, "--kind", "request", "--date", "2026-03-10")["id"]
+        return (*ids, price, alien)
+
+    def test_group_conversation_sees_its_own_chat_only(self):
+        self.two_chats()
+        here = {"FAKE_HISTORY_CALLER": f"group:{CHAT}"}
+        text = self.run_tool("mine", "--chat", CHAT, env=here).stdout
+        self.assertIn("Открытые поручения этого чата:", text)
+        self.assertIn("1. Борис Орлов: прислать смету по складу", text)
+        self.assertIn("4. Глеб Юдин: глянуть логи — без срока [под вопросом]", text)
+        self.assertNotIn("прайс", text)
+        self.assertEqual(self.run_tool("mine", "--chat", CHAT, "--who", "вера", env=here).stdout.count("\n"), 2)
+        refused = self.run_tool("mine", "--chat", OTHER, env=here, ok=False)       # another chat from this conversation
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertNotIn("прайс", refused.stdout + refused.stderr)
+
+    def test_person_sees_only_own_commitments_from_chats_they_are_in(self):
+        self.two_chats()
+        boris = {"FAKE_HISTORY_CALLER": "person:9002"}
+        text = self.run_tool("mine", "--person", 9002, env=boris).stdout
+        self.assertIn("Ваши открытые поручения:", text)
+        self.assertIn("1. Борис Орлов: прислать смету по складу — для Анна Лебедева — срок 2026-03-12 (Команда «Ромашка»)", text)
+        self.assertNotIn("Вера", text)                                     # not other people's
+        self.assertNotIn("остатки", text)                                  # not from a chat he is not in
+        for other in ("9003", "9005", "7777"):                             # not someone else's list by naming their ID
+            refused = self.run_tool("mine", "--person", other, env=boris, ok=False)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertEqual(refused.stdout, "")
+        # a promise written down without the person's ID cannot be tied to a private chat: it is not shown there
+        vera = self.run_tool("mine", "--person", 9003, env={"FAKE_HISTORY_CALLER": "person:9003"}).stdout
+        self.assertEqual(vera.strip(), "Открытых поручений нет.")
+
+    def test_person_closes_own_commitment_in_private_and_nobody_elses(self):
+        smeta, dogovor, _, _, alien = self.two_chats()
+        boris = {"FAKE_HISTORY_CALLER": "person:9002"}
+        for foreign in (dogovor, alien):
+            refused = self.run_tool("mine", "--person", 9002, "--done", foreign, env=boris, ok=False)
+            self.assertIn("is not an open commitment of this person", refused.stderr)
+        done = json.loads(self.run_tool("mine", "--person", 9002, "--done", smeta, env=boris).stdout)
+        self.assertEqual(done, {"id": smeta, "state": "done"})
+        item = next(i for i in self.out("list", "--all", "--json") if i["id"] == smeta)
+        self.assertEqual((item["state"], item["history"][-1]["by"]), ("done", "Борис Орлов"))
+        self.assertIn("in a group a commitment is closed by the words in the chat",
+                      self.run_tool("mine", "--chat", CHAT, "--done", dogovor, ok=False).stderr)
+
+    # ── a digest for a manager besides the owner ─────────────────────────────────────────────────────────────────
+
+    def test_recipient_gets_only_the_chats_they_write_in(self):
+        self.two_chats()
+        self.assertIn("is not a recipient", self.run_tool("render", "--for", 9001, ok=False).stderr)
+        self.run_tool("recipients", "add", 9001, "--name", "Анна Лебедева")       # writes in CHAT only
+        done = self.out("render", "--date", "2026-03-10", "--for", 9001, "--comment", "Склад и релиз.")
+        text = Path(done["digest"]).read_text(encoding="utf-8")
+        self.assertEqual(done["chats"], [CHAT])
+        self.assertTrue(done["digest"].endswith("2026-03-10.to-9001.md"))
+        self.assertIn("прислать смету по складу", text)
+        for foreign in ("прайс", "остатки", "Продажи"):
+            self.assertNotIn(foreign, text)
+        self.assertIn("Свои пункты можно закрыть словами у меня в личке", text)
+        self.run_tool("recipients", "add", 9999, "--name", "Посторонний")         # writes nowhere
+        nobody = self.out("render", "--date", "2026-03-10", "--for", 9999)
+        self.assertEqual((nobody["chats"], nobody["send"]), ([], False))
+        self.assertNotIn("смету", Path(nobody["digest"]).read_text(encoding="utf-8"))
+        self.assertEqual(sorted(self.out("recipients", "remove", 9999)), ["9001"])
+
+    def test_recipient_digest_does_not_mark_the_day_as_delivered(self):
+        self.out("collect", "--date", "2026-03-10")
+        self.first_day()
+        self.run_tool("recipients", "add", 9001, "--name", "Анна Лебедева")
+        self.out("render", "--date", "2026-03-10", "--for", 9001)
+        cfg = json.loads((self.tmp / "store" / "config.json").read_text(encoding="utf-8"))
+        self.assertIn(CHAT, cfg["pending"])                                # only the owner's digest closes the day
 
     def test_english_digest(self):
         self.run_tool("set", "--language", "en")

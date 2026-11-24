@@ -52,14 +52,21 @@ def secrets_problem(commands, paths, guest):
     return None
 
 
-COMMITMENTS_REASON = ("This is a guest conversation: the list of commitments covers every chat of the organization "
-                      "and is read only in the owner's conversation. Tell the person it is not available here.")
-COMMITMENTS = re.compile(r"(\bvallis-commitments\b|vallis/commitments(?:[/\s'\"]|$)|\bVALLIS_COMMITMENTS_)")
+COMMITMENTS_REASON = ("This is a guest conversation: of the commitments only `vallis-commitments mine` works here "
+                      "(--chat <this chat> or --person <the person of this private chat>); the whole list is read "
+                      "in the owner's conversation. Tell the person what is not available here.")
+COMMITMENTS = re.compile(r"(\bvallis-commitments\b|vallis/commitments(?:[/\s'\"]|$)|\bVALLIS_COMMITMENTS_|\bVALLIS_PDF\b)")
+COMMITMENTS_MINE = re.compile(r"(?:^|[\s;&|(/`'\"])vallis-commitments\s+mine\b")
 
 
 def commitments_problem(commands, paths, guest):
-    """A guest turn does not read the commitments of other chats: neither by the command nor from its folder."""
-    if guest and any(COMMITMENTS.search(text) for text in (*commands, *paths)):
+    """A guest turn reads the commitments only through `mine`: the chat it serves or the person's own promises.
+    The command asks the bridge what this conversation may read; its folder and settings stay closed."""
+    if not guest:
+        return None
+    if any(COMMITMENTS.search(COMMITMENTS_MINE.sub(" ", command)) for command in commands):
+        return COMMITMENTS_REASON
+    if any(COMMITMENTS.search(path) for path in paths):
         return COMMITMENTS_REASON
     return None
 

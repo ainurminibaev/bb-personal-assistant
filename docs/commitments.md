@@ -26,10 +26,18 @@ time zone, language), `ledger.json`, `journal.jsonl`, `transcripts/<date>/<chat>
 - Only groups named by the owner; a private chat cannot be added.
 - The archive is read through `bb telegram-projects search-history`, so the bridge decides what the calling
   conversation may see; the command works from the owner's conversation and its subthreads.
-- A group's or a person's conversation cannot run the command or read its folder (guest thread guard): the list
-  covers every chat.
-- The digest goes to the owner. Posting it to the group and writing to people about their commitments are later
-  stages and need the owner's word.
+- A group's or a person's conversation runs only `vallis-commitments mine` (guest thread guard; skill
+  `my-commitments`): `--chat` shows the open commitments of that chat, `--person` — the person's own, from the chats
+  they take part in, and lets them close their own. The command asks the bridge whether the calling conversation
+  may read that chat or is that person's private chat; the rest of the list and its folder stay closed.
+- Other recipients besides the owner (`recipients add`): `render --for <ID>` takes only the chats that person
+  writes in — the bridge's own measure of membership.
+- The digest goes to the owner. A group gets a digest only when the owner turned it on for that group
+  (`chats add <chat> --post on`), and only of itself, without mentions. The digest of several chats never goes to
+  a chat or to another person. Writing to people about their commitments is a later stage.
+- PDF: `render --pdf` (or `set --pdf on` for every day) calls `vallis-pdf`; where it is missing or fails, the answer
+  says so and the digest goes as text.
+- A day with nothing new, closed, changed, overdue or due is not sent (`"send": false`).
 
 ## Check
 

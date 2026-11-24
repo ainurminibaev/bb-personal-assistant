@@ -72,6 +72,15 @@ class GuestGuard(unittest.TestCase):
             self.assertEqual(self.run_hook("s-owner", {"command": command}), 0, command)
         self.assertEqual(self.run_hook("s-group", {"file_path": "/var/lib/e/.local/share/vallis/commitments/digests/2026-03-10.md"}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "git log --grep commitments"}), 0)
+        # a guest reads only through `mine`: the chat it serves, or the person's own promises
+        for command in ("vallis-commitments mine --chat -1009990001111", "vallis-commitments mine --person 9002 --done 3",
+                        ["bash", "-lc", "vallis-commitments mine --chat -1009990001111 --who Борис"]):
+            self.assertEqual(self.run_hook("s-group", {"command": command}), 0, command)
+        for command in ("vallis-commitments mine --chat -1 ; vallis-commitments list",
+                        "VALLIS_COMMITMENTS_HISTORY=./fake vallis-commitments mine --person 9002",
+                        "vallis-commitments recipients add 9002", "vallis-commitments render --for 9002",
+                        "vallis-commitments mine --person 1 && cat ~/.local/share/vallis/commitments/ledger.json"):
+            self.assertEqual(self.run_hook("s-group", {"command": command}), 2, command)
 
     def test_group_thread_cannot_read_other_threads(self):
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread list"}), 2)
