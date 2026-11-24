@@ -34,9 +34,11 @@ conversation may send, and its refusal is an answer for the requester, not an ob
   `https://t.me/<your bot>` (he presses Start, the owner approves). On «да» — write in that group with a mention.
 - No shared group either — «не дошло»: the link is the only way; say so.
 
-**In another person's private chat** (they ask you to tell a third person): from here you can write only to this
-person. Say it plainly and name what works: they ask you in a shared group, where you mention the third person on
-the spot. Do not go to the owner for permission unless they ask you to.
+**In another person's private chat** (they ask you to tell a third person): never the third person's private
+chat. A group where both of them are: `bb telegram-projects send --chat "<group>" --text "[Борис](tg://user?id=<ID>),
+по просьбе Анны: …"` — always with «по просьбе <requester>». The bridge allows it only where both are in that
+group; it refuses (an older bridge refuses always) or there is no such group — say plainly that it did not go and
+what works: they ask you in a shared group themselves. Do not go to the owner for permission unless they ask you to.
 
 **A colleague agent asks you in a shared topic** — the same as a request in a group: mention the person there.
 
