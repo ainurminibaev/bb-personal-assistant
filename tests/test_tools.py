@@ -531,6 +531,38 @@ class Spaces(unittest.TestCase):
         self.assertEqual(tools.report("agents", [], [])["spaces"], [])
 
 
+class CatalogLines(unittest.TestCase):
+    """С87: with the tool catalog on, a line's MCP process goes to .bb/tool-sources.json, not to the engines."""
+
+    def test_catalog_on_only_when_installed_and_enabled(self):
+        self.assertFalse(tools.catalog_on({}))
+        self.assertTrue(tools.catalog_on({"tool-catalog": {"id": "tool-catalog", "enabled": True}}))
+        self.assertFalse(tools.catalog_on({"tool-catalog": {"id": "tool-catalog", "enabled": False}}))
+
+    def test_written_with_mode_600_beside_other_sources_and_removed_when_unselected(self):
+        root = Path(tempfile.mkdtemp())
+        (root / ".bb").mkdir()
+        (root / ".bb" / "tool-sources.json").write_text(json.dumps({"mcpServers": {"drive-old": {"command": "x"}}}))
+        spec = {"level": "organization", "command": ["vallis-secret", "run", "K", "--", "uvx", "pkg"], "env": {"A": "b"}}
+        self.assertEqual(tools.write_catalog(root, {"google-workspace": spec}), {})
+        path = root / ".bb" / "tool-sources.json"
+        data = json.loads(path.read_text())["mcpServers"]
+        self.assertEqual(data["google-workspace"], {"command": "vallis-secret", "args": ["run", "K", "--", "uvx", "pkg"], "env": {"A": "b"}})
+        self.assertIn("drive-old", data)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(tools.write_catalog(root, {}), {})
+        self.assertEqual(set(json.loads(path.read_text())["mcpServers"]), {"drive-old"})
+
+    def test_a_source_of_its_own_is_not_overwritten(self):
+        root = Path(tempfile.mkdtemp())
+        (root / ".bb").mkdir()
+        (root / ".bb" / "tool-sources.json").write_text(json.dumps({"mcpServers": {"google-workspace": {"command": "mine"}}}))
+        errors = tools.write_catalog(root, {"google-workspace": {"command": ["x"], "env": {}}})
+        self.assertIn("already has its own", errors["google-workspace"])
+        self.assertEqual(json.loads((root / ".bb" / "tool-sources.json").read_text())["mcpServers"]["google-workspace"],
+                         {"command": "mine"})
+
+
 class McpProcess(unittest.TestCase):
     """A tools.yml line of kind mcp (С51): written into both settings files, keys from the store, login state."""
 

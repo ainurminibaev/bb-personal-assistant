@@ -305,8 +305,11 @@ def main():
         secret_problems.append(note)
     servers, mcp_problems = tools.mcp_servers(description, employee, args.employee) if clone is not None else ({}, [])
     processes = tools.mcp_processes(REGISTRY, decisions, account)
-    mcp_errors = (tools.write_mcp(root, {**servers, **processes}, set(keys))
-                  if clone is not None or processes else {})
+    # С87: with the tool catalog on, the lines' MCP processes go to the catalog, not into every conversation.
+    to_catalog = processes if tools.catalog_on({p["id"]: p for p in bb("plugin", "list")["plugins"]}) else {}
+    engines = {**servers, **{k: v for k, v in processes.items() if k not in to_catalog}}
+    mcp_errors = (tools.write_mcp(root, engines, set(keys)) if clone is not None or processes else {})
+    mcp_errors.update(tools.write_catalog(root, to_catalog))
     for name in processes:
         if name in mcp_errors:
             tool_errors[name] = mcp_errors.pop(name)

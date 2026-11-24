@@ -1142,6 +1142,49 @@ def write_mcp(root, servers, stored=()):
     return errors
 
 
+CATALOG_FILE = Path(".bb") / "tool-sources.json"
+
+
+def catalog_on(plugins):
+    """The tool catalog (С87) is installed and on: MCP processes of tools.yml lines go to it, not to every conversation."""
+    p = (plugins or {}).get("tool-catalog")
+    return bool(p) and p.get("enabled", True) is not False and p.get("status") not in ("disabled", "error")
+
+
+def write_catalog(root, processes):
+    """MCP processes of tools.yml lines into the project's catalog file (.bb/tool-sources.json, mode 600): the catalog
+    serves them through catalog_search / tool_call; the engines no longer start them in every conversation.
+    Entries of other sources in the file stay; the lines this installer wrote earlier and no longer selects go."""
+    path = root / CATALOG_FILE
+    managed_file = root / "local" / "catalog-managed.json"
+    try:
+        managed = set(json.loads(managed_file.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        managed = set()
+    if not processes and not managed:
+        return {}
+    errors = {}
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    entries = data.setdefault("mcpServers", {})
+    for server in managed - set(processes):
+        entries.pop(server, None)
+    written = []
+    for server, spec in processes.items():
+        if server in entries and server not in managed:
+            errors[server] = f"{CATALOG_FILE} already has its own {server}: remove it or rename the description"
+            continue
+        entries[server] = {"command": spec["command"][0], "args": spec["command"][1:], "env": dict(spec.get("env") or {})}
+        written.append(server)
+    path.parent.mkdir(exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    path.chmod(0o600)
+    managed_file.parent.mkdir(mode=0o700, exist_ok=True)
+    managed_file.write_text(json.dumps(sorted(written)) + "\n", encoding="utf-8")
+    return errors
+
+
 def mcp_state(root, servers, errors, stored=()):
     rows = []
     try:
