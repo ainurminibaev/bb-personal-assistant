@@ -7,7 +7,7 @@ import plugin from "../dist/server.js";
 
 // An installation folder and a BB with: the owner's private chat (bound to topic 0), a group topic conversation, and
 // subthreads of both. Schedules: the case's own one is on until removed.
-async function setup({ conversations = null } = {}) {
+async function setup({ conversations = null, binding = { projectId: "proj", threadId: "owner-chat" }, pluginDir = null } = {}) {
   const root = mkdtempSync(join(tmpdir(), "cases-"));
   const threads = {
     "owner-chat": { id: "owner-chat", title: "🟢 Действующий · Личный помощник", parentThreadId: null },
@@ -22,9 +22,9 @@ async function setup({ conversations = null } = {}) {
   const state = { owner: "owner-chat", live: new Set(["auto_a"]) };
   let command, contributed;
   await plugin({
-    settings: { define: () => ({ get: async () => ({ projectId: "proj", threadId: "owner-chat" }), onChange() {} }) },
+    settings: { define: () => ({ get: async () => binding, onChange() {} }) },
     agents: { configure() {}, registerTool() {}, contributeInstructions: p => { contributed = p; } },
-    storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => [], get() {}, run() {} }) }), kv: { get: async () => undefined, set: async () => {} } },
+    storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => pluginDir ? [{ name: "main", file: join(pluginDir, "data.db") }] : [], get() {}, run() {} }) }), kv: { get: async () => undefined, set: async () => {} } },
     cli: { register: c => { command = c; } },
     rpc: { register() {} },
     background: { schedule() {}, service() {} },
@@ -147,5 +147,16 @@ test("a terminal of the server sees every chat's cases from the installation's f
   assert.match(list.stdout, /Дело лички/);
   assert.match(list.stdout, /Дело группы/);
   assert.match((await terminal("open", "--title", "x")).stderr, /from its conversation/);
+  assert.equal((await terminal("check")).exitCode, 0);
+});
+
+test("without any setting the cases live in the plugin's own data folder: a stand and a fresh employee need nothing", async () => {
+  const pluginDir = mkdtempSync(join(tmpdir(), "plugin-"));
+  const { run, terminal } = await setup({ binding: {}, pluginDir });
+  const id = (await run("group-task", "open", "--title", "Итог к 10:00")).stdout.split("\n")[0];
+  assert.ok(existsSync(join(pluginDir, "local", "cases", `${id}.md`)));
+  const list = await terminal("list");
+  assert.equal(list.exitCode, 0, list.stderr);
+  assert.match(list.stdout, /Итог к 10:00/);
   assert.equal((await terminal("check")).exitCode, 0);
 });

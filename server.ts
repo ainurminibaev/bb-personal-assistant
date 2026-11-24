@@ -85,7 +85,18 @@ export default async function personalAssistant(bb: BbPluginApi) {
   // Case cards live in the installation's folder (the coordinator project of the plugin settings), not in the folder of
   // the thread's project: a group moved into a folder of its own (С76) keeps its cases; the command gives a chat only
   // its own cases, so the group never reads the files itself.
-  const casesRoot = (projectId: string) => (binding.projectId && folders.get(binding.projectId)) || folders.get(projectId);
+  // Without a coordinator project in the settings (a stand, an employee installed by setup.py) the cases live in this
+  // plugin's own data folder (<BB data>/plugins/personal-assistant/, next to its data.db): it exists on every
+  // installation from the first load, survives updates and goes into the backup of BB's data.
+  const pluginFolder = (() => {
+    try {
+      const rows = bb.storage.database().prepare("pragma database_list").all() as { name: string; file: string }[];
+      const main = rows.find(r => r.name === "main")?.file;
+      return main ? dirname(main) : undefined;
+    } catch { return undefined; }
+  })();
+  const casesRoot = (projectId?: string) =>
+    (binding.projectId && folders.get(binding.projectId)) || pluginFolder || (projectId ? folders.get(projectId) : undefined);
   // С94: the owner pauses this employee; while paused every turn but the owner's private chat waits in BB's queue.
   const pause = pauseControl(bb);
   bb.experimental_hooks?.on("message.dispatch", ctx => pause.decide(ctx));
@@ -155,7 +166,7 @@ export default async function personalAssistant(bb: BbPluginApi) {
         if (ctx.projectId && !folders.has(ctx.projectId)) await refreshFolders().catch(() => {});
         if (binding.projectId && !folders.has(binding.projectId)) await refreshFolders().catch(() => {});
         const project = ctx.projectId ?? binding.projectId;
-        return runCase(bb, argv.slice(1), { ...ctx, projectId: project }, project ? casesRoot(project) : undefined,
+        return runCase(bb, argv.slice(1), { ...ctx, projectId: project }, casesRoot(project),
           id => Boolean(binding.threadId) && id === binding.threadId);
       }
       if (argv[0] === "code-to-owner") {

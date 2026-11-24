@@ -40,9 +40,15 @@ export async function chatOf(sdk: BbPluginApi["sdk"], threadId: string): Promise
 
 const automationsList = z.array(z.object({ id: z.string(), enabled: z.boolean() }).passthrough());
 
-async function liveSchedules(sdk: BbPluginApi["sdk"], projectId: string): Promise<Set<string>> {
-  const list = await sdk.plugins.callRpc({ pluginId: "automations", method: "automations_list", input: { projectId }, outputSchema: automationsList });
-  return new Set(list.filter(a => a.enabled).map(a => a.id));
+/** Enabled schedules of the project, or of every project of this BB when there is none (a terminal). */
+async function liveSchedules(sdk: BbPluginApi["sdk"], projectId?: string): Promise<Set<string>> {
+  const ids = projectId ? [projectId] : ((await sdk.projects.list({})) as { id: string }[]).map(p => p.id);
+  const out = new Set<string>();
+  for (const id of ids) {
+    const list = await sdk.plugins.callRpc({ pluginId: "automations", method: "automations_list", input: { projectId: id }, outputSchema: automationsList });
+    for (const a of list) if (a.enabled) out.add(a.id);
+  }
+  return out;
 }
 
 /** Flags: `--name value`, repeated ones collected; positionals separately. */
@@ -70,7 +76,6 @@ export async function runCase(bb: BbPluginApi, argv: string[], ctx: { threadId?:
   if (!root) return { exitCode: 1, stderr: ctx.threadId
     ? "This thread has no installation folder (project source)."
     : "From a terminal: set projectId (the coordinator project) in the personal-assistant plugin settings — the cases live in its folder." };
-  if (!ctx.projectId) return { exitCode: 1, stderr: "No project: run it from a thread of the installation or set projectId in the plugin settings." };
   const f = flags(rest);
   // A terminal of the server (no thread) is a person with access to the account: it sees every chat's cases, like
   // the coordinator; a case is opened only from its conversation.
