@@ -28,8 +28,12 @@ time zone, language), `ledger.json`, `journal.jsonl`, `transcripts/<date>/<chat>
   conversation may see; the command works from the owner's conversation and its subthreads.
 - A group's or a person's conversation cannot run the command or read its folder (guest thread guard): the list
   covers every chat.
-- The digest goes to the owner. Posting it to the group and writing to people about their commitments are later
-  stages and need the owner's word.
+- The digest goes to the owner. A group gets a digest only when the owner turned it on for that group
+  (`chats add <chat> --post on`), and only of itself, without mentions. The digest of several chats never goes to
+  a chat or to another person. Writing to people about their commitments is a later stage.
+- PDF: `render --pdf` (or `set --pdf on` for every day) calls `vallis-pdf`; where it is missing or fails, the answer
+  says so and the digest goes as text.
+- A day with nothing new, closed, changed, overdue or due is not sent (`"send": false`).
 
 ## Check
 

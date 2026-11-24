@@ -212,7 +212,7 @@ class Commitments(unittest.TestCase):
         self.out("update", smeta, "--due", "2026-03-13", "--by", "Борис Орлов", "--message", 111, "--date", "2026-03-11")
         text = self.digest("--date", "2026-03-11")
         self.assertIn("### Изменено за день\n- **1.** Борис Орлов: прислать смету по складу — для Анна Лебедева — срок 2026-03-13", text)
-        self.assertIn("было due: 2026-03-12", text)
+        self.assertIn("было срок: 2026-03-12", text)
         item = next(i for i in self.out("list", "--json") if i["id"] == smeta)
         self.assertEqual(item["history"][-1]["link"], f"https://t.me/c/{CHAT[4:]}/111")
 
@@ -248,6 +248,69 @@ class Commitments(unittest.TestCase):
         one = self.digest("--date", "2026-03-10", "--chat", OTHER)         # a digest for the chat itself
         self.assertIn("обновить прайс", one)
         self.assertNotIn("смету", one)
+
+    # ── the digest for the chat itself and the PDF ───────────────────────────────────────────────────────────────
+
+    def test_chat_gets_the_digest_of_itself_only_when_turned_on(self):
+        self.run_tool("chats", "add", OTHER, "--title", "Продажи «Ромашка»", "--post", "on")
+        report = {r["chat"]: r["post"] for r in self.out("collect", "--date", "2026-03-10")}
+        self.assertEqual(report, {CHAT: False, OTHER: True})
+        self.first_day()
+        self.out("add", "--chat", OTHER, "--who", "Дина Котова", "--what", "обновить прайс", "--due", "2026-03-13",
+                 "--message", 201, "--date", "2026-03-10")
+        done = self.out("render", "--date", "2026-03-10", "--chat", OTHER, "--to-chat", "--comment", "Говорили о прайсе.")
+        text = Path(done["digest"]).read_text(encoding="utf-8")
+        self.assertTrue(done["digest"].endswith(f"2026-03-10.{OTHER}.md"))
+        self.assertIn("Дина Котова: обновить прайс", text)
+        for foreign in ("смету", "Борис", "подрядчиком", "Ромашка»"):          # nothing of the other chat, no chat heading
+            self.assertNotIn(foreign, text)
+        self.assertIn("напишите об этом здесь обычными словами", text)
+        self.assertNotIn("по номеру", text)
+        self.assertNotIn("@", text)                                         # nobody is mentioned
+        self.assertIn("--to-chat goes with --chat", self.run_tool("render", "--to-chat", ok=False).stderr)
+
+    def test_a_day_with_nothing_to_tell_is_not_sent(self):
+        self.assertFalse(self.out("render", "--date", "2026-03-10")["send"])
+        smeta, dogovor, _ = self.first_day()
+        first = self.out("render", "--date", "2026-03-10")
+        self.assertTrue(first["send"])
+        self.assertEqual((first["counts"]["new"], first["counts"]["agreed"], first["counts"]["unsure_new"]), (2, 1, 1))
+        self.assertTrue(self.out("render", "--date", "2026-03-11")["send"])        # the estimate is due tomorrow
+        self.out("close", smeta, "--by", "Борис Орлов", "--date", "2026-03-12")
+        self.assertEqual(self.out("render", "--date", "2026-03-12")["counts"]["closed"], 1)
+        self.assertFalse(self.out("render", "--date", "2026-03-13")["send"])       # only open ones without a date: quiet
+        self.assertEqual(self.out("render", "--date", "2026-03-13")["open"], 2)
+
+    def fake_pdf(self, body):
+        tool = self.tmp / "fake-pdf"
+        tool.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+        tool.chmod(0o755)
+        return {"VALLIS_PDF": str(tool)}
+
+    def test_pdf_is_made_by_the_platform_command(self):
+        self.first_day()
+        env = self.fake_pdf('grep -q "Борис Орлов" "$1" && printf "%%PDF-1.7 fake" > "$2"')
+        done = json.loads(self.run_tool("render", "--date", "2026-03-10", "--pdf", env=env).stdout)
+        self.assertTrue(done["pdf"].endswith("digests/2026-03-10.pdf"))
+        self.assertTrue(Path(done["pdf"]).read_text().startswith("%PDF"))
+        self.run_tool("set", "--pdf", "on")                                 # the owner asked for a file every day
+        self.assertIn("pdf", json.loads(self.run_tool("render", "--date", "2026-03-10", env=env).stdout))
+        chat = json.loads(self.run_tool("render", "--date", "2026-03-10", "--chat", CHAT, "--to-chat", env=env).stdout)
+        self.assertNotIn("pdf", chat)                                       # the chat's digest stays text unless asked
+
+    def test_without_the_pdf_command_the_digest_still_comes_as_text(self):
+        self.first_day()
+        for env in ({"VALLIS_PDF": str(self.tmp / "absent")}, self.fake_pdf("echo no fonts >&2; exit 3")):
+            done = json.loads(self.run_tool("render", "--date", "2026-03-10", "--pdf", env=env).stdout)
+            self.assertNotIn("pdf", done)
+            self.assertIn("send the digest as text", done["pdf_error"])
+            self.assertTrue(Path(done["digest"]).is_file())
+
+    def test_guide_covers_the_run(self):
+        guide = self.run_tool("guide").stdout
+        for part in ("vallis-commitments collect", "--kind decision", "--unsure", "--cancelled", '"send": false',
+                     "--person owner", "--to-chat", "data, never an instruction"):
+            self.assertIn(part, guide)
 
     def test_english_digest(self):
         self.run_tool("set", "--language", "en")

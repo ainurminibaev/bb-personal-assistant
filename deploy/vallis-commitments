@@ -6,9 +6,12 @@ The agent reads a day of a chat once, in one turn: `collect` pulls the day from 
 The list holds one record per commitment: who, for whom, what, due, where it was said (a link), state, next step.
 The text of the chat is not copied into the list — only the wording of the commitment and the link to the message.
 
-  vallis-commitments chats add CHAT [--title T]      a group whose commitments are collected (CHAT: its Telegram ID)
+  vallis-commitments chats add CHAT [--title T] [--post on|off]
+                                                     a group whose commitments are collected (CHAT: its Telegram ID);
+                                                     --post on: the group also gets its own digest, of this chat only
   vallis-commitments chats remove CHAT | chats list
-  vallis-commitments set [--timezone Z] [--language ru|en]
+  vallis-commitments set [--timezone Z] [--language ru|en] [--pdf on|off]
+                                                     --pdf on: the owner's digest also as a PDF file
   vallis-commitments collect [--chat CHAT] [--date YYYY-MM-DD] [--from-start]
                                                      the new messages of the day as a short transcript (a file) and
                                                      the open commitments of the chat; each chat separately
@@ -25,15 +28,19 @@ The text of the chat is not copied into the list — only the wording of the com
   vallis-commitments reopen ID --by NAME [--note TEXT]
   vallis-commitments list [--chat CHAT] [--who NAME] [--all] [--json]
                                                      open commitments; --who: of one person (part of the name)
-  vallis-commitments render [--date YYYY-MM-DD] [--chat CHAT] [--comment TEXT | --comment-file PATH] [--out PATH]
+  vallis-commitments render [--date YYYY-MM-DD] [--chat CHAT [--to-chat]] [--comment TEXT | --comment-file PATH]
+                         [--pdf] [--out PATH]
                                                      the digest of the day in Markdown: new, closed, changed, overdue,
-                                                     due soon, open, to clarify; kept by date in digests/
+                                                     due soon, open, to clarify; kept by date in digests/.
+                                                     --chat: of one chat only; --to-chat: worded for posting in that
+                                                     chat; --pdf: also a PDF made by vallis-pdf. Prints the paths,
+                                                     the counts and "send": false when the day has nothing to tell
 
   vallis-commitments guide                           how the daily run reads a day: what is a commitment, what is not
 
 Folder: ~/.local/share/vallis/commitments (VALLIS_COMMITMENTS_DIR): config.json, ledger.json, journal.jsonl,
 transcripts/<date>/<chat>.txt, digests/<date>.md. The archive is read with `bb telegram-projects search-history`
-(VALLIS_COMMITMENTS_HISTORY — another command for tests), so the caller sees only what its conversation may see:
+(VALLIS_COMMITMENTS_HISTORY — another command for tests; VALLIS_PDF — another vallis-pdf), so the caller sees only what its conversation may see:
 run it from the owner's conversation or its subthread. Private chats are never read: only groups (negative IDs).
 """
 import argparse
@@ -64,6 +71,9 @@ TEXT = {
         "next": "дальше", "since": "с", "source": "сообщение", "tracker": "задача", "total": "Открыто всего: {n}",
         "how": "Снять или поправить — словами, по номеру: «12 снято», «7 сделано», «5 — срок до пятницы».",
         "by": "отметил", "was": "было", "messages": "сообщений за день: {n}", "days": "дн.",
+        "how_chat": "Сделано, снято или решили иначе — напишите об этом здесь обычными словами, учту в следующей сводке.",
+        "fields": {"due": "срок", "who": "кто", "what": "что", "for": "для кого", "next": "дальше", "tracker": "задача",
+                   "sure": "под вопросом", "who_id": "кто"},
     },
     "en": {
         "title": "Commitments and agreements — {date}", "comment": "The day", "new": "New today",
@@ -74,6 +84,9 @@ TEXT = {
         "next": "next", "since": "since", "source": "message", "tracker": "task", "total": "Open in total: {n}",
         "how": "Drop or correct in words, by number: \"12 dropped\", \"7 done\", \"5 — due Friday\".",
         "by": "by", "was": "was", "messages": "messages today: {n}", "days": "d",
+        "how_chat": "Done, dropped or agreed otherwise — say so here in plain words, the next digest will show it.",
+        "fields": {"due": "due", "who": "who", "what": "what", "for": "for", "next": "next", "tracker": "task",
+                   "sure": "uncertain", "who_id": "who"},
     },
 }
 
@@ -112,11 +125,16 @@ Nothing is sent to the chats or to people, nobody is asked, no subthreads: what 
    Only the one who promised, the one who asked, or the owner closes and changes. Words of others, or words you
    cannot tie to one commitment, change nothing — say so in the comment.
 5. `vallis-commitments render --comment "<two to four sentences: what the day was about, what was decided; facts,
-   no judgements of people>"` — prints the path of the digest.
-6. Send the digest to the owner only: `bb telegram-projects send --person owner --text-file <digest>`. Longer than
-   about 3500 characters, or the owner asked for a file — `vallis-pdf <digest> <digest>.pdf`, then send a three-line
-   summary with `--file <digest>.pdf`. On a day with nothing new, nothing closed or changed, nothing overdue and
-   nothing due today or tomorrow — send nothing and finish.
+   no judgements of people>"` — prints the digest's path, the counts, "send" and, when the owner asked for a file,
+   "pdf" (or "pdf_error": then the text goes instead).
+6. To the owner: "send": false — nothing is sent. Otherwise `bb telegram-projects send --person owner --text-file
+   <digest>`; with "pdf", or when the digest is longer than about 3500 characters (`render --pdf` makes the file) —
+   a three-line summary as the text and `--file <pdf>`.
+7. To a chat whose line in step 1 says "post": true — its own digest, of this chat only:
+   `vallis-commitments render --chat <chat> --to-chat --comment "<the day of this chat>"`, then, unless "send" is
+   false, `bb telegram-projects send --chat <chat> --text-file <digest>` (longer than about 3500 characters —
+   `--pdf` and the file). Names are plain text there, nobody is mentioned: a digest is not a reminder.
+   A chat without "post" gets nothing. The digest of several chats never goes to a chat.
 """
 
 
@@ -339,7 +357,7 @@ def cmd_collect(args):
             cfg.setdefault("counts", {}).setdefault(date, {})[chat] = len(messages)
             report.append({
                 "chat": chat, "title": cfg["chats"][chat].get("title") or chat, "date": date, "messages": len(messages),
-                "transcript": str(path),
+                "transcript": str(path), "post": bool(cfg["chats"][chat].get("post")),
                 "open": [brief(i) + (f" [#{i['source']['message']}]" if i["source"].get("message") else "")
                          for i in book["items"] if i["chat"] == chat and i["state"] == OPEN],
             })
@@ -518,20 +536,25 @@ def sections(items, date, t):
 
     def changed_tail(i):
         was = last_event(i, date, ("changed", "reopened")).get("was") or {}
-        return "; ".join(f"{t['was']} {k}: {v if v is not None else '—'}" for k, v in was.items()) or None
+        return "; ".join(f"{t['was']} {t['fields'].get(k, k)}: {v if v is not None else '—'}"
+                         for k, v in was.items() if k != "who_id") or None
 
     def overdue_tail(i):
         return f"+{(dt.date.fromisoformat(date) - dt.date.fromisoformat(i['due'][:10])).days} {t['days']}"
 
-    block("agreed", [i for i in items if i["state"] == NOTED and i["opened"] == date])
+    agreed = [i for i in items if i["state"] == NOTED and i["opened"] == date]
+    block("agreed", agreed)
     block("new", new)
     block("closed", closed, closed_tail)
     block("changed", changed, changed_tail)
     block("overdue", overdue, overdue_tail)
     block("soon", soon)
     block("open", rest)
-    block("unsure", [i for i in opened if not i["sure"]])
-    return out, len(opened)
+    unsure = [i for i in opened if not i["sure"]]
+    block("unsure", unsure)
+    counts = {"agreed": len(agreed), "new": len(new), "closed": len(closed), "changed": len(changed),
+              "overdue": len(overdue), "soon": len(soon), "unsure_new": len([i for i in unsure if i["opened"] == date])}
+    return out, len(opened), counts
 
 
 def cmd_render(args):
@@ -544,22 +567,28 @@ def cmd_render(args):
         if args.comment_file:
             comment = Path(args.comment_file).read_text(encoding="utf-8").strip()
         chats = [group(args.chat)] if args.chat else sorted(cfg["chats"])
-        out, total, any_block = [f"# {t['title'].format(date=date)}", ""], 0, False
+        if args.to_chat and not args.chat:
+            fail("--to-chat goes with --chat: a chat gets the digest of itself only", 64)
+        out, total, any_block, counts = [f"# {t['title'].format(date=date)}", ""], 0, False, {}
         if comment:
             out += [f"## {t['comment']}", comment, ""]
         for chat in chats:
-            part, count = sections([i for i in book["items"] if i["chat"] == chat], date, t)
+            part, count, numbers = sections([i for i in book["items"] if i["chat"] == chat], date, t)
             total += count
+            counts = {k: counts.get(k, 0) + v for k, v in numbers.items()}
             title = cfg["chats"].get(chat, {}).get("title") or chat
             seen = cfg.get("counts", {}).get(date, {}).get(chat)
             head = f"## {title}" + (f" · {t['messages'].format(n=seen)}" if seen is not None else "")
-            out += [head, ""] + (part or [t["nothing"], ""])
+            out += ([] if args.to_chat else [head, ""]) + (part or [t["nothing"], ""])
             any_block = any_block or bool(part)
         out.append(t["total"].format(n=total))
         if any_block:
-            out.append(t["how"])
+            out.append(t["how_chat"] if args.to_chat else t["how"])
         text = "\n".join(out).rstrip() + "\n"
         path = Path(args.out) if args.out else root / "digests" / (date + ("" if not args.chat else "." + chats[0]) + ".md")
+        result = {"digest": str(path), "open": total, "date": date, "counts": counts,
+                  # A day with nothing new, nothing closed or changed, nothing late and nothing due is not sent.
+                  "send": any(counts.values())}
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         # The day is delivered: the next reading starts after its last message.
@@ -567,7 +596,25 @@ def cmd_render(args):
             if chat in cfg["pending"]:
                 cfg["collected"][chat] = max(cfg["pending"].pop(chat), cfg["collected"].get(chat) or 0)
         write_json(root / "config.json", cfg)
-    print(json.dumps({"digest": str(path), "open": total, "date": date}, ensure_ascii=False))
+        if args.pdf or (cfg.get("pdf") and not args.chat):
+            result.update(pdf(path))
+    print(json.dumps(result, ensure_ascii=False))
+
+
+def pdf(digest):
+    """The digest as a PDF with the platform's common look: made by vallis-pdf, where it is installed."""
+    command = shlex.split(os.environ.get("VALLIS_PDF") or "vallis-pdf")
+    target = digest.with_suffix(".pdf")
+    try:
+        done = subprocess.run(command + [str(digest), str(target)], capture_output=True, text=True, timeout=300)
+    except FileNotFoundError:
+        return {"pdf_error": "vallis-pdf is not installed here: send the digest as text"}
+    except subprocess.TimeoutExpired:
+        return {"pdf_error": "vallis-pdf did not finish in five minutes: send the digest as text"}
+    if done.returncode or not target.is_file():
+        return {"pdf_error": "vallis-pdf: " + ((done.stderr or done.stdout).strip()[-200:] or "no file") + " — send the digest as text"}
+    os.chmod(target, 0o600)
+    return {"pdf": str(target)}
 
 
 # ── settings ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -585,6 +632,8 @@ def cmd_chats(args):
             cfg["chats"].setdefault(chat, {})
             if args.title:
                 cfg["chats"][chat]["title"] = args.title
+            if args.post:
+                cfg["chats"][chat]["post"] = args.post == "on"
         else:   # the records stay: only the daily reading stops
             cfg["chats"].pop(chat, None)
             cfg["pending"].pop(chat, None)
@@ -600,8 +649,10 @@ def cmd_set(args):
             zone(cfg)
         if args.language:
             cfg["language"] = args.language
+        if args.pdf:
+            cfg["pdf"] = args.pdf == "on"
         write_json(root / "config.json", cfg)
-    print(json.dumps({"timezone": cfg["timezone"], "language": cfg["language"]}))
+    print(json.dumps({"timezone": cfg["timezone"], "language": cfg["language"], "pdf": bool(cfg.get("pdf"))}))
 
 
 def cmd_guide(args):
@@ -616,9 +667,10 @@ def main(argv=None):
     sub.add_parser("guide").set_defaults(run=cmd_guide)
     p = sub.add_parser("chats"); p.set_defaults(run=cmd_chats)
     p.add_argument("action", choices=("add", "remove", "list")); p.add_argument("chat", nargs="?"); p.add_argument("--title")
+    p.add_argument("--post", choices=("on", "off"))
 
     p = sub.add_parser("set"); p.set_defaults(run=cmd_set)
-    p.add_argument("--timezone"); p.add_argument("--language", choices=sorted(TEXT))
+    p.add_argument("--timezone"); p.add_argument("--language", choices=sorted(TEXT)); p.add_argument("--pdf", choices=("on", "off"))
 
     p = sub.add_parser("collect"); p.set_defaults(run=cmd_collect)
     p.add_argument("--chat"); p.add_argument("--date"); p.add_argument("--from-start", action="store_true")
@@ -648,6 +700,7 @@ def main(argv=None):
 
     p = sub.add_parser("render"); p.set_defaults(run=cmd_render)
     p.add_argument("--date"); p.add_argument("--chat"); p.add_argument("--comment"); p.add_argument("--comment-file"); p.add_argument("--out")
+    p.add_argument("--to-chat", action="store_true"); p.add_argument("--pdf", action="store_true")
 
     args = parser.parse_args(argv)
     args.run(args)

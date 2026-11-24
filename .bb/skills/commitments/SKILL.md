@@ -47,7 +47,12 @@ asks for a digest now («сведи сегодня») — do the same here, for 
   `update <number> --due <date> --by …`, `update <number> --sure` for a confirmed uncertain one. Several numbers in one
   message — each its own command; answer with one line of what changed.
 - «Это ещё не сделано» about a closed one — `reopen <number> --by …`.
-- «Присылай PDF» — from now on the daily run sends the file: add this wish to the schedule's prompt.
+- «Присылай PDF» — `vallis-commitments set --pdf on`: the daily run sends the file with a three-line summary.
+  «Пришли отчёт за сегодня файлом» — `vallis-commitments render --pdf` and send it here.
+- «Сводку по этому чату — в сам чат» — `vallis-commitments chats add <chat ID> --post on` (`--post off` stops it):
+  from the next run the group gets the digest of itself only, without mentions. Tell the owner that the people of
+  the group will see it.
 
-Do not write to people about their commitments and do not post the digest to the group unless the owner asked for
-exactly that in this conversation: by default the digest goes to the owner only.
+Do not write to people about their commitments, and do not post a digest to a group the owner did not turn on in
+this conversation: by default the digest goes to the owner only. The digest of several chats never goes to a chat
+or to another person: a person may see only the chats they are in themself.
