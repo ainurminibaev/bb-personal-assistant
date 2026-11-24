@@ -53,6 +53,13 @@ asks for a digest now («сведи сегодня») — do the same here, for 
   from the next run the group gets the digest of itself only, without mentions. Tell the owner that the people of
   the group will see it.
 
+- «Присылай сводку и Анне» — `vallis-commitments recipients add <her Telegram ID> --name "<name>"` (`recipients
+  remove` stops it). She gets a digest of the chats she writes in herself and nothing of the others — the command
+  checks it at every run; tell the owner which chats that is now (`render --for <ID>` names them). Her private chat
+  with you must be open: otherwise the run tells you it did not reach her.
+- People ask «что я обещал?» in their group or private chat themselves: those conversations have their own skill
+  and see only their own chat or their own promises.
+
 Do not write to people about their commitments, and do not post a digest to a group the owner did not turn on in
 this conversation: by default the digest goes to the owner only. The digest of several chats never goes to a chat
 or to another person: a person may see only the chats they are in themself.

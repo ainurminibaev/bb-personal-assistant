@@ -94,8 +94,11 @@ test("the commitments skill comes only to the owner's conversation, where vallis
     const { instructions } = await load(owner);
     const config = (projectId, threadId) => instructions({project: {id: projectId}, thread: {id: threadId}});
     assert.ok(config(owner.projectId, owner.threadId).skills.includes("commitments"));
-    assert.ok(!config(owner.projectId, "group").skills.includes("commitments"));
-    assert.ok(!config("other", "group").skills.includes("commitments"));
+    assert.ok(!config(owner.projectId, owner.threadId).skills.includes("my-commitments"));
+    for (const guest of [config(owner.projectId, "group"), config("other", "group")]) {
+      assert.ok(!guest.skills.includes("commitments"));
+      assert.ok(guest.skills.includes("my-commitments"));
+    }
   } finally {
     process.env.PATH = path;
   }
