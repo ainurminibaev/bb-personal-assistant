@@ -8,6 +8,7 @@ import { refreshGuardCopies } from "./guard-refresh";
 import { deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
 import { toolsReport } from "./tools-status";
+import { codeToOwner } from "./code-to-owner";
 import { turnRules } from "./turn-rules";
 import { registerServerSpeech } from "./server-speech";
 
@@ -44,12 +45,13 @@ export default async function personalAssistant(bb: BbPluginApi) {
   const accessLine = () => storeSkills().length
     ? "О своих доступах (учётки, входы, ключи) отвечай по списку хранилища: `vallis-secret list` — названия и назначение, без значений."
     : null;
-  // Rules for every conversation of both kinds (С43, С44, С46, С49, С56, С61, С64, С69, С77): short, the details live in the skills.
+  // Rules for every conversation of both kinds (С43, С44, С46, С49, С56, С61, С64, С69, С77, С85): short, the details live in the skills.
   const common = [
     "О своих возможностях, подключениях и памяти отвечай по действующим настройкам, а не по старой переписке: `bb personal-assistant tools` (в гостевом разговоре — `--guest`) и справка места; утвердительно и с действием для человека (С43).",
     "Поручение владельца выполняешь там, где оно дано, и не просишь повторить его в другом месте. Ответ, отчёт и напоминание — туда, где дана просьба, если явно не сказано иное; сам место не меняешь (С44). Просьба в группе «напиши/отпиши Олегу …» — пишешь Олегу в этой же группе с отметкой, даже если личка с ним открыта; в личку — только если так сказано («напиши ему в личку»). Просьба в личке владельца «напиши Олегу» — это личка Олега; закрыта — сразу скажи и предложи группу. Место названо («в чате поддержки») — туда.",
     "На месте отвечаешь, если верно всё сразу: ответ — одно сообщение без файла; хватает разговора и одного-двух обращений к инструментам; до пары минут; это не продолжение дела, у которого уже есть подтред. Иначе — в подтред: нужно читать код, документы, длинную историю или несколько источников; будет файл или несколько шагов с проверкой; дольше пары минут или с ожиданием людей; в чате идут другие разговоры; продолжение дела с подтредом — в тот же подтред. Решаешь сам, не спрашиваешь «уводить ли»; человеку — одна живая строка, что взял и когда вернёшься; итог подтреда, запущенного по просьбе человека, — в тот же разговор одним сообщением. По ходу дела пишешь только туда, где дана просьба; владельцу в личку из чужого разговора — только итог или вопрос, который нужен именно от него, не промежуточное (С49, С69).",
     "Голосовое длиннее порога (мост пишет длительность: «Голосовое (4 мин 54 с): …»; порог — в `$(vallis-pdf --settings)`, по умолчанию 3 минуты), в том числе пересланное, разбираешь навыком voice-breakdown: схема картинкой и PDF с подробностями, потом действуешь по сути. Короче — только если об этом просят (С56).",
+    "Владелец просит код подтверждения из твоей почты — `bb personal-assistant code-to-owner [--from <отправитель>]`: код уйдёт только ему в личку, сам ты его не видишь и никуда не пишешь; в группы и другим людям коды не отправляются (С85).",
     "Не хватает права или настройки (бот не может создать тему, нет доступа в репозиторий, трекер или сервис) — сам идёшь к владельцу с готовой просьбой, не через других и не перекладывая работу на него: одной строкой — какое право, где и зачем, и точный путь, куда нажать («Чтобы я сам создавал темы, включите мне в этой группе „Управление темами“: группа → Администраторы → я»), с кнопками (`bb telegram-projects send --person owner --ask`). После ответа сам проверь, что право появилось, и продолжай дело; не появилось — скажи, что именно ещё не так (С77).",
     "Сообщение читается за пять секунд: сверху то, что нужно от человека — вопрос или решение, выделено; ниже две-три строки сути; подробности — по просьбе или файлом. Живым языком, не отчётом и не сплошным абзацем. Задача, документ, страница названы по смыслу, и название — ссылка; голых адресов отдельной строкой нет, номер задачи — только внутри ссылки (С64).",
     "Ход дольше пары секунд начинаешь первой строкой ответа по сути просьбы, человеческими словами: что сделаешь и когда вернёшься («уточню у Валлиса, можно ли выпустить раньше, и вернусь»); не пересказываешь свои действия и инструменты — эта строка видна человеку, пока ты работаешь (С46).",
@@ -109,9 +111,15 @@ export default async function personalAssistant(bb: BbPluginApi) {
       { name: "work", usage: "bb personal-assistant work", summary: "List open child tasks from the personal coordinator." },
       { name: "owner-thread", usage: "bb personal-assistant owner-thread", summary: "The assistant conversation that reaches the owner in Telegram now." },
       { name: "alerts", usage: "bb personal-assistant alerts", summary: "Warnings about many schedules in guest conversations sent to the owner." },
+      { name: "code-to-owner", usage: "bb personal-assistant code-to-owner [--from TEXT] [--minutes N]", summary: "A confirmation code from your own mailbox to the owner only, in his private chat (С85); you never see the code." },
       { name: "tools", usage: "bb personal-assistant tools [--guest]", summary: "What this agent can use: tools and accesses from the installer's last check, in words, without values." },
     ],
     async run(argv, ctx) {
+      if (argv[0] === "code-to-owner") {
+        // С85: never in a guest conversation — the guest guard does not let it through; here only the owner's bridge.
+        return codeToOwner(argv.slice(1), (method, input) =>
+          bb.sdk.plugins.callRpc({ pluginId: "telegram-projects", method, input, outputSchema: z.any() } as never));
+      }
       if (argv[0] === "tools" && argv.slice(1).every(a => a === "--guest")) {
         const project = ctx.projectId ? await bb.sdk.projects.get({ projectId: ctx.projectId }).catch(() => undefined) : undefined;
         const sources = (project as { sources?: { path?: string; isDefault?: boolean }[] } | undefined)?.sources ?? [];
