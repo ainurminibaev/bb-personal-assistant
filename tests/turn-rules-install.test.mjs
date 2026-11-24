@@ -32,5 +32,8 @@ test("the bridge asks the rules for a group's project outside the copy: it gets 
   assert.match(rules.text, /### Общие правила платформы/);
   assert.match(rules.text, /### Общие правила организации[\s\S]*Отвечай там, где спросили/);
   assert.match(rules.text, /### Роль — суть[\s\S]*веду встречи/);
-  assert.equal(rules.version, (await rpc.turnRules({ projectId: "own" })).version);
+  mkdirSync(join(own, "local"), { recursive: true });
+  writeFileSync(join(own, "local", "agents-custom.md"), "Личное: жена просила купить хлеб.\n");
+  assert.doesNotMatch((await rpc.turnRules({ projectId: "group-old" })).text, /хлеб/);   // nothing personal in a group
+  assert.match((await rpc.turnRules({ projectId: "own" })).text, /хлеб/);
 });

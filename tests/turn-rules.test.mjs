@@ -58,7 +58,25 @@ test("a conversation's project outside the organization's copy gets the organiza
   const r = turnRules(old, "Общее правило.", folder);
   assert.match(r.text, /### Общие правила организации \(shared\/AGENTS\.md\)\n# Правила/);
   assert.match(r.text, /### Роль — суть[\s\S]*## Как работаешь/);
-  assert.match(r.text, /Заметка: сроки — у исполнителей/);
-  assert.equal(r.version, turnRules(folder, "Общее правило.").version);   // the same text as the installation's own chat
+  assert.doesNotMatch(r.text, /Заметка: сроки — у исполнителей/);       // the employee's own notes never reach a group
+  mkdirSync(join(old, "local"), { recursive: true });
+  writeFileSync(join(old, "local", "notes.md"), "В этой группе отчёт по пятницам.\n");
+  assert.match(turnRules(old, "Общее правило.", folder).text, /### Твои постоянные заметки \(local\/notes\.md этого разговора\)\nВ этой группе отчёт по пятницам\./);
   assert.match(turnRules(old, "Общее правило.").text, /^### Общие правила платформы\nОбщее правило\.$/);   // no installation known
+});
+
+test("a conversation folder of its own (С76 marker) takes the rules and the role from the installation, its own notes only", () => {
+  const { folder } = org();
+  const conv = mkdtempSync(join(tmpdir(), "group-"));
+  writeFileSync(join(conv, ".vallis-conversation.json"), JSON.stringify({ installation: folder }));
+  mkdirSync(join(conv, "local"), { recursive: true });
+  writeFileSync(join(conv, "local", "notes.md"), "Своя заметка группы.\n");
+  const r = turnRules(conv, "Общее правило.");                         // the marker works without the fallback too
+  assert.match(r.text, /### Общие правила организации/);
+  assert.match(r.text, /## Как работаешь/);
+  assert.match(r.text, /Своя заметка группы/);
+  assert.doesNotMatch(r.text, /Заметка: сроки — у исполнителей/);
+  writeFileSync(join(conv, ".vallis-conversation.json"), JSON.stringify({ installation: "/nowhere" }));
+  utimesSync(join(conv, ".vallis-conversation.json"), new Date(), new Date(Date.now() + 5000));   // a later edit
+  assert.match(turnRules(conv, "Общее правило.").text, /^### Общие правила платформы\nОбщее правило\.$/);   // a broken marker: platform only
 });

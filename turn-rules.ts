@@ -50,21 +50,39 @@ export function roleEssence(role: string) {
   return out.join("\n").trim();
 }
 
+/**
+ * Where a conversation's rules come from (one rule, with the bridge's С76 folders):
+ *  - a folder of its own made by the bridge carries `.vallis-conversation.json` {"installation": <folder>} — the
+ *    organization's rules and the role from there, the standing notes the conversation's own (local/notes.md);
+ *  - a folder inside the organization's copy — the folder itself, with the employee's notes (local/agents-custom.md);
+ *  - any other folder of a bound conversation (an older project of a group outside the copy) — the organization's
+ *    rules and the role from the installation's folder, the notes again only its own (local/notes.md).
+ * The employee's own notes from its private chat never reach a group or another person's chat.
+ */
+export const CONVERSATION_MARKER = ".vallis-conversation.json";
+export function rulesSource(folder: string, installation?: string): { installation: string; notes: string; own: boolean } {
+  try {
+    const mark = JSON.parse(read(join(folder, CONVERSATION_MARKER)) || "{}") as { installation?: unknown };
+    if (typeof mark.installation === "string" && mark.installation && existsSync(mark.installation))
+      return { installation: mark.installation, notes: join(folder, "local", "notes.md"), own: true };
+  } catch { /* not a conversation folder */ }
+  if (organizationRoot(folder) || !installation) return { installation: folder, notes: join(folder, "local", "agents-custom.md"), own: false };
+  return { installation, notes: join(folder, "local", "notes.md"), own: true };
+}
+
 export function turnRules(folder: string | undefined, platformRules: string, installation?: string): TurnRules | null {
-  // A conversation's project outside the organization's copy (an older project of a group, a folder of its own, С76)
-  // takes the organization's rules and the role from the installation's folder: one rule for every bound conversation.
-  if (installation && !(folder && organizationRoot(folder))) folder = installation;
   // Outside an organization's copy (the personal assistant, a conversation in a folder of its own) the platform's
   // common rules still go: a conversation never misses them; the organization's parts are added where they exist.
-  const root = folder ? organizationRoot(folder) : undefined;
+  const source = folder ? rulesSource(folder, installation) : undefined;
+  const root = source ? organizationRoot(source.installation) : undefined;
   const shared = root ? read(join(root, "shared", "AGENTS.md")).trim() : "";
-  const role = root && folder ? roleEssence(read(join(folder, "AGENTS.md"))) : "";
-  const notes = root && folder ? read(join(folder, "local", "agents-custom.md")).trim() : "";
+  const role = root && source ? roleEssence(read(join(source.installation, "AGENTS.md"))) : "";
+  const notes = root && source ? read(source.notes).trim() : "";
   const parts = [
     platformRules.trim() && `### Общие правила платформы\n${platformRules.trim()}`,
     shared && `### Общие правила организации (shared/AGENTS.md)\n${shared}`,
     role && `### Роль — суть (AGENTS.md проекта; карта, учётки и инструменты — в самом файле)\n${role}`,
-    notes && `### Твои постоянные заметки (local/agents-custom.md)\n${notes}`,
+    notes && `### Твои постоянные заметки (${source?.own ? "local/notes.md этого разговора" : "local/agents-custom.md"})\n${notes}`,
   ].filter(Boolean) as string[];
   if (!parts.length) return null;
   const text = parts.join("\n\n");
