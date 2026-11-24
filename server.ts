@@ -12,6 +12,8 @@ import { toolsReport } from "./tools-status";
 import { codeToOwner } from "./code-to-owner";
 import { CASE_USAGE, runCase } from "./case-command";
 import { openCasesHint } from "./cases";
+import { pauseControl } from "./pause";
+import { formatRegistry, organizationOf, registry } from "./team";
 import { turnRules } from "./turn-rules";
 import { registerServerSpeech } from "./server-speech";
 
@@ -64,6 +66,8 @@ export default async function personalAssistant(bb: BbPluginApi) {
     "Сообщение читается за пять секунд: сверху то, что нужно от человека — вопрос или решение, выделено; ниже две-три строки сути; подробности — по просьбе или файлом. Живым языком, не отчётом и не сплошным абзацем. Задача, документ, страница названы по смыслу, и название — ссылка; голых адресов отдельной строкой нет, номер задачи — только внутри ссылки (С64).",
     "Ход дольше пары секунд начинаешь первой строкой ответа по сути просьбы, человеческими словами: что сделаешь и когда вернёшься («уточню у Валлиса, можно ли выпустить раньше, и вернусь»); не пересказываешь свои действия и инструменты — эта строка видна человеку, пока ты работаешь (С46).",
     "Расписание ставишь только под названную надобность и в том же сообщении говоришь, что поставил; повторяющееся — одно с повтором и сроком окончания; название человеческими словами; поручение закрыто — его расписания снимаешь (С61).",
+    "Кто в организации за что отвечает, кто ставит задачи, кто куратор и владелец — `bb personal-assistant team` (в гостевом разговоре — `--guest`); по нему решаешь, кого звать (С94).",
+    "Владелец в своей личке говорит «останови», «поставь на паузу» — `bb personal-assistant pause`; «включи», «продолжай» — `bb personal-assistant resume`. Другим людям это недоступно; данные и ждущие сообщения сохраняются (С94).",
   ].join("\n");
   // Project folders, for the rules read from files (refreshed every minute; contributeInstructions must stay synchronous).
   const folders = new Map<string, string>();
@@ -76,6 +80,9 @@ export default async function personalAssistant(bb: BbPluginApi) {
     }
   };
   void refreshFolders().catch(() => {});
+  // С94: the owner pauses this employee; while paused every turn but the owner's private chat waits in BB's queue.
+  const pause = pauseControl(bb);
+  bb.experimental_hooks?.on("message.dispatch", ctx => pause.decide(ctx));
   // A new session gets the organization's rules as they are now (a running session keeps what it started with:
   // the bridge brings later edits on every Telegram turn).
   bb.agents.contributeInstructions(({threadId, projectId}) =>
@@ -121,10 +128,23 @@ export default async function personalAssistant(bb: BbPluginApi) {
       { name: "owner-thread", usage: "bb personal-assistant owner-thread", summary: "The assistant conversation that reaches the owner in Telegram now." },
       { name: "alerts", usage: "bb personal-assistant alerts", summary: "Warnings about many schedules in guest conversations sent to the owner." },
       { name: "code-to-owner", usage: "bb personal-assistant code-to-owner [--from TEXT] [--minutes N]", summary: "A confirmation code from your own mailbox to the owner only, in his private chat (С85); you never see the code." },
+      { name: "team", usage: "bb personal-assistant team [--guest]", summary: "Who does what in the organization: position, duties, who gives tasks, curator, owner, state (from the passports)." },
+      { name: "pause", usage: "bb personal-assistant pause [--reason TEXT] | resume | pause-status", summary: "The owner stops this employee and starts it again; data and waiting messages are kept." },
       { name: "case", usage: CASE_USAGE, summary: "Case cards of tracked tasks on disk: open, set, close, show, list, find, check (this chat's cases)." },
       { name: "tools", usage: "bb personal-assistant tools [--guest]", summary: "What this agent can use: tools and accesses from the installer's last check, in words, without values." },
     ],
     async run(argv, ctx) {
+      if (argv[0] === "pause" || argv[0] === "resume" || argv[0] === "pause-status") {
+        const i = argv.indexOf("--reason");
+        return pause.command(argv[0] === "pause-status" ? "status" : argv[0], ctx.threadId, i > 0 ? argv[i + 1] : undefined);
+      }
+      if (argv[0] === "team" && argv.slice(1).every(a => a === "--guest")) {
+        if (ctx.projectId && !folders.has(ctx.projectId)) await refreshFolders().catch(() => {});
+        const org = organizationOf(ctx.projectId ? folders.get(ctx.projectId) : undefined);
+        if (!org) return { exitCode: 1, stderr: "This installation does not work from an organization copy: no list of employees here." };
+        const rows = registry(org.clone).map(p => p.id === org.me && pause.isPaused() ? { ...p, state: "paused" } : p);
+        return { exitCode: 0, stdout: formatRegistry(rows, argv.includes("--guest")) };
+      }
       if (argv[0] === "case") {
         if (ctx.projectId && !folders.has(ctx.projectId)) await refreshFolders().catch(() => {});
         return runCase(bb, argv.slice(1), ctx, ctx.projectId ? folders.get(ctx.projectId) : undefined,

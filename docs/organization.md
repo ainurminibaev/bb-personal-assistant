@@ -62,6 +62,34 @@ line per difference: kind, machine, bot, provider and model (of the latest threa
 platform version, groups (when the bridge reports chat IDs). Missing role files, a missing `employees` entry and unknown
 fields are reported the same way. Fields marked "reserved" are listed as not compared.
 
+## Passport and pause
+
+Every employee has a passport: who does what, who gives it tasks, who curates its work, who owns it, its state. The
+fields live in `employee.yml` or in `employees/<name>/passport.yml` (the passport file wins):
+
+```yaml
+name: Developer
+position: AI developer of the project
+state: active                 # active | paused | retired
+owner: Owner                  # rights, accesses, people, money, disputes
+curator: Curator              # how to do it and whether it is done well; a name or a list
+tasks_from: [Owner, Manager]  # what to do and when
+tasks_to: []
+duties: [code by the board's tasks, checks on test data]
+not_allowed: [merging into main branches]
+chats: developers' chat
+```
+
+`bb personal-assistant team` prints the registry of the organization from the passports (a guest conversation —
+`--guest`, without accounts and connections); agents use it to know whom to call. The bridge learns the curators from
+`people` in `organization.yml` (`people: {Curator: {telegram: <id>}}`): setup writes their Telegram IDs into the
+bridge's `curators`; a curator without an ID is named in the setup output.
+
+The owner pauses an employee with words in his private chat with it («останови» → `bb personal-assistant pause`,
+«включи» → `resume`), or in a terminal of the server. While paused every turn of its BB — groups, people's chats,
+schedule runs — waits in BB's queue (`message.dispatch`, «wait») and runs after the start; the owner's private chat
+passes. Nothing is dropped and no data is touched. `pause-status` tells the state.
+
 ## How shared rules and skills reach an employee
 
 - The installer makes a sparse git copy: root files, `shared/` and `employees/<name>/` only. The BB project folder is

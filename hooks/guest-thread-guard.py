@@ -342,6 +342,9 @@ def guest_bb_allowed(args, scope):
     if head == ["personal-assistant", "tools"]:
         # С43: a guest sees what it can apply here — only the guest view, no installation details.
         return args[2:] == ["--guest"]
+    if head == ["personal-assistant", "team"]:
+        # С94: who does what — the guest view, without accounts and connections; pause and resume stay the owner's.
+        return args[2:] == ["--guest"]
     if head == ["personal-assistant", "case"]:
         # С65: a guest keeps the cases of its own chat; the command itself refuses another chat's case, and --all.
         return "--all" not in args

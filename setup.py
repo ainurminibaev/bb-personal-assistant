@@ -62,6 +62,17 @@ def configure_bridge(kind, inbox):
         bb("plugin", "config", "telegram-projects", "set", "voiceRouterPath", str(router))
 
 
+def configure_curators(description, employee):
+    """С94: the employee's curators (passport) lead its topics with the owner — the bridge's `curators`."""
+    ids, missing = organization.curator_ids(description, employee)
+    for name in missing:
+        print(f"Curator {name}: no Telegram ID in organization.yml people — add it so the bridge knows them.", flush=True)
+    values = bb("plugin", "config", "telegram-projects")
+    values = values.get("values", values)
+    if "curators" in values and ids and values.get("curators") != ",".join(ids):
+        bb("plugin", "config", "telegram-projects", "set", "curators", ",".join(ids))
+
+
 def remember_agent(project_id, provider, model):
     """BB remembers the agent and model of the last start in a project; a short check sets both."""
     args = ["thread", "spawn", "--project", project_id, "--title", "Setup: agent check",
@@ -223,6 +234,8 @@ def main():
                          "Transferring coordinator instructions requires stable Telegram Bridge 0.9.21 or later.")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     configure_bridge(args.kind, (args.inbox or root.parent / "telegram-inbox").expanduser().resolve())
+    if clone is not None:
+        configure_curators(description, employee)
     try:
         with (root / "projects.md").open("x", encoding="utf-8") as registry:
             registry.write((package / "projects.md").read_text(encoding="utf-8"))
