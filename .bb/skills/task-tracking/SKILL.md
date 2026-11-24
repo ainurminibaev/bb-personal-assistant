@@ -53,4 +53,4 @@ When this conversation is new (a restart, a switch of the model, a new thread fo
 
 ## Daily check
 
-Once a day (one recurring schedule in the owner's conversation) run `bb personal-assistant case check --all` and go through open task subthreads: a stale status, a passed return time without a run, a deadline at risk, a lost next step. Restore the next step, remind or escalate — without repeating what the journals show was already done.
+Once a day (one recurring schedule in the owner's conversation) add to the summary one line of your spend — `bb personal-assistant usage` (today, the week, the model window; say plainly if the window is past 80 %), run `bb personal-assistant case check --all` and go through open task subthreads: a stale status, a passed return time without a run, a deadline at risk, a lost next step. Restore the next step, remind or escalate — without repeating what the journals show was already done.
