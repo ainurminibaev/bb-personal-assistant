@@ -7,7 +7,7 @@ import plugin from "../dist/server.js";
 
 // An installation folder and a BB with: the owner's private chat (bound to topic 0), a group topic conversation, and
 // subthreads of both. Schedules: the case's own one is on until removed.
-async function setup() {
+async function setup({ conversations = null } = {}) {
   const root = mkdtempSync(join(tmpdir(), "cases-"));
   const threads = {
     "owner-chat": { id: "owner-chat", title: "🟢 Действующий · Личный помощник", parentThreadId: null },
@@ -30,21 +30,25 @@ async function setup() {
     background: { schedule() {}, service() {} },
     experimental_aiServices: { register: () => ({ dispose() {} }) },
     sdk: {
-      projects: { list: async () => [{ id: "proj", sources: [{ path: root, isDefault: true }] }], get: async () => ({ sources: [{ path: root }] }) },
+      projects: { list: async () => [{ id: "proj", sources: [{ path: root, isDefault: true }] },
+                                     { id: "group-proj", sources: [{ path: mkdtempSync(join(tmpdir(), "group-")), isDefault: true }] }],
+                  get: async () => ({ sources: [{ path: root }] }) },
       threads: { get: async ({ threadId }) => threads[threadId], list: async () => [] },
       plugins: {
         getSettings: async () => ({ values: { installKind: "assistant" } }),
-        callRpc: async ({ pluginId, method, outputSchema }) => {
+        callRpc: async ({ pluginId, method, input, outputSchema }) => {
           if (pluginId === "telegram-projects" && method === "status")
             return outputSchema.parse({ chatBindings: [{ topicId: 0, threadId: state.owner }] });
           if (pluginId === "automations") return outputSchema.parse([...state.live].map(id => ({ id, enabled: true })));
+          if (pluginId === "telegram-projects" && method === "conversationOf" && conversations)
+            return outputSchema.parse(conversations[input.threadId] ?? null);
           throw Error("plugin_not_found");
         },
       },
     },
   });
   await new Promise(r => setTimeout(r, 20));
-  const run = async (threadId, ...argv) => command.run(["case", ...argv], { threadId, projectId: "proj" });
+  const run = async (threadId, ...argv) => command.run(["case", ...argv], { threadId, projectId: threadId.startsWith("moved") ? "group-proj" : "proj" });
   return { root, run, state, hint: threadId => contributed({ threadId, projectId: "proj" }) };
 }
 
@@ -116,4 +120,19 @@ test("closed lines older than 90 days move to the archive list; no open case —
   assert.doesNotMatch(readFileSync(join(dir, "index.md"), "utf8"), /staroe/);
   assert.match(readFileSync(join(dir, "index-archive.md"), "utf8"), /staroe/);
   assert.ok(existsSync(join(dir, "index.md")));
+});
+
+test("with the bridge's conversationOf a chat is its numbers: a renamed topic keeps its cases, two people with one name do not share", async () => {
+  const conversations = {
+    "group": { chatId: -1001, topicId: 7 }, "group-renamed": { chatId: -1001, topicId: 7 },
+    "alex-1": { chatId: 501, topicId: 0 }, "alex-2": { chatId: 502, topicId: 0 },
+    "moved-group": { chatId: -1001, topicId: 7 },
+  };
+  const { run } = await setup({ conversations });
+  await run("group", "open", "--title", "Отчёт группы");
+  await run("alex-1", "open", "--title", "Дело первого Александра");
+  assert.match((await run("group-renamed", "list")).stdout, /Отчёт группы/);
+  assert.doesNotMatch((await run("alex-2", "list")).stdout, /первого Александра/);
+  // The group moved into a project and folder of its own (С76): cases stay in the installation's folder.
+  assert.match((await run("moved-group", "list")).stdout, /Отчёт группы/);
 });

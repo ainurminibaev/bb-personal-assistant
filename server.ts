@@ -81,6 +81,10 @@ export default async function personalAssistant(bb: BbPluginApi) {
     }
   };
   void refreshFolders().catch(() => {});
+  // Case cards live in the installation's folder (the coordinator project of the plugin settings), not in the folder of
+  // the thread's project: a group moved into a folder of its own (С76) keeps its cases; the command gives a chat only
+  // its own cases, so the group never reads the files itself.
+  const casesRoot = (projectId: string) => (binding.projectId && folders.get(binding.projectId)) || folders.get(projectId);
   // С94: the owner pauses this employee; while paused every turn but the owner's private chat waits in BB's queue.
   const pause = pauseControl(bb);
   bb.experimental_hooks?.on("message.dispatch", ctx => pause.decide(ctx));
@@ -88,7 +92,7 @@ export default async function personalAssistant(bb: BbPluginApi) {
   // the bridge brings later edits on every Telegram turn).
   bb.agents.contributeInstructions(({threadId, projectId}) =>
     [contact.instructions(threadId), accessLine(), common, turnRules(folders.get(projectId), "")?.text ?? null,
-      openCasesHint(folders.get(projectId))]
+      openCasesHint(casesRoot(projectId))]
       .filter(Boolean).join("\n\n") || null);
   bb.rpc.register(rpcContract, {
     turnRules: async ({ projectId }) => {
@@ -148,7 +152,8 @@ export default async function personalAssistant(bb: BbPluginApi) {
       }
       if (argv[0] === "case") {
         if (ctx.projectId && !folders.has(ctx.projectId)) await refreshFolders().catch(() => {});
-        return runCase(bb, argv.slice(1), ctx, ctx.projectId ? folders.get(ctx.projectId) : undefined,
+        if (binding.projectId && !folders.has(binding.projectId)) await refreshFolders().catch(() => {});
+        return runCase(bb, argv.slice(1), ctx, ctx.projectId ? casesRoot(ctx.projectId) : undefined,
           id => Boolean(binding.threadId) && id === binding.threadId);
       }
       if (argv[0] === "code-to-owner") {

@@ -18,7 +18,15 @@ type Thread = { id: string; title?: string | null; parentThreadId?: string | nul
 const bridgeStatus = z.object({ chatBindings: z.array(z.object({ topicId: z.number().optional(), threadId: z.string().nullish() }).passthrough()) }).passthrough();
 const TELEGRAM_TITLE = /( — группа «|^группа «|^личка «)/;
 
+const conversation = z.object({ chatId: z.union([z.number(), z.string()]), topicId: z.number().nullish() }).passthrough().nullable();
+
 export async function chatOf(sdk: BbPluginApi["sdk"], threadId: string): Promise<string> {
+  // The bridge knows the Telegram chat and topic of a thread (or of its conversation, for a subthread): numbers do not
+  // change when a topic or a group is renamed, and two people with one name are two chats.
+  const conv = await sdk.plugins.callRpc({ pluginId: "telegram-projects", method: "conversationOf", input: { threadId }, outputSchema: conversation })
+    .catch(() => undefined);
+  if (conv) return `tg:${conv.chatId}:${conv.topicId ?? 0}`;
+  // An older bridge without conversationOf: the binding of the owner's chat, then the conversation's title.
   const get = async (id: string) => (await sdk.threads.get({ threadId: id })) as unknown as Thread;
   let t = await get(threadId);
   for (let i = 0; i < 12 && t.parentThreadId; i++) t = await get(t.parentThreadId);
