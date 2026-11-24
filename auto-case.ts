@@ -47,9 +47,11 @@ export async function autoCases(bb: BbPluginApi, root: string | undefined, now =
         id = card.id;
       }
       opened.push(id);
-      void bb.sdk.threads.send({ threadId: a.createdByThreadId, input: [{ type: "text", visibility: "agent-only", mentions: [],
+      // Only into the turn that is running (it made the schedule): a steer never starts a turn of its own, so the note
+      // can never become a message to a person; an idle thread learns the case from `case list --here`.
+      void bb.sdk.threads.send({ threadId: a.createdByThreadId, mode: "steer", input: [{ type: "text", visibility: "agent-only", mentions: [],
         text: `Расписание «${a.name ?? a.id}» привязано к делу ${id} (открыто само). Веди его: \`bb personal-assistant case show ${id}\`, `
-          + `\`case set ${id} …\` при каждом событии, \`case close ${id} --result …\` когда итог доставлен. Людям об этом писать не нужно: ответь ровно NO_REPLY.` }] } as never)
+          + `\`case set ${id} …\` при каждом событии, \`case close ${id} --result …\` когда итог доставлен. Это служебная пометка: людям о ней не пиши, отвечай им как собирался.` }] } as never)
         .catch(() => {});
     }
   }
