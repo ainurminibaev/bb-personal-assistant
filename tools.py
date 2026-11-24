@@ -542,7 +542,7 @@ def install_browser(tool, data_dir, fetch=None):
         archive = tmp / "chrome-linux64.zip"
         url = cft["url"].format(version=cft["version"])
         try:
-            (fetch or _download)(url, archive)
+            (fetch or _fetch_url)(url, archive)
         except Exception as error:
             return f"download of {url} failed: {_err(error)}"
         if _sha256(archive) != cft["sha256"]:
@@ -602,7 +602,8 @@ def _unzip(archive, target):
                 path.chmod(mode & 0o777)
 
 
-def _download(url, path):
+def _fetch_url(url, path):
+    """A plain download (the browser checks its own sha256 after it)."""
     import urllib.request
     with urllib.request.urlopen(url, timeout=600) as answer, open(path, "wb") as out:
         shutil.copyfileobj(answer, out)
