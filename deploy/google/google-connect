@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""google-connect — Google Drive, Docs and Sheets for an agent, the same way as on the owner's installation.
+
+Run as the agent's account. The OAuth app keys are in the credentials store (GOOGLE_OAUTH_CLIENT_ID,
+GOOGLE_OAUTH_CLIENT_SECRET); values are never printed.
+
+    google-connect link [--email ADDRESS]
+        prints the consent link; a person signs in to the agent's Google account, presses «Allow» and sends back
+        the address of the localhost page it opens (the page itself does not load — that is expected)
+    google-connect finish FILE
+        FILE holds that address; the code is exchanged at once (it lives minutes), the login is written for both
+        MCP servers and they are added to the agent's Codex settings:
+          google-workspace — workspace-mcp 2.5.0 (drive, docs, sheets, extended), app keys from the store at start
+          google-sheets    — mcp-google-sheets 0.6.3
+        then the account and the access to Drive are checked; FILE is erased.
+
+If the app is in testing mode, the agent's address must be in its test users, and http://localhost:8765/ must be an
+allowed redirect URI of the client (Google Cloud → APIs & Services).
+"""
+import json
+import os
+import secrets
+import shutil
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+HOME = Path.home()
+STATE = HOME / ".secrets" / "google-connect.state"
+REDIRECT = "http://localhost:8765/"
+SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile",
+          "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/drive.file",
+          "https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/documents",
+          "https://www.googleapis.com/auth/documents.readonly", "https://www.googleapis.com/auth/spreadsheets",
+          "https://www.googleapis.com/auth/spreadsheets.readonly"]
+WORKSPACE = "workspace-mcp==2.5.0"
+SHEETS = "mcp-google-sheets==0.6.3"
+
+
+def secret(name):
+    out = subprocess.run(["vallis-secret", "run", name, "--", "printenv", name], capture_output=True, text=True)
+    value = out.stdout.strip()
+    if not value:
+        raise SystemExit(f"google-connect: {name} is not in the credentials store")
+    return value
+
+
+def link(email=None):
+    state = secrets.token_urlsafe(16)
+    STATE.parent.mkdir(mode=0o700, exist_ok=True)
+    old = os.umask(0o077)
+    STATE.write_text(state)
+    os.umask(old)
+    q = {"client_id": secret("GOOGLE_OAUTH_CLIENT_ID"), "redirect_uri": REDIRECT, "response_type": "code",
+         "scope": " ".join(SCOPES), "access_type": "offline", "prompt": "consent", "state": state}
+    if email:
+        q["login_hint"] = email
+    print("https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(q))
+
+
+def token_files(token, client_id, client_secret, now=None):
+    """The login in the two forms the servers read: workspace-mcp's and google-auth's (mcp-google-sheets)."""
+    now = now or datetime.now(timezone.utc)
+    expiry = (now + timedelta(seconds=int(token.get("expires_in", 3600)))).replace(tzinfo=None).isoformat()
+    ws = {"token": token["access_token"], "refresh_token": token.get("refresh_token"),
+          "token_uri": "https://oauth2.googleapis.com/token", "client_id": client_id, "client_secret": client_secret,
+          "scopes": token.get("scope", " ".join(SCOPES)).split(), "expiry": expiry}
+    sheets = dict(ws, expiry=expiry + "Z", universe_domain="googleapis.com", account="")
+    return ws, sheets
+
+
+def codex_block(home, uvx, vault):
+    """The two MCP servers for the agent's Codex: app keys from the store at start, logins in the agent's folder."""
+    path = f"{Path(uvx).parent}:/usr/bin:/bin"
+    return f"""
+# Google (google-connect): workspace-mcp 2.5.0 and mcp-google-sheets 0.6.3, as on the owner's installation.
+[mcp_servers.google-workspace]
+command = "{vault}"
+args = ["run", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "--", "{uvx}", "--python", "3.12", "{WORKSPACE}", "--single-user", "--tools", "drive", "docs", "sheets", "--tool-tier", "extended"]
+env = {{ WORKSPACE_MCP_CREDENTIALS_DIR = "{home}/.secrets/google-workspace", WORKSPACE_MCP_HOST = "127.0.0.1", WORKSPACE_MCP_LOG_DIR = "{home}/logs-mcp", PATH = "{path}" }}
+startup_timeout_sec = 120
+
+[mcp_servers.google-sheets]
+command = "{uvx}"
+args = ["--python", "3.12", "--with", "mcp>=1.9,<2", "{SHEETS}"]
+env = {{ CREDENTIALS_PATH = "/dev/null", TOKEN_PATH = "{home}/.secrets/google-sheets/token.json", PATH = "{path}" }}
+startup_timeout_sec = 120
+"""
+
+
+def finish(file):
+    raw = Path(file).read_text().strip()
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(raw).query))
+    if not STATE.exists() or q.get("state") != STATE.read_text().strip():
+        raise SystemExit("google-connect: the address is not from this link (state differs) — run link again")
+    cid, csec = secret("GOOGLE_OAUTH_CLIENT_ID"), secret("GOOGLE_OAUTH_CLIENT_SECRET")
+    body = urllib.parse.urlencode({"code": q.get("code", ""), "client_id": cid, "client_secret": csec,
+                                   "redirect_uri": REDIRECT, "grant_type": "authorization_code"}).encode()
+    try:
+        token = json.load(urllib.request.urlopen(urllib.request.Request("https://oauth2.googleapis.com/token", data=body),
+                                                 timeout=30))
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"google-connect: the code was not accepted ({e.code}) — it lives minutes; run link again")
+    finally:
+        subprocess.run(["shred", "-u", str(file)], check=False)
+    auth = {"Authorization": "Bearer " + token["access_token"]}
+    email = json.load(urllib.request.urlopen(urllib.request.Request(
+        "https://www.googleapis.com/oauth2/v3/userinfo", headers=auth), timeout=30)).get("email")
+    ws, sheets = token_files(token, cid, csec)
+    old = os.umask(0o077)
+    for d in ("google-workspace", "google-sheets"):
+        (HOME / ".secrets" / d).mkdir(parents=True, exist_ok=True)
+    (HOME / ".secrets" / "google-workspace" / f"{email}.json").write_text(json.dumps(ws))
+    (HOME / ".secrets" / "google-sheets" / "token.json").write_text(json.dumps(sheets))
+    (HOME / "logs-mcp").mkdir(exist_ok=True)
+    os.umask(old)
+    STATE.unlink(missing_ok=True)
+    config = HOME / ".codex" / "config.toml"
+    uvx, vault = shutil.which("uvx"), shutil.which("vallis-secret")
+    if not uvx or not vault:
+        raise SystemExit("google-connect: uvx or vallis-secret is not on PATH — the login is saved, add the servers later")
+    text = config.read_text() if config.exists() else ""
+    if "mcp_servers.google-workspace" not in text:
+        config.parent.mkdir(exist_ok=True)
+        if config.exists():
+            shutil.copy2(config, str(config) + ".before-google")
+        config.write_text(text + codex_block(HOME, uvx, vault))
+    files = json.load(urllib.request.urlopen(urllib.request.Request(
+        "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)", headers=auth), timeout=30))
+    print(f"google-connect: {email} — {len(ws['scopes'])} scopes, Drive answers for "
+          f"{files.get('user', {}).get('emailAddress')}; servers in {config}. Restart BB for new conversations.")
+
+
+def main(argv):
+    if argv[:1] == ["link"]:
+        link(argv[argv.index("--email") + 1] if "--email" in argv else None)
+        return 0
+    if argv[:1] == ["finish"] and len(argv) == 2:
+        finish(argv[1])
+        return 0
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
