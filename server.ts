@@ -4,6 +4,7 @@ import policy from "./.bb/AGENTS.md" with { type: "text" };
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { COMMITMENTS_USAGE, commitmentsScript, runCommitments } from "./commitments-command";
 import { refreshGuardCopies } from "./guard-refresh";
 import { deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
@@ -112,9 +113,23 @@ export default async function personalAssistant(bb: BbPluginApi) {
       { name: "work", usage: "bb personal-assistant work", summary: "List open child tasks from the personal coordinator." },
       { name: "owner-thread", usage: "bb personal-assistant owner-thread", summary: "The assistant conversation that reaches the owner in Telegram now." },
       { name: "alerts", usage: "bb personal-assistant alerts", summary: "Warnings about many schedules in guest conversations sent to the owner." },
+      { name: "commitments", usage: COMMITMENTS_USAGE, summary: "Commitments between people and the daily digests: the work of vallis-commitments on the server's side, in the installation's folder." },
       { name: "tools", usage: "bb personal-assistant tools [--guest]", summary: "What this agent can use: tools and accesses from the installer's last check, in words, without values." },
     ],
     async run(argv, ctx) {
+      if (argv[0] === "commitments") {
+        // One list per installation: in the folder of the coordinator project, else in this plugin's own data folder.
+        if (binding.projectId && !folders.has(binding.projectId)) await refreshFolders().catch(() => {});
+        const own = (() => {
+          try {
+            const main = (bb.storage.database().prepare("pragma database_list").all() as { name: string; file: string }[])
+              .find(r => r.name === "main")?.file;
+            return main ? dirname(main) : undefined;
+          } catch { return undefined; }
+        })();
+        const root = (binding.projectId && folders.get(binding.projectId)) || own;
+        return runCommitments(commitmentsScript(dirname(fileURLToPath(import.meta.url))), root, argv.slice(1), ctx);
+      }
       if (argv[0] === "tools" && argv.slice(1).every(a => a === "--guest")) {
         const project = ctx.projectId ? await bb.sdk.projects.get({ projectId: ctx.projectId }).catch(() => undefined) : undefined;
         const sources = (project as { sources?: { path?: string; isDefault?: boolean }[] } | undefined)?.sources ?? [];

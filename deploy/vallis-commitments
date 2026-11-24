@@ -51,10 +51,13 @@ The text of the chat is not copied into the list — only the wording of the com
                                                      chats they write in themselves (`render --for ID`)
   vallis-commitments guide                           how the daily run reads a day: what is a commitment, what is not
 
-The list lives in one place of the installation and nowhere else: ~/.local/share/vallis/commitments of the
-agent's account (config.json, ledger.json, journal.jsonl, transcripts/<date>/<chat>.txt, digests/<date>.md). There
-is no setting or variable that moves it: every conversation of the installation must see the same list. If the
-folder cannot be written, the command says so — tell the owner, do not keep a list anywhere else.
+The list lives in one place of the installation and nowhere else: <installation>/local/commitments (config.json,
+ledger.json, journal.jsonl, transcripts/<date>/<chat>.txt, digests/<date>.md). The agent does not choose it: this
+command, run in a conversation, hands its arguments to the platform's plugin (`bb personal-assistant commitments …`),
+which starts the same program on the server's side with the installation's folder and the calling thread. So a
+sandboxed turn can keep the list, and every conversation of the installation sees the same one. There is no
+setting or variable that moves it. If the folder cannot be written, the command says so — tell the owner, do not
+keep a list anywhere else.
 The archive is read with `bb telegram-projects search-history`, so the caller sees only what its conversation may see:
 run it from the owner's conversation or its subthread. Private chats are never read: only groups (negative IDs).
 `mine` is the only command for a group's or a person's conversation: it shows what the bridge lets that conversation
@@ -65,6 +68,7 @@ import datetime as dt
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -166,7 +170,20 @@ def fail(message, code=1):
 
 
 def home():
-    return Path.home() / ".local/share/vallis/commitments"   # one place per installation; deliberately not configurable
+    """The installation's folder, given by the platform's plugin that started this program. Never the agent's choice."""
+    return Path(os.environ["VALLIS_COMMITMENTS_HOME"])
+
+
+def hand_over(argv):
+    """Run in a conversation: pass the arguments to the plugin, which does the work on the server's side."""
+    command = [os.environ.get("BB_CLI") or "bb", "personal-assistant", "commitments", *argv]
+    try:
+        done = subprocess.run(command, text=True, capture_output=True)
+    except OSError as error:
+        fail(f"cannot reach BB ({error.strerror}): the list of commitments is kept by the platform's plugin")
+    sys.stdout.write(done.stdout)
+    sys.stderr.write(done.stderr)
+    sys.exit(done.returncode)
 
 
 def bb(*words):
@@ -791,7 +808,8 @@ def cmd_post(args):
 
 def pdf(digest):
     """The digest as a PDF with the platform's common look: made by vallis-pdf, where it is installed."""
-    command = ["vallis-pdf"]
+    # Started by the BB service, whose PATH often lacks /usr/local/bin, where the server's installer puts the command.
+    command = [shutil.which("vallis-pdf") or next((p for p in ("/usr/local/bin/vallis-pdf",) if os.access(p, os.X_OK)), "vallis-pdf")]
     target = digest.with_suffix(".pdf")
     try:
         done = subprocess.run(command + [str(digest), str(target)], capture_output=True, text=True, timeout=300)
@@ -848,6 +866,10 @@ def cmd_guide(args):
 
 
 def main(argv=None):
+    given = sys.argv[1:] if argv is None else argv
+    # The help and the guide keep nothing: they answer on the spot. Everything else is done on the server's side.
+    if not os.environ.get("VALLIS_COMMITMENTS_HOME") and given[:1] != ["guide"] and not {"-h", "--help"} & set(given):
+        hand_over(given)
     parser = argparse.ArgumentParser(prog="vallis-commitments", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)

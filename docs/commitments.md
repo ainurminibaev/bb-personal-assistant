@@ -18,9 +18,21 @@ whether it is certain, state (open, done, cancelled; an agreement is only noted)
 in the tracker if there is one, the next step, and the history of changes with who said it and where.
 The text of the chat is not copied: only the wording of the commitment and the link.
 
-One folder per installation, `~/.local/share/vallis/commitments` of the agent's account, with no setting or
-variable that moves it (every conversation must see the same list; the guard refuses a command that tries): `config.json` (chats,
-time zone, language), `ledger.json`, `journal.jsonl`, `transcripts/<date>/<chat>.txt`, `digests/<date>.md`.
+One folder per installation: `<installation>/local/commitments` — in the folder of the coordinator project of the
+plugin settings, else in the plugin's own data folder (`<BB data>/plugins/personal-assistant/`), the same rule as
+for case cards. Files: `config.json` (chats, time zone, language, recipients), `ledger.json`, `journal.jsonl`,
+`transcripts/<date>/<chat>.txt`, `digests/<date>.md`.
+
+## Who does the work
+
+The agent's turn may be sandboxed (Codex writes only inside its own folders), and every conversation must see one
+list. So `vallis-commitments` run in a conversation keeps nothing itself: it hands its arguments to the plugin
+(`bb personal-assistant commitments …`), and the plugin starts the same program on the server's side with
+- the installation's folder (no setting or variable of the agent moves it), and
+- the thread BB names for the call — the bridge then decides what that conversation may read and where it may send,
+  whatever the agent's own environment says.
+
+`--help` and `guide` answer on the spot.
 
 ## Boundaries
 

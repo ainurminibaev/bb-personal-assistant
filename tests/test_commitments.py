@@ -55,9 +55,11 @@ class Commitments(unittest.TestCase):
         bb = self.bin / "bb"
         bb.write_text(f"#!/bin/sh\nexec {sys.executable} {ROOT / 'tests' / 'fake_bb.py'} \"$@\"\n", encoding="utf-8")
         bb.chmod(0o755)
-        self.store = self.tmp / ".local" / "share" / "vallis" / "commitments"
+        self.store = self.tmp / "installation" / "local" / "commitments"
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("BB_", "VALLIS_"))}
-        self.env.update(HOME=str(self.tmp), PATH=f"{self.bin}:/usr/bin:/bin", FAKE_HISTORY=str(self.history),
+        # As in a conversation: no folder is given — the command hands over to the plugin (here: the fake bb).
+        self.env.update(HOME=str(self.tmp / "home"), PATH=f"{self.bin}:/usr/bin:/bin", FAKE_HISTORY=str(self.history),
+                        FAKE_INSTALLATION=str(self.tmp / "installation"),
                         FAKE_HISTORY_CALLS=str(self.calls), FAKE_SEND_LOG=str(self.tmp / "sent.jsonl"))
         self.run_tool("set", "--timezone", "Europe/Moscow", "--language", "ru")
         self.run_tool("chats", "add", CHAT)
@@ -488,23 +490,29 @@ class Commitments(unittest.TestCase):
 
     # ── one list per installation ────────────────────────────────────────────────────────────────────────────────
 
-    def test_the_folder_cannot_be_moved_by_a_variable(self):
+    def test_the_agent_does_not_choose_the_folder(self):
         elsewhere = self.tmp / "thread-folder"
-        moved = {"VALLIS_COMMITMENTS_DIR": str(elsewhere), "XDG_DATA_HOME": str(elsewhere)}
-        self.run_tool("add", "--chat", CHAT, "--who", "Борис Орлов", "--who-id", 9002, "--what", "прислать смету", "--message", 102, env=moved)
+        moved = {"VALLIS_COMMITMENTS_DIR": str(elsewhere), "XDG_DATA_HOME": str(elsewhere), "HOME": str(elsewhere)}
+        self.run_tool("add", "--chat", CHAT, "--who", "Борис Орлов", "--who-id", 9002, "--what", "прислать смету",
+                      "--message", 102, env=moved)
         self.assertFalse(elsewhere.exists())
-        self.assertTrue((self.store / "ledger.json").is_file())
+        self.assertTrue((self.store / "ledger.json").is_file())             # the installation's folder, by the plugin
         self.assertEqual(len(self.out("list", "--json")), 1)                # the same list for every conversation
         help_text = self.run_tool("--help").stdout
-        self.assertNotIn("VALLIS_COMMITMENTS", help_text)
-        self.assertIn("no setting or variable that moves it", help_text)
+        self.assertIn("no\nsetting or variable that moves it", help_text)
+
+    def test_without_the_plugin_the_command_says_so(self):
+        (self.bin / "bb").write_text("#!/bin/sh\necho 'unknown command commitments' >&2\nexit 2\n")
+        done = self.run_tool("list", ok=False)
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("unknown command commitments", done.stderr)
+        self.assertIn("vallis-commitments collect", self.run_tool("guide").stdout)   # the guide and the help need no plugin
 
     def test_unwritable_folder_is_said_in_words_not_worked_around(self):
-        blocked = self.tmp / "blocked-home"
+        blocked = self.tmp / "blocked"
         blocked.mkdir()
-        (blocked / ".local").write_text("not a folder")
-        done = self.run_tool("list", ok=True, env={"HOME": str(blocked)})    # reading an empty list is harmless
-        done = self.run_tool("chats", "add", CHAT, ok=False, env={"HOME": str(blocked)})
+        (blocked / "local").write_text("not a folder")
+        done = self.run_tool("chats", "add", CHAT, ok=False, env={"FAKE_INSTALLATION": str(blocked)})
         self.assertNotEqual(done.returncode, 0)
         self.assertIn("do not keep it anywhere else", done.stderr)
 

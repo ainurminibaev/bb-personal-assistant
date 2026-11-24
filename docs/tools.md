@@ -43,7 +43,7 @@ tools:
   with the programs it needs: `requires` from system packages, `download` — a pinned release checked by `sha256`
   per architecture. The credentials store (`secrets-store`: `vallis-secret`, sops, age) is such a line.
   A line with `check` is a plain command of the package: it is copied and must answer `<command> <check>`
-  (`commitments`: `vallis-commitments list`, see `docs/commitments.md`).
+  (`commitments`: `vallis-commitments guide`, see `docs/commitments.md`).
 - `setting` — what has to be configured after installation (`env` variable or `file` in the installation's closed
   folder); without it the line is `needs_setup`.
 
