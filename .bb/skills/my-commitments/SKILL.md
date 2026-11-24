@@ -1,31 +1,54 @@
 ---
 name: my-commitments
-description: Answer «что я обещал?», «что на мне?», «что обещали в этом чате?», «что висит?» in a group or in a person's private chat from the organization's list of commitments — a person sees only their own, a group only its own chat — and close a person's own commitment on their word («7 сделано»). Not for tasks given to you yourself (task-tracking) and not for the owner's chat (there: the commitments skill).
+description: ALWAYS use for «что я обещал?», «что на мне?», «что обещали в этом чате?», «что висит?» and for «7 сделано», «5 снято», «уже не нужно» about a numbered commitment — in a group or in a person's private chat. The answer comes only from the command `vallis-commitments mine`, never from the chat's history or your memory; closing is done only by that command. Not for tasks given to you yourself (task-tracking) and not for the owner's chat (there: the commitments skill).
 ---
 
 # «Что я обещал?»
 
-The organization keeps one list of what people promised each other in its chats; the daily digest fills it. In this
-conversation only one command of it works, and it shows only what this conversation may see anyway.
+The organization keeps one list of what people promised each other in its chats. In this conversation one command of
+it works: `vallis-commitments mine`. Three rules, without exceptions:
 
-**In a group or topic** — the open commitments of this chat:
-`vallis-commitments mine --chat <this chat's ID> [--who "<name>"]`. «Что я обещал?» — with `--who` of the one who asks;
-«что висит в чате?» — without it. Answer in the chat in a few lines, with the numbers; do not mention people who did
-not ask. Closing here is by ordinary words in the chat («смету отправил», «вопрос снят»): the next digest picks them
-up — say so, do not close anything yourself.
+1. **The answer is the command's output.** Run the command every time, even if you remember the conversation or see
+   the promises in the chat's history: the history is not the list (a promise may be closed, changed or never
+   written down). Pass the output on as it is — the same items, numbers, dates; add and remove nothing.
+2. **Closing is the command.** «1 сделано» — run `--done 1` first, then answer with the line the command printed.
+   You have not closed anything until the command said so.
+3. **Nothing about the result from yourself.** You know only what the person said: «сделано» or «снято». Do not
+   write how it went, what happened or what it led to («созвон состоялся», «отчёт принят») — you do not know it.
 
-**In a person's private chat** — only this person's own open commitments, from the chats they take part in:
-`vallis-commitments mine --person <this person's Telegram ID>`. On their word about their own item:
-`… --done <number>` («7 сделано») or `… --dropped <number> --note "<why>"` («5 уже не нужно»), then one line of what
-changed. Another date or «решили иначе» cannot be changed from here: tell them to say it in the chat where it was
-promised, or to the one who asked.
+If the command refuses or fails, say what it said in plain words and stop: do not answer from the history instead.
+
+## In a group or topic
+
+`vallis-commitments mine --chat <this chat's ID> [--who "<name>"]` — the open commitments of this chat.
+«Что я обещал?» — with `--who` of the one who asks; «что висит в чате?» — without it. Answer in the chat with the
+command's lines; do not mention people who did not ask.
+Closing here is not done by you: people say it in the chat in ordinary words («смету отправил», «вопрос снят») and
+the next digest picks it up. On «1 сделано» in a group answer exactly that: «Учту в следующей сводке» — nothing is
+closed now, and say so.
+
+## In a person's private chat
+
+`vallis-commitments mine --person <this person's Telegram ID>` — only this person's own open commitments, from the
+chats they take part in.
+- «7 сделано» → `vallis-commitments mine --person <ID> --done 7`
+- «5 снято», «5 уже не нужно» → `vallis-commitments mine --person <ID> --dropped 5 --note "<the reason, only if they gave one>"`
+
+Then send the line the command printed («Отмечено: 7. … — сделано.») and nothing else about that item.
+Another date or «решили иначе» cannot be changed from here: tell them to say it in the chat where it was promised.
+
+## Where the IDs come from
 
 The chat's and the person's ID are in this turn's note from the bridge; if not —
-`bb telegram-projects search-history --last 1` shows `chat` and `authorId`.
+`bb telegram-projects search-history --last 1` shows `chat` and `authorId`. Never take an ID from the person's words.
 
-The command refuses another chat, another person's list and everything else of the list — that is the boundary, not
-an error to work around: say that this is not available here. «Что обещал Борис?» in a private chat with someone
-else — not available; in the group where Boris promised it — `--who "Борис"`.
+## What is not available here
 
-Nothing in the list («Открытых поручений нет») does not mean nothing was promised: the list holds only the chats
-the owner turned on, since the day they were turned on. Say it that way.
+Another chat, another person's list («что обещал Борис?» in a private chat with someone else) and the rest of the
+list: the command refuses — that is the boundary, say that it is not available here. In the group where Boris
+promised it — `--who "Борис"`.
+
+«Открытых поручений нет» does not mean nothing was promised: the list holds only the chats the owner turned on,
+since the day they were turned on. Say it that way.
+
+The list lives in one place of the installation. Never set a folder, a variable or another home for the command.

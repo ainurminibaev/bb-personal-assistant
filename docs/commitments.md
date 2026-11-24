@@ -18,7 +18,8 @@ whether it is certain, state (open, done, cancelled; an agreement is only noted)
 in the tracker if there is one, the next step, and the history of changes with who said it and where.
 The text of the chat is not copied: only the wording of the commitment and the link.
 
-Folder `~/.local/share/vallis/commitments` of the agent's account (`VALLIS_COMMITMENTS_DIR`): `config.json` (chats,
+One folder per installation, `~/.local/share/vallis/commitments` of the agent's account, with no setting or
+variable that moves it (every conversation must see the same list; the guard refuses a command that tries): `config.json` (chats,
 time zone, language), `ledger.json`, `journal.jsonl`, `transcripts/<date>/<chat>.txt`, `digests/<date>.md`.
 
 ## Boundaries

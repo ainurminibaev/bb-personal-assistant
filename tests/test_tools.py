@@ -40,8 +40,7 @@ class Selection(unittest.TestCase):
             home = Path(home)
             bin_dir = home / ".local" / "bin"
             bin_dir.mkdir(parents=True)
-            env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}",
-                       VALLIS_COMMITMENTS_DIR=str(home / "store"))
+            env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}")
             account = FakeAccount(home)
             account.which = lambda p: __import__("shutil").which(p, path=env["PATH"])
             account.run = lambda *a, **k: subprocess.run(list(a), env=env, text=True, capture_output=True)

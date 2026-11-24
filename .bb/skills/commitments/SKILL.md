@@ -10,7 +10,10 @@ who, for whom, what, due, where it was said, state — and once a day tell the o
 and what is late. The list is not a second tracker: a commitment that has a task in the tracker keeps only the link
 (`--tracker`), and its status is read there.
 
-Everything goes through `vallis-commitments` (`--help` lists the commands). It works only in the owner's
+Everything goes through `vallis-commitments` (`--help` lists the commands). The list lives in one place of the
+installation (`~/.local/share/vallis/commitments`): never give the command another folder, variable or home — a list
+kept in a thread's folder is invisible to the groups' and people's conversations. If the command cannot write its
+folder, tell the owner and stop. It works only in the owner's
 conversation and its subthreads: the list covers every chat, so a group's or a person's conversation does not read it.
 
 ## Turning it on for a group

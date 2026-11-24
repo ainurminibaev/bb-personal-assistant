@@ -59,6 +59,18 @@ COMMITMENTS = re.compile(r"(\bvallis-commitments\b|vallis/commitments(?:[/\s'\"]
 COMMITMENTS_MINE = re.compile(r"(?:^|[\s;&|(/`'\"])vallis-commitments\s+mine\b")
 
 
+COMMITMENTS_PLACE_REASON = ("The list of commitments lives in one place of the installation "
+                            "(~/.local/share/vallis/commitments): no variable or other home moves it, or the other "
+                            "conversations would not see it. Run vallis-commitments as it is; if it cannot write "
+                            "its folder, tell the owner.")
+COMMITMENTS_MOVED = re.compile(r"\bVALLIS_COMMITMENTS_|\b(?:HOME|XDG_DATA_HOME|BB_CLI)=\S*[^;&|]*\bvallis-commitments\b")
+
+
+def commitments_place_problem(commands):
+    """Everyone, the owner's conversation too: the command runs with the installation's own folder and bridge."""
+    return COMMITMENTS_PLACE_REASON if any(COMMITMENTS_MOVED.search(c) for c in commands) else None
+
+
 def commitments_problem(commands, paths, guest):
     """A guest turn reads the commitments only through `mine`: the chat it serves or the person's own promises.
     The command asks the bridge what this conversation may read; its folder and settings stay closed."""
@@ -465,7 +477,8 @@ def main():
         guest, data_dir, thread, bb = is_guest(event)
     except Exception:
         guest, data_dir, thread, bb = True, data_dir_setting(), None, None
-    problem = secrets_problem(commands, paths, guest) or commitments_problem(commands, paths, guest)
+    problem = (secrets_problem(commands, paths, guest) or commitments_place_problem(commands)
+               or commitments_problem(commands, paths, guest))
     if problem:
         print(problem, file=sys.stderr)
         return 2
