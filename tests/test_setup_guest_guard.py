@@ -59,6 +59,8 @@ class ConversationFolders(unittest.TestCase):
         self.assertEqual(folders, home / "conversations")
         self.assertEqual(rules, root / "AGENTS.md")
         self.assertIn(clone / "shared", allow)
+        self.assertIn(root / ".mcp.json", allow)
+        self.assertNotIn(root / "local", allow)
         assistant = Path(tempfile.mkdtemp()) / "personal-assistant"
         self.assertEqual(conversation_folders("assistant", assistant, None, home)[0],
                          assistant.parent / "personal-assistant-conversations")

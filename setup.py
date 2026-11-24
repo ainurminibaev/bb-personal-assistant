@@ -54,7 +54,10 @@ def conversation_folders(kind, root, clone, home=None):
     home = Path(home or Path.home())
     folders = home / "conversations" if kind == "employee" else root.parent / (root.name + "-conversations")
     rules = root / "AGENTS.md" if kind == "employee" and (root / "AGENTS.md").is_file() else None
-    allow = [root / "AGENTS.md", root / "CLAUDE.md", root / "skills"] + ([clone / "shared"] if clone else [])
+    # What a conversation folder reaches by a link (the bridge links these from the owner's folder): rules, skills, MCP
+    # settings without values — never local/ or outputs/.
+    allow = [root / "AGENTS.md", root / "CLAUDE.md", root / "skills", root / ".mcp.json", root / ".codex" / "config.toml",
+             root / ".claude" / "skills", root / ".agents" / "skills"] + ([clone / "shared"] if clone else [])
     return folders, rules, allow
 
 
