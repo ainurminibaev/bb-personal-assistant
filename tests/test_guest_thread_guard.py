@@ -96,6 +96,14 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread update thr_owner --title x"}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread update thr_child --clear-parent-thread"}), 2)
 
+    def test_guest_keeps_cases_of_its_own_chat(self):
+        ok = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 0, c)
+        no = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 2, c)
+        ok("bb personal-assistant case open --title 'Отчёт' --by Анна")
+        ok("bb personal-assistant case list --here")
+        ok("bb personal-assistant case close c-20261125-otchet --result готово")
+        no("bb personal-assistant case list --all")
+
     def test_guest_marks_only_its_own_task_subthreads(self):
         ok = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 0, c)
         no = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 2, c)
