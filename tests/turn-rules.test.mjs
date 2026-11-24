@@ -42,9 +42,12 @@ test("an edit of any part changes the fingerprint; no edit keeps it", () => {
   assert.match(b.text, /новая строка/);
 });
 
-test("outside an organization (the personal assistant) there is nothing to bring", () => {
+test("outside an organization (the assistant, a conversation in a folder of its own) the platform's rules still go", () => {
   const plain = mkdtempSync(join(tmpdir(), "plain-"));
-  assert.equal(turnRules(plain, "x"), null);
-  assert.equal(turnRules(undefined, "x"), null);
+  const r = turnRules(plain, "Поручение со сроком — сразу дело.");
+  assert.match(r.text, /^### Общие правила платформы\nПоручение со сроком — сразу дело\.$/);
+  assert.equal(turnRules(undefined, "Поручение со сроком — сразу дело.").version, r.version);
+  assert.notEqual(turnRules(plain, "другое правило").version, r.version);   // an edit of the platform's rules reaches it
+  assert.equal(turnRules(plain, ""), null);
   assert.equal(roleEssence("# Роль\n## Как пишешь в Telegram\nпросто\n## Инструменты\nсписок"), "## Как пишешь в Telegram\nпросто");
 });

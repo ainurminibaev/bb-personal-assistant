@@ -25,6 +25,11 @@ export const rpcContract = ({
     input: z.object({ projectId: z.string().min(1) }).strict(),
     output: z.object({ version: z.string(), text: z.string() }).nullable(),
   },
+  // С94: is this installation paused by its owner — the bridge shows no «thinking» on a message that waits.
+  pauseStatus: {
+    input: z.object({}).strict(),
+    output: z.object({ paused: z.boolean(), since: z.number().nullable() }),
+  },
 });
 
 
@@ -111,6 +116,10 @@ export default async function personalAssistant(bb: BbPluginApi) {
     turnRules: async ({ projectId }) => {
       if (!folders.has(projectId)) await refreshFolders().catch(() => {});
       return turnRules(folders.get(projectId), [accessLine(), common].filter(Boolean).join("\n"));
+    },
+    pauseStatus: async () => {
+      await pause.ready;
+      return { paused: pause.isPaused(), since: pause.isPaused() ? pause.since() : null };
     },
   });
 
