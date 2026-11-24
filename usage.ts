@@ -1,5 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -47,42 +47,82 @@ function claudeFiles(home: string, since: number): string[] {
   return out;
 }
 
-/** Tokens and the latest window from the agents' logs of this account since a moment. */
-export function readAgentLogs(home: string, since: number): Omit<Usage, "turns" | "days"> {
-  const tokens = { codex: 0, claude: 0, cached: 0 };
-  let latest: { at: number; limits: Record<string, { used_percent?: number; window_minutes?: number; resets_at?: number } | null> } | null = null;
-  for (const f of codexFiles(home, since)) {
-    for (const line of readFileSync(f, "utf8").split("\n")) {
-      if (!line.includes('"token_count"')) continue;
-      try {
-        const e = JSON.parse(line);
-        const at = Date.parse(e.timestamp);
-        if (!(at >= since)) continue;
-        const u = e.payload?.info?.last_token_usage;
-        if (u) { tokens.codex += u.total_tokens ?? 0; tokens.cached += u.cached_input_tokens ?? 0; }
-        const rl = e.payload?.rate_limits;
-        if (rl && (!latest || at >= latest.at)) latest = { at, limits: { primary: rl.primary, secondary: rl.secondary } };
-      } catch { /* a torn line */ }
-    }
-  }
-  for (const f of claudeFiles(home, since)) {
-    for (const line of readFileSync(f, "utf8").split("\n")) {
-      if (!line.includes('"usage"')) continue;
-      try {
-        const e = JSON.parse(line);
-        if (!(Date.parse(e.timestamp) >= since)) continue;
-        const u = e.message?.usage;
+/**
+ * Incremental reading (coordinator 25.11: on an installation with big logs the daily check must not read them whole):
+ * for every log file the cache keeps how many bytes are counted and the totals per Moscow day; a later run reads only
+ * what was appended. A file that shrank or was replaced is counted again. The cache lives in the plugin's storage.
+ */
+export interface FileCache { size: number; offset: number; days: Record<string, Totals>; window?: { at: number; limits: unknown } }
+export type Totals = { codex: number; claude: number; cached: number };
+export type LogCache = Record<string, FileCache>;
+
+export const mskDay = (t: number) => new Date(t + 3 * 3_600_000).toISOString().slice(0, 10);
+
+function readTail(path: string, from: number, to: number): string {
+  const fd = openSync(path, "r");
+  try {
+    const buf = Buffer.alloc(to - from);
+    readSync(fd, buf, 0, buf.length, from);
+    return buf.toString("utf8");
+  } finally { closeSync(fd); }
+}
+
+function countFile(path: string, kind: "codex" | "claude", entry: FileCache | undefined): FileCache {
+  const size = statSync(path).size;
+  const e: FileCache = entry && entry.size <= size && entry.offset <= size ? entry : { size: 0, offset: 0, days: {} };
+  if (size === e.size && entry) return e;
+  const text = readTail(path, e.offset, size);
+  const end = text.lastIndexOf("\n") + 1;   // only complete lines; the rest is read next time
+  for (const line of text.slice(0, end).split("\n")) {
+    if (kind === "codex" ? !line.includes('"token_count"') : !line.includes('"usage"')) continue;
+    try {
+      const ev = JSON.parse(line);
+      const at = Date.parse(ev.timestamp);
+      if (!Number.isFinite(at)) continue;
+      const d = (e.days[mskDay(at)] ??= { codex: 0, claude: 0, cached: 0 });
+      if (kind === "codex") {
+        const u = ev.payload?.info?.last_token_usage;
+        if (u) { d.codex += u.total_tokens ?? 0; d.cached += u.cached_input_tokens ?? 0; }
+        const rl = ev.payload?.rate_limits;
+        if (rl && (!e.window || at >= e.window.at)) e.window = { at, limits: { primary: rl.primary, secondary: rl.secondary } };
+      } else {
+        const u = ev.message?.usage;
         if (u) {
-          tokens.claude += (u.input_tokens ?? 0) + (u.output_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
-          tokens.cached += u.cache_read_input_tokens ?? 0;
+          d.claude += (u.input_tokens ?? 0) + (u.output_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+          d.cached += u.cache_read_input_tokens ?? 0;
         }
-      } catch { /* a torn line */ }
-    }
+      }
+    } catch { /* a torn line */ }
   }
-  const window = Object.values(latest?.limits ?? {}).filter(Boolean).map(w => ({
-    name: w!.window_minutes === 300 ? "5 часов" : w!.window_minutes === 10080 ? "неделя" : `${w!.window_minutes} мин`,
-    usedPercent: w!.used_percent ?? 0, resetsAt: w!.resets_at ? w!.resets_at * 1000 : null }));
+  return { ...e, size, offset: e.offset + Buffer.byteLength(text.slice(0, end), "utf8") };
+}
+
+/** Refresh the cache for files touched in the last `keepDays` days; drop entries of older files. */
+export function refreshLogs(home: string, cache: LogCache, keepDays = 8, now = Date.now()): LogCache {
+  const since = now - keepDays * DAY;
+  const next: LogCache = {};
+  for (const f of codexFiles(home, since)) next[f] = countFile(f, "codex", cache[f]);
+  for (const f of claudeFiles(home, since)) next[f] = countFile(f, "claude", cache[f]);
+  return next;
+}
+
+/** Tokens of the days from `fromDay` (Moscow date) and the latest window mark, from the cache. */
+export function sumLogs(cache: LogCache, fromDay: string): Omit<Usage, "turns" | "days"> {
+  const tokens = { codex: 0, claude: 0, cached: 0 };
+  let latest: { at: number; limits: any } | undefined;
+  for (const e of Object.values(cache)) {
+    for (const [day, t] of Object.entries(e.days)) if (day >= fromDay) { tokens.codex += t.codex; tokens.claude += t.claude; tokens.cached += t.cached; }
+    if (e.window && (!latest || e.window.at >= latest.at)) latest = e.window as { at: number; limits: any };
+  }
+  const window = Object.values(latest?.limits ?? {}).filter(Boolean).map((w: any) => ({
+    name: w.window_minutes === 300 ? "5 часов" : w.window_minutes === 10080 ? "неделя" : `${w.window_minutes} мин`,
+    usedPercent: w.used_percent ?? 0, resetsAt: w.resets_at ? w.resets_at * 1000 : null }));
   return { tokens, window };
+}
+
+/** Uncached reading for one period (tests and a one-off look). */
+export function readAgentLogs(home: string, since: number): Omit<Usage, "turns" | "days"> {
+  return sumLogs(refreshLogs(home, {}, Math.ceil((Date.now() - since) / DAY) + 1), mskDay(since));
 }
 
 /** Turns of this BB since a moment: BB's own events, only threads that moved in the period. */
@@ -99,20 +139,25 @@ async function countTurns(sdk: BbPluginApi["sdk"], since: number): Promise<numbe
   return turns;
 }
 
-export async function usage(bb: BbPluginApi, days: number, home = homedir()): Promise<Usage> {
-  const since = Date.now() - days * DAY;
-  return { days, turns: await countTurns(bb.sdk, since), ...readAgentLogs(home, since) };
+/** Today (Moscow) and, unless onlyToday, the last 7 days; the logs through the cache in the plugin's storage. */
+export async function usage(bb: BbPluginApi, days: number, home = homedir(), now = Date.now()): Promise<Usage> {
+  const cache = refreshLogs(home, (await bb.storage.kv.get<LogCache>("usage-cache")) ?? {}, 8, now);
+  await bb.storage.kv.set("usage-cache", cache);
+  const fromDay = mskDay(now - (days - 1) * DAY);
+  const since = Date.parse(fromDay + "T00:00:00+03:00");
+  return { days, turns: await countTurns(bb.sdk, since), ...sumLogs(cache, fromDay) };
 }
 
 const m = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)} млн` : n >= 1e3 ? `${Math.round(n / 1e3)} тыс.` : String(n);
 
-export function formatUsage(day: Usage, week: Usage): string {
+export function formatUsage(day: Usage, week: Usage | null): string {
   const line = (u: Usage, label: string) => `${label}: ${u.turns} ходов, ${m(u.tokens.codex + u.tokens.claude)} токенов`
     + (u.tokens.codex && u.tokens.claude ? ` (Codex ${m(u.tokens.codex)}, Claude ${m(u.tokens.claude)})` : "")
     + (u.tokens.cached ? `, из них из кэша ${m(u.tokens.cached)}` : "");
-  const win = week.window.length
-    ? "Окно подписки модели (на весь аккаунт, если он общий): " + week.window.map(w => `${w.name} — ${Math.round(w.usedPercent)} %`
+  const w = (week ?? day).window;
+  const win = w.length
+    ? "Окно подписки модели (на весь аккаунт, если он общий): " + w.map(w => `${w.name} — ${Math.round(w.usedPercent)} %`
       + (w.resetsAt ? `, сброс ${new Date(w.resetsAt).toISOString().slice(0, 16).replace("T", " ")} UTC` : "")).join("; ")
     : "Окно подписки: данных нет (Codex ещё не писал отметку в этой учётке).";
-  return [line(day, "За сутки"), line(week, "За неделю"), win].join("\n");
+  return [line(day, "Сегодня"), ...(week ? [line(week, "За 7 дней")] : []), win].join("\n");
 }
