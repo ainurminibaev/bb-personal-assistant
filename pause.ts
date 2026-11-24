@@ -30,8 +30,10 @@ export function pauseControl(bb: BbPluginApi) {
   async function decide(ctx: { thread: { id: string }; parentThreadId?: string | null }) {
     await ready;
     if (!state.paused) return { action: "proceed" as const };
-    if (owner === null) await ownerThread();
-    if (owner && ctx.thread.id === owner) return { action: "proceed" as const };
+    // The owner's chat always passes: the binding may have moved (the assistant's pair switched threads), so a thread
+    // that is not the remembered one asks the bridge again; work the owner started in his chat (its subthreads) too.
+    const mine = (o: string | null) => !!o && (ctx.thread.id === o || ctx.parentThreadId === o);
+    if (mine(owner) || mine(await ownerThread())) return { action: "proceed" as const };
     return { action: "wait" as const, reason: "Сотрудник на паузе по решению владельца; сообщение будет обработано после включения.",
       sendAt: Date.now() + RECHECK_MS };
   }
