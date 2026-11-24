@@ -3,7 +3,7 @@ import { z } from "zod";
 import policy from "./.bb/AGENTS.md" with { type: "text" };
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { refreshGuardCopies } from "./guard-refresh";
 import { deliver, deliverScheduleAlerts } from "./schedule-alerts";
@@ -16,7 +16,7 @@ import { pauseControl } from "./pause";
 import { autoCases } from "./auto-case";
 import { formatRegistry, organizationOf, registry } from "./team";
 import { formatUsage, usage } from "./usage";
-import { turnRules } from "./turn-rules";
+import { organizationRoot, turnRules } from "./turn-rules";
 import { registerServerSpeech } from "./server-speech";
 
 /** For the bridge: the rules in force for a conversation's project and their fingerprint (0.4.4). */
@@ -102,6 +102,14 @@ export default async function personalAssistant(bb: BbPluginApi) {
       return main ? dirname(main) : undefined;
     } catch { return undefined; }
   })();
+  // The installation's own folder inside the organization's copy (employees/<name>): the coordinator project of the
+  // settings when it is there, else the one project of this BB that lives in an organization's copy.
+  const installationFolder = () => {
+    const own = binding.projectId ? folders.get(binding.projectId) : undefined;
+    if (own && organizationRoot(own)) return own;
+    const inside = [...new Set(folders.values())].filter(f => organizationRoot(f) && basename(dirname(f)) === "employees");
+    return inside.length === 1 ? inside[0] : undefined;
+  };
   const casesRoot = (projectId?: string) =>
     (binding.projectId && folders.get(binding.projectId)) || pluginFolder || (projectId ? folders.get(projectId) : undefined);
   // С94: the owner pauses this employee; while paused every turn but the owner's private chat waits in BB's queue.
@@ -116,7 +124,7 @@ export default async function personalAssistant(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     turnRules: async ({ projectId }) => {
       if (!folders.has(projectId)) await refreshFolders().catch(() => {});
-      return turnRules(folders.get(projectId), [accessLine(), common].filter(Boolean).join("\n"));
+      return turnRules(folders.get(projectId), [accessLine(), common].filter(Boolean).join("\n"), installationFolder());
     },
     pauseStatus: async () => {
       await pause.ready;

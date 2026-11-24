@@ -50,7 +50,10 @@ export function roleEssence(role: string) {
   return out.join("\n").trim();
 }
 
-export function turnRules(folder: string | undefined, platformRules: string): TurnRules | null {
+export function turnRules(folder: string | undefined, platformRules: string, installation?: string): TurnRules | null {
+  // A conversation's project outside the organization's copy (an older project of a group, a folder of its own, С76)
+  // takes the organization's rules and the role from the installation's folder: one rule for every bound conversation.
+  if (installation && !(folder && organizationRoot(folder))) folder = installation;
   // Outside an organization's copy (the personal assistant, a conversation in a folder of its own) the platform's
   // common rules still go: a conversation never misses them; the organization's parts are added where they exist.
   const root = folder ? organizationRoot(folder) : undefined;

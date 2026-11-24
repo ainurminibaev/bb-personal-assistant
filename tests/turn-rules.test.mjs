@@ -51,3 +51,14 @@ test("outside an organization (the assistant, a conversation in a folder of its 
   assert.equal(turnRules(plain, ""), null);
   assert.equal(roleEssence("# Роль\n## Как пишешь в Telegram\nпросто\n## Инструменты\nсписок"), "## Как пишешь в Telegram\nпросто");
 });
+
+test("a conversation's project outside the organization's copy gets the organization's rules and the role from the installation", () => {
+  const { folder } = org();
+  const old = mkdtempSync(join(tmpdir(), "botsman-team-"));     // an older project of a group, outside the copy
+  const r = turnRules(old, "Общее правило.", folder);
+  assert.match(r.text, /### Общие правила организации \(shared\/AGENTS\.md\)\n# Правила/);
+  assert.match(r.text, /### Роль — суть[\s\S]*## Как работаешь/);
+  assert.match(r.text, /Заметка: сроки — у исполнителей/);
+  assert.equal(r.version, turnRules(folder, "Общее правило.").version);   // the same text as the installation's own chat
+  assert.match(turnRules(old, "Общее правило.").text, /^### Общие правила платформы\nОбщее правило\.$/);   // no installation known
+});
