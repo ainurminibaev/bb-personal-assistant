@@ -148,6 +148,9 @@ class GuestGuard(unittest.TestCase):
             json.dump({"dataDir": self.data}, f)
         self.assertEqual(self.run_hook("s-group", {"command": create}), 0)
         self.assertEqual(self.run_hook("s-group", {"command": "bb telegram-projects topic rename --topic x --name y"}), 0)
+        # С80: a group conversation deletes a message; the bridge decides whose (its own chat only, others on the owner's word).
+        self.assertEqual(self.run_hook("s-group", {"command": "bb telegram-projects delete --message 42"}), 0)
+        self.assertNotEqual(self.run_hook("s-group", {"command": "bb telegram-projects rights set --person 1"}), 0)
         with open(cfg, "w") as f:
             json.dump({"dataDir": self.data, "guestSchedules": False}, f)
         self.assertEqual(self.run_hook("s-group", {"command": create}), 2)

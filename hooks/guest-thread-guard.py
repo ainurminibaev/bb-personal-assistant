@@ -301,6 +301,7 @@ def guest_bb_allowed(args, scope):
         return True
     # The bridge itself checks where a guest conversation may send.
     if args[:1] == ["status"] or head in (["voice", "transcribe"], ["telegram-projects", "search-history"], ["telegram-projects", "send"], ["telegram-projects", "topic"],
+                                          ["telegram-projects", "delete"],   # С80: the bridge checks whose message it is
                                           ["skill", "list"], ["skill", "show"]):
         return True
     if len(head) == 2 and head[0] == "thread":
