@@ -6,7 +6,7 @@ import { basename, dirname, join } from "node:path";
  * the organization's copy: employees/<name>/employee.yml (passport fields there) and employees/<name>/passport.yml (wins).
  * Used by people and agents to know whom to call (ai_agents docs/tasks/agents-in-chats.md, «кого звать»).
  */
-export const PASSPORT_FIELDS = ["name", "position", "state", "owner", "curator", "tasks_from", "tasks_to", "duties",
+export const PASSPORT_FIELDS = ["leads_chats", "name", "position", "state", "owner", "curator", "tasks_from", "tasks_to", "duties",
   "not_allowed", "grants_within", "chats", "accounts", "connections"] as const;
 export const STATES = ["active", "paused", "retired"] as const;
 /** Fields a guest conversation does not get: where the employee has accounts and connections. */
@@ -76,6 +76,7 @@ export function formatRegistry(rows: Passport[], guest: boolean): string {
     if (p.owner) lines.push(`  владелец (права, доступы, люди, деньги, споры): ${list(p.owner)}`);
     if (p.not_allowed) lines.push(`  не делает: ${list(p.not_allowed)}`);
     if (p.chats) lines.push(`  где на связи: ${list(p.chats)}`);
+    if (p.leads_chats !== undefined) lines.push(`  ведёт общие чаты без отметки: ${String(p.leads_chats) === "true" ? "да" : "нет"}`);
     if (!guest) for (const k of PRIVATE) if (p[k]) lines.push(`  ${k}: ${list(p[k])}`);
     return lines.join("\n");
   }).join("\n\n");

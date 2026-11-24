@@ -119,6 +119,27 @@ class Organization(unittest.TestCase):
         _, _, problems = organization.read_organization(clone, "alpha")
         self.assertTrue(any("passport state sleeping" in p for p in problems))
 
+    def test_one_default_leader_of_shared_chats(self):
+        clone, _, _ = self.install("alpha")
+        both = "leads_chats: true\n"
+        write(clone / "employees" / "alpha" / "passport.yml", both)
+        write(clone / "employees" / "beta" / "passport.yml", both)
+        _, config, problems = organization.read_organization(clone, "alpha")
+        self.assertIs(config["leads_chats"], True)
+        self.assertFalse(any("unknown field" in p for p in problems))
+        self.assertTrue(any("true at alpha, beta" in p for p in problems))
+        write(clone / "employees" / "beta" / "passport.yml", "leads_chats: false\n")
+        self.assertFalse(any("leads_chats" in p for p in organization.read_organization(clone, "alpha")[2]))
+        write(clone / "employees" / "alpha" / "passport.yml", "leads_chats: false\n")
+        self.assertTrue(any("nobody of alpha, beta" in p for p in organization.read_organization(clone, "alpha")[2]))
+        write(clone / "employees" / "beta" / "passport.yml", "leads_chats: true\nstate: retired\n")
+        self.assertFalse(any("leads_chats:" in p for p in organization.read_organization(clone, "alpha")[2]))
+        write(clone / "employees" / "alpha" / "passport.yml", "name: Альфа\n")
+        write(clone / "employees" / "beta" / "passport.yml", "name: Бета\n")
+        self.assertFalse(any("leads_chats" in p for p in organization.read_organization(clone, "alpha")[2]))   # field unused: bridge's auto
+        write(clone / "employees" / "alpha" / "passport.yml", "leads_chats: maybe\n")
+        self.assertTrue(any("leads_chats maybe: true or false" in p for p in organization.read_organization(clone, "alpha")[2]))
+
     def test_curators_for_the_bridge_come_from_people(self):
         ids, missing = organization.curator_ids({"people": {"Анна": {"telegram": 101}, "Борис": {}}},
                                                 {"curator": ["Анна", "Борис"]})

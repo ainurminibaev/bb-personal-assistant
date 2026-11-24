@@ -18,7 +18,7 @@ EMPLOYEE_FIELDS = {"kind", "machine", "bot", "provider", "model", "timezone", "g
                    "quiet_hours", "reminders", "description", "tools", "mcp", "secrets", "spaces"}
 # С94: the passport — who does what, who gives tasks, who curates, who owns, the state. In employee.yml or in
 # employees/<name>/passport.yml (the passport file wins); `bb personal-assistant team` prints the registry from them.
-PASSPORT_FIELDS = {"name", "position", "state", "owner", "curator", "tasks_from", "tasks_to", "duties",
+PASSPORT_FIELDS = {"leads_chats", "name", "position", "state", "owner", "curator", "tasks_from", "tasks_to", "duties",
                    "not_allowed", "grants_within", "chats", "accounts", "connections"}
 PASSPORT_STATES = ("active", "paused", "retired")
 EMPLOYEE_FIELDS = EMPLOYEE_FIELDS | PASSPORT_FIELDS
@@ -176,7 +176,35 @@ def read_organization(clone, employee):
     config = {**config, **{k: v for k, v in passport.items() if k in PASSPORT_FIELDS}}
     if config.get("state", "active") not in PASSPORT_STATES:
         problems.append(f"passport state {config.get('state')}: one of {', '.join(PASSPORT_STATES)}")
+    if "leads_chats" in config and not isinstance(config["leads_chats"], bool):
+        problems.append(f"passport leads_chats {config['leads_chats']}: true or false")
+    problems += chat_leaders_problems(clone, organization)
     return organization, config, problems
+
+
+def chat_leaders_problems(clone, organization):
+    """Shared chats need exactly one default leader (leads_chats: true) among the organization's active employees:
+    two answer the owner's message without a mention twice, none leave it unanswered."""
+    leaders, active, said = [], [], False
+    for name in [str(e) for e in organization.get("employees") or []]:
+        data = {}
+        for f in ("employee.yml", "passport.yml"):
+            path = clone / "employees" / name / f
+            if path.is_file():
+                data.update(load_yaml(path) or {})
+        if data.get("state", "active") != "active":
+            continue
+        active.append(name)
+        said = said or "leads_chats" in data
+        if data.get("leads_chats") is True:
+            leaders.append(name)
+    if len(active) < 2:
+        return []
+    if len(leaders) > 1:
+        return [f"passport leads_chats: true at {', '.join(leaders)} — both answer the owner's message without a mention in a shared chat; keep it at one"]
+    if not leaders and said:   # nobody uses the field yet: the bridge's auto decides, no warning
+        return [f"passport leads_chats: nobody of {', '.join(active)} leads shared chats — the owner's message without a mention stays unanswered; set it at one"]
+    return []
 
 
 def curator_ids(organization, config):

@@ -40,8 +40,8 @@ test("an employee's spend: turns from its BB, tokens and the model window from i
       projects: { list: async () => [] },
       threads: {
         list: async () => [{ id: "a", updatedAt: now }, { id: "b", updatedAt: now - 30 * 86400000 }],
-        events: { list: async ({ threadId }) => threadId === "a"
-          ? [{ createdAt: now - 3600000 }, { createdAt: now - 3 * 86400000 }, { createdAt: now - 9 * 86400000 }] : [{ createdAt: now }] },
+        events: { list: async ({ threadId, limit }) => { if (Number(limit) > 100) throw Error("HTTP 400: Thread event limit cannot exceed 100"); return threadId === "a"
+          ? [{ createdAt: now - 3600000 }, { createdAt: now - 3 * 86400000 }, { createdAt: now - 9 * 86400000 }] : [{ createdAt: now }]; } },
       },
       plugins: { getSettings: async () => ({ values: {} }), callRpc: async () => { throw Error("plugin_not_found"); } },
     },
