@@ -116,5 +116,5 @@ export function pauseControl(bb: BbPluginApi) {
     return text;
   }
 
-  return { decide, command, report, isPaused: () => state.paused, ready };
+  return { decide, command, report, isPaused: () => state.paused, since: () => state.since ?? null, ready };
 }

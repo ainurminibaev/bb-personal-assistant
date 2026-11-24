@@ -13,6 +13,7 @@ import { codeToOwner } from "./code-to-owner";
 import { CASE_USAGE, runCase } from "./case-command";
 import { openCasesHint } from "./cases";
 import { pauseControl } from "./pause";
+import { autoCases } from "./auto-case";
 import { formatRegistry, organizationOf, registry } from "./team";
 import { formatUsage, usage } from "./usage";
 import { turnRules } from "./turn-rules";
@@ -24,6 +25,11 @@ export const rpcContract = ({
   turnRules: {
     input: z.object({ projectId: z.string().min(1) }).strict(),
     output: z.object({ version: z.string(), text: z.string() }).nullable(),
+  },
+  // С94: is this installation paused by its owner — the bridge shows no «thinking» on a message that waits.
+  pauseStatus: {
+    input: z.object({}).strict(),
+    output: z.object({ paused: z.boolean(), since: z.number().nullable() }),
   },
 });
 
@@ -112,6 +118,10 @@ export default async function personalAssistant(bb: BbPluginApi) {
       if (!folders.has(projectId)) await refreshFolders().catch(() => {});
       return turnRules(folders.get(projectId), [accessLine(), common].filter(Boolean).join("\n"));
     },
+    pauseStatus: async () => {
+      await pause.ready;
+      return { paused: pause.isPaused(), since: pause.isPaused() ? pause.since() : null };
+    },
   });
 
   // The credentials store (С37): its skill only where the installer put vallis-secret on the PATH of this BB.
@@ -134,6 +144,8 @@ export default async function personalAssistant(bb: BbPluginApi) {
   bb.background.schedule("guest-schedule-alerts", "* * * * *", async () => {
     // С94: after «включи» — one line to the owner about schedule runs skipped because they waited past their period.
     await pause.report(text => deliver(bb, text)).catch(() => null);
+    // С65: a schedule made from a Telegram chat becomes a case by itself, without the agent's will.
+    await autoCases(bb, casesRoot()).catch(() => []);
     await refreshFolders().catch(() => {});
     const projects = await bb.sdk.projects.list({});
     const roots = projects.flatMap(p => (p as { sources?: { path?: string }[] }).sources ?? []).flatMap(s => s.path ? [s.path] : []);

@@ -197,5 +197,7 @@ test("voice through the server speech service: one transcription service, ready 
 test("the bridge asks for the rules in force by project; a project outside an organization has none", async () => {
   const { rpc } = await load({});
   assert.equal(typeof rpc().turnRules, "function");
-  assert.equal(await rpc().turnRules({ projectId: "unknown" }), null);
+  // A project outside an organization still gets the platform's common rules (they are for every conversation).
+  assert.match((await rpc().turnRules({ projectId: "unknown" })).text, /^### Общие правила платформы/);
+  assert.deepEqual(await rpc().pauseStatus({}), { paused: false, since: null });
 });

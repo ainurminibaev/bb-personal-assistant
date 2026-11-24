@@ -51,12 +51,12 @@ export function roleEssence(role: string) {
 }
 
 export function turnRules(folder: string | undefined, platformRules: string): TurnRules | null {
-  if (!folder) return null;
-  const root = organizationRoot(folder);
-  if (!root) return null; // not an organization's employee (the personal assistant keeps its own policy)
-  const shared = read(join(root, "shared", "AGENTS.md")).trim();
-  const role = roleEssence(read(join(folder, "AGENTS.md")));
-  const notes = read(join(folder, "local", "agents-custom.md")).trim();
+  // Outside an organization's copy (the personal assistant, a conversation in a folder of its own) the platform's
+  // common rules still go: a conversation never misses them; the organization's parts are added where they exist.
+  const root = folder ? organizationRoot(folder) : undefined;
+  const shared = root ? read(join(root, "shared", "AGENTS.md")).trim() : "";
+  const role = root && folder ? roleEssence(read(join(folder, "AGENTS.md"))) : "";
+  const notes = root && folder ? read(join(folder, "local", "agents-custom.md")).trim() : "";
   const parts = [
     platformRules.trim() && `### Общие правила платформы\n${platformRules.trim()}`,
     shared && `### Общие правила организации (shared/AGENTS.md)\n${shared}`,
