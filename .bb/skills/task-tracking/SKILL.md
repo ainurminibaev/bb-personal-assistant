@@ -47,4 +47,4 @@ A question, a partial answer or a sent request keep the task open. Close it only
 
 ## Daily check
 
-Once a day (one recurring schedule in the owner's conversation) go through open task subthreads: a stale status, a passed return time without a run, a deadline at risk, a lost next step. Restore the next step, remind or escalate — without repeating what the journals show was already done.
+Once a day (one recurring schedule in the owner's conversation) add to the summary one line of your spend — `bb personal-assistant usage` (today, the week, the model window; say plainly if the window is past 80 %) and go through open task subthreads: a stale status, a passed return time without a run, a deadline at risk, a lost next step. Restore the next step, remind or escalate — without repeating what the journals show was already done.

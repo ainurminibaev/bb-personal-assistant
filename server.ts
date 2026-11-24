@@ -12,6 +12,7 @@ import { toolsReport } from "./tools-status";
 import { codeToOwner } from "./code-to-owner";
 import { pauseControl } from "./pause";
 import { formatRegistry, organizationOf, registry } from "./team";
+import { formatUsage, usage } from "./usage";
 import { turnRules } from "./turn-rules";
 import { registerServerSpeech } from "./server-speech";
 
@@ -123,10 +124,15 @@ export default async function personalAssistant(bb: BbPluginApi) {
       { name: "alerts", usage: "bb personal-assistant alerts", summary: "Warnings about many schedules in guest conversations sent to the owner." },
       { name: "code-to-owner", usage: "bb personal-assistant code-to-owner [--from TEXT] [--minutes N]", summary: "A confirmation code from your own mailbox to the owner only, in his private chat (С85); you never see the code." },
       { name: "team", usage: "bb personal-assistant team [--guest]", summary: "Who does what in the organization: position, duties, who gives tasks, curator, owner, state (from the passports)." },
+      { name: "usage", usage: "bb personal-assistant usage [--json]", summary: "What this employee spent today and this week: turns, tokens, the share of the model subscription window." },
       { name: "pause", usage: "bb personal-assistant pause [--reason TEXT] | resume | pause-status", summary: "The owner stops this employee and starts it again; data and waiting messages are kept." },
       { name: "tools", usage: "bb personal-assistant tools [--guest]", summary: "What this agent can use: tools and accesses from the installer's last check, in words, without values." },
     ],
     async run(argv, ctx) {
+      if (argv[0] === "usage" && argv.slice(1).every(a => a === "--json")) {
+        const [day, week] = [await usage(bb, 1), await usage(bb, 7)];
+        return { exitCode: 0, stdout: argv.includes("--json") ? JSON.stringify({ day, week }) : formatUsage(day, week) };
+      }
       if (argv[0] === "pause" || argv[0] === "resume" || argv[0] === "pause-status") {
         const i = argv.indexOf("--reason");
         return pause.command(argv[0] === "pause-status" ? "status" : argv[0], ctx.threadId, i > 0 ? argv[i + 1] : undefined);
