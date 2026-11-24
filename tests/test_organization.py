@@ -104,6 +104,28 @@ class Organization(unittest.TestCase):
         self.assertTrue(any("CLAUDE.md" in p and "Claude Code" in p for p in problems))
         self.assertTrue(any("colour" in p for p in problems))
 
+    def test_passport_fields_are_known_and_the_passport_file_wins(self):
+        clone, _, _ = self.install("alpha")
+        write(clone / "employees" / "alpha" / "employee.yml",
+              "kind: employee\nposition: старое\ncurator: Анна\nduties: [встречи]\nstate: active\n")
+        write(clone / "employees" / "alpha" / "passport.yml",
+              "name: Альфа\nposition: ИИ-менеджер\ncurator: [Анна, Борис]\ntasks_from:\n  - владелец\nhobby: шахматы\n")
+        org, config, problems = organization.read_organization(clone, "alpha")
+        self.assertFalse(any("employee.yml" in p and "unknown field" in p for p in problems))   # С94 fields are known
+        self.assertTrue(any("passport.yml hobby" in p for p in problems))
+        self.assertEqual(config["position"], "ИИ-менеджер")          # the passport file wins
+        self.assertEqual(config["duties"], ["встречи"])
+        write(clone / "employees" / "alpha" / "passport.yml", "state: sleeping\n")
+        _, _, problems = organization.read_organization(clone, "alpha")
+        self.assertTrue(any("passport state sleeping" in p for p in problems))
+
+    def test_curators_for_the_bridge_come_from_people(self):
+        ids, missing = organization.curator_ids({"people": {"Анна": {"telegram": 101}, "Борис": {}}},
+                                                {"curator": ["Анна", "Борис"]})
+        self.assertEqual((ids, missing), (["101"], ["Борис"]))
+        self.assertEqual(organization.curator_ids({}, {"curator": "Анна"}), ([], ["Анна"]))
+        self.assertEqual(organization.curator_ids({}, {}), ([], []))
+
     def test_compare_names_each_difference(self):
         org = {"timezone": "Europe/Moscow", "platform": "0.3"}
         config = {"kind": "employee", "machine": "server-1", "bot": "@Alpha_bot", "model": "m1",
