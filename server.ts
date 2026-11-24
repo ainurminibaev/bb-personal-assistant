@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { refreshGuardCopies } from "./guard-refresh";
-import { deliverScheduleAlerts } from "./schedule-alerts";
+import { deliver, deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
 import { toolsReport } from "./tools-status";
 import { codeToOwner } from "./code-to-owner";
@@ -131,6 +131,8 @@ export default async function personalAssistant(bb: BbPluginApi) {
   }).catch(() => { /* an unreadable workspace keeps its copy; setup.py refreshes it too */ });
   // Schedules in guest conversations are not capped; a burst past the guard's thresholds reaches the owner once.
   bb.background.schedule("guest-schedule-alerts", "* * * * *", async () => {
+    // С94: after «включи» — one line to the owner about schedule runs skipped because they waited past their period.
+    await pause.report(text => deliver(bb, text)).catch(() => null);
     await refreshFolders().catch(() => {});
     const projects = await bb.sdk.projects.list({});
     const roots = projects.flatMap(p => (p as { sources?: { path?: string }[] }).sources ?? []).flatMap(s => s.path ? [s.path] : []);

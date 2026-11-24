@@ -25,26 +25,29 @@ async function load() {
   const clone = organization();
   const kv = new Map();
   let command, hook;
+  const sent = [], automations = [], notices = [], minute = [];
   const owner = { thread: "owner-dm" };
   await plugin({
     settings: { define: () => ({ get: async () => ({}), onChange() {} }) },
     agents: { configure() {}, registerTool() {}, contributeInstructions() {} },
     storage: { database: () => ({ exec() {}, prepare: () => ({ all: () => [], get() {}, run() {} }) }),
-               kv: { get: async k => kv.get(k), set: async (k, v) => { kv.set(k, v); } } },
+               kv: { get: async k => kv.get(k), set: async (k, v) => { kv.set(k, v); }, delete: async k => { kv.delete(k); } } },
     cli: { register: c => { command = c; } },
     rpc: { register() {} },
-    background: { schedule() {}, service() {} },
+    background: { schedule: (name, cron, fn) => { if (name === "guest-schedule-alerts") minute.push(fn); }, service() {} },
     experimental_hooks: { on: (name, fn) => { if (name === "message.dispatch") hook = fn; } },
     experimental_aiServices: { register: () => ({ dispose() {} }) },
     sdk: {
       projects: { list: async () => [{ id: "proj", sources: [{ path: join(clone, "employees", "dev"), isDefault: true }] }],
                   get: async () => ({ sources: [{ path: join(clone, "employees", "dev") }] }) },
-      threads: { get: async ({ threadId }) => ({ id: threadId }), list: async () => [] },
+      threads: { get: async ({ threadId }) => ({ id: threadId }), list: async () => [], send: async a => { sent.push(a); return {}; } },
       plugins: {
         getSettings: async () => ({ values: { installKind: "employee" } }),
-        callRpc: async ({ pluginId, method, outputSchema }) => {
+        callRpc: async ({ pluginId, method, input, outputSchema }) => {
           if (pluginId === "telegram-projects" && method === "status")
             return outputSchema.parse({ chatBindings: [{ topicId: 0, threadId: owner.thread }, { topicId: 7, threadId: "group" }] });
+          if (pluginId === "automations" && method === "automations_list") return outputSchema.parse(automations);
+          if (pluginId === "push-notifications") { notices.push(input); return outputSchema.parse({}); }
           throw Error("plugin_not_found");
         },
       },
@@ -52,8 +55,9 @@ async function load() {
   });
   await new Promise(r => setTimeout(r, 20));
   const run = (threadId, ...argv) => command.run(argv, { threadId, projectId: "proj" });
-  const dispatch = (threadId, parentThreadId = null) => hook({ thread: { id: threadId }, parentThreadId });
-  return { run, dispatch, kv, owner };
+  const dispatch = (threadId, parentThreadId = null, originPluginId = null) =>
+    hook({ thread: { id: threadId }, parentThreadId, originPluginId, project: { id: "proj" } });
+  return { run, dispatch, kv, owner, sent, automations, notices, minute };
 }
 
 test("the registry says who does what from the passports; a guest gets no accounts", async () => {
@@ -107,4 +111,31 @@ test("while paused the owner's chat always passes: after his binding moved to an
   assert.deepEqual(await dispatch("owner-dm-2"), { action: "proceed" });
   assert.equal((await dispatch("owner-dm")).action, "wait");                        // the old thread is not his chat now
   assert.equal((await run("owner-dm-2", "resume")).exitCode, 0);
+});
+
+test("after «включи»: a repeating run that waited past its period is skipped and named to the owner; a one-off runs with a note", async () => {
+  const p = await load();
+  const now = Date.now();
+  p.automations.push(
+    { id: "auto_hourly", name: "Статус группы", enabled: true, trigger: { triggerType: "schedule" }, nextRunAt: now + 3600_000,
+      execution: { targetThreadId: "group" } },
+    { id: "auto_once", name: "Напомнить про встречу", enabled: true, trigger: { triggerType: "once" }, nextRunAt: null,
+      execution: { targetThreadId: "topic-2" } });
+  assert.equal((await p.run("owner-dm", "pause")).exitCode, 0);
+  assert.equal((await p.dispatch("group", null, "automations")).action, "wait");
+  assert.equal((await p.dispatch("topic-2", null, "automations")).action, "wait");
+  // The pause lasted two hours: the hourly run waited past its period.
+  const hourly = p.kv.get("pause-run:group"); hourly.at -= 2 * 3600_000; p.kv.set("pause-run:group", hourly);
+  const once = p.kv.get("pause-run:topic-2"); once.at -= 2 * 3600_000; p.kv.set("pause-run:topic-2", once);
+  assert.equal((await p.run("owner-dm", "resume")).exitCode, 0);
+  const skipped = await p.dispatch("group", null, "automations");
+  assert.equal(skipped.action, "reject");
+  assert.deepEqual(await p.dispatch("topic-2", null, "automations"), { action: "proceed" });
+  await new Promise(r => setTimeout(r, 10));
+  assert.match(p.sent.at(-1).input[0].text, /задержанный паузой сотрудника с/);
+  assert.equal(p.sent.at(-1).threadId, "topic-2");
+  for (const fn of p.minute) await fn().catch(() => {});
+  assert.match(p.notices.at(-1).body, /пропущено запусков расписаний: 1 — «Статус группы»/);
+  // Later runs are ordinary again.
+  assert.deepEqual(await p.dispatch("group", null, "automations"), { action: "proceed" });
 });
