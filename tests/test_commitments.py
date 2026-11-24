@@ -49,11 +49,16 @@ class Commitments(unittest.TestCase):
         self.history = self.tmp / "history.json"
         self.calls = self.tmp / "calls.jsonl"
         self.history.write_text(json.dumps(DAY + NEXT_DAY + PRIVATE, ensure_ascii=False), encoding="utf-8")
-        self.env = {**os.environ, "VALLIS_COMMITMENTS_DIR": str(self.tmp / "store"),
-                    "VALLIS_COMMITMENTS_HISTORY": f"{sys.executable} {FAKE}",
-                    "FAKE_HISTORY": str(self.history), "FAKE_HISTORY_CALLS": str(self.calls),
-                    "VALLIS_COMMITMENTS_SEND": f"{sys.executable} {ROOT / 'tests' / 'fake_send.py'}",
-                    "FAKE_SEND_LOG": str(self.tmp / "sent.jsonl"), "VALLIS_PDF": str(self.tmp / "no-pdf")}
+        # Nothing in the command can be redirected: the test gives it its own home and a `bb` of its own on PATH.
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        bb = self.bin / "bb"
+        bb.write_text(f"#!/bin/sh\nexec {sys.executable} {ROOT / 'tests' / 'fake_bb.py'} \"$@\"\n", encoding="utf-8")
+        bb.chmod(0o755)
+        self.store = self.tmp / ".local" / "share" / "vallis" / "commitments"
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith(("BB_", "VALLIS_"))}
+        self.env.update(HOME=str(self.tmp), PATH=f"{self.bin}:/usr/bin:/bin", FAKE_HISTORY=str(self.history),
+                        FAKE_HISTORY_CALLS=str(self.calls), FAKE_SEND_LOG=str(self.tmp / "sent.jsonl"))
         self.run_tool("set", "--timezone", "Europe/Moscow", "--language", "ru")
         self.run_tool("chats", "add", CHAT)
 
@@ -83,11 +88,11 @@ class Commitments(unittest.TestCase):
         """What the agent writes down after reading the first day."""
         smeta = self.add("--who", "Борис Орлов", "--who-id", 9002, "--for", "Анна Лебедева", "--what", "прислать смету по складу",
                          "--due", "2026-03-12", "--message", 102, "--date", "2026-03-10")
-        dogovor = self.add("--who", "Вера Сомова", "--what", "посмотреть договор с подрядчиком", "--message", 103,
+        dogovor = self.add("--who", "Вера Сомова", "--who-id", 9003, "--what", "посмотреть договор с подрядчиком", "--message", 103,
                            "--date", "2026-03-10")
         self.add("--who", "Анна Лебедева", "--what", "релиз переносим на 20 марта", "--kind", "decision",
                  "--message", 104, "--topic", 7, "--date", "2026-03-10")
-        logs = self.add("--who", "Глеб Юдин", "--what", "глянуть логи", "--unsure", "--message", 105, "--date", "2026-03-10")
+        logs = self.add("--who", "Глеб Юдин", "--who-id", 9004, "--what", "глянуть логи", "--unsure", "--message", 105, "--date", "2026-03-10")
         return smeta, dogovor, logs
 
     def digest(self, *args):
@@ -197,7 +202,7 @@ class Commitments(unittest.TestCase):
         self.first_day()
         self.digest("--date", "2026-03-10")
         self.digest("--date", "2026-03-11")
-        kept = sorted(p.name for p in (self.tmp / "store" / "digests").iterdir())
+        kept = sorted(p.name for p in (self.store / "digests").iterdir())
         self.assertEqual(kept, ["2026-03-10.md", "2026-03-11.md"])
 
     def test_overdue_and_due_soon(self):
@@ -250,7 +255,7 @@ class Commitments(unittest.TestCase):
     def test_every_change_is_journaled(self):
         smeta, dogovor, _ = self.first_day()
         self.out("close", dogovor, "--cancelled", "--by", "Вера Сомова")
-        events = [json.loads(l)["event"] for l in (self.tmp / "store" / "journal.jsonl").read_text().splitlines()]
+        events = [json.loads(l)["event"] for l in (self.store / "journal.jsonl").read_text().splitlines()]
         self.assertEqual(events, ["added", "added", "added", "added", "cancelled"])
 
     def test_two_chats_stay_apart(self):
@@ -258,7 +263,7 @@ class Commitments(unittest.TestCase):
         report = self.out("collect", "--date", "2026-03-10")
         self.assertEqual([(r["chat"], r["messages"]) for r in report], [(CHAT, 5), (OTHER, 1)])
         self.first_day()
-        self.out("add", "--chat", OTHER, "--who", "Дина Котова", "--what", "обновить прайс", "--due", "2026-03-13",
+        self.out("add", "--chat", OTHER, "--who", "Дина Котова", "--who-id", 9005, "--what", "обновить прайс", "--due", "2026-03-13",
                  "--message", 201, "--date", "2026-03-10")
         whole = self.digest("--date", "2026-03-10")
         self.assertLess(whole.index("## Продажи «Ромашка»"), whole.index("обновить прайс"))
@@ -273,7 +278,7 @@ class Commitments(unittest.TestCase):
         report = {r["chat"]: r["post"] for r in self.out("collect", "--date", "2026-03-10")}
         self.assertEqual(report, {CHAT: False, OTHER: True})
         self.first_day()
-        self.out("add", "--chat", OTHER, "--who", "Дина Котова", "--what", "обновить прайс", "--due", "2026-03-13",
+        self.out("add", "--chat", OTHER, "--who", "Дина Котова", "--who-id", 9005, "--what", "обновить прайс", "--due", "2026-03-13",
                  "--message", 201, "--date", "2026-03-10")
         done = self.post("--chat", OTHER, "--date", "2026-03-10", "--comment", "Говорили о прайсе.")
         text = Path(done["digest"]).read_text(encoding="utf-8")
@@ -300,10 +305,13 @@ class Commitments(unittest.TestCase):
         self.assertEqual(self.out("render", "--date", "2026-03-13")["open"], 2)
 
     def fake_pdf(self, body):
-        tool = self.tmp / "fake-pdf"
+        """A `vallis-pdf` on PATH for one call: returns the PATH that has it."""
+        folder = self.tmp / "pdf-bin"
+        folder.mkdir(exist_ok=True)
+        tool = folder / "vallis-pdf"
         tool.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
         tool.chmod(0o755)
-        return {"VALLIS_PDF": str(tool)}
+        return {"PATH": f"{folder}:{self.env['PATH']}"}
 
     def test_pdf_is_made_by_the_platform_command(self):
         self.first_day()
@@ -318,7 +326,7 @@ class Commitments(unittest.TestCase):
 
     def test_without_the_pdf_command_the_digest_still_comes_as_text(self):
         self.first_day()
-        for env in ({"VALLIS_PDF": str(self.tmp / "absent")}, self.fake_pdf("echo no fonts >&2; exit 3")):
+        for env in ({}, self.fake_pdf("echo no fonts >&2; exit 3")):
             done = json.loads(self.run_tool("render", "--date", "2026-03-10", "--pdf", env=env).stdout)
             self.assertNotIn("pdf", done)
             self.assertIn("send the digest as text", done["pdf_error"])
@@ -369,9 +377,12 @@ class Commitments(unittest.TestCase):
             refused = self.run_tool("mine", "--person", other, env=boris, ok=False)
             self.assertNotEqual(refused.returncode, 0)
             self.assertEqual(refused.stdout, "")
-        # a promise written down without the person's ID cannot be tied to a private chat: it is not shown there
         vera = self.run_tool("mine", "--person", 9003, env={"FAKE_HISTORY_CALLER": "person:9003"}).stdout
-        self.assertEqual(vera.strip(), "Открытых поручений нет.")
+        self.assertIn("2. Вера Сомова: посмотреть договор с подрядчиком", vera)
+        self.assertNotIn("Борис", vera)
+        # a promise cannot be written down without the person's ID: it could not be shown to them or closed by them
+        refused = self.run_tool("add", "--chat", CHAT, "--who", "Глеб Юдин", "--what", "глянуть логи", "--message", 105, ok=False)
+        self.assertIn("--who-id is needed", refused.stderr)
 
     def test_person_closes_own_commitment_in_private_and_nobody_elses(self):
         smeta, dogovor, _, _, alien = self.two_chats()
@@ -379,8 +390,8 @@ class Commitments(unittest.TestCase):
         for foreign in (dogovor, alien):
             refused = self.run_tool("mine", "--person", 9002, "--done", foreign, env=boris, ok=False)
             self.assertIn("is not an open commitment of this person", refused.stderr)
-        done = json.loads(self.run_tool("mine", "--person", 9002, "--done", smeta, env=boris).stdout)
-        self.assertEqual(done, {"id": smeta, "state": "done"})
+        done = self.run_tool("mine", "--person", 9002, "--done", smeta, env=boris).stdout
+        self.assertEqual(done.strip(), "Отмечено: 1. прислать смету по складу — сделано.")   # the whole answer, nothing to add
         item = next(i for i in self.out("list", "--all", "--json") if i["id"] == smeta)
         self.assertEqual((item["state"], item["history"][-1]["by"]), ("done", "Борис Орлов"))
         self.assertIn("in a group a commitment is closed by the words in the chat",
@@ -411,7 +422,7 @@ class Commitments(unittest.TestCase):
         self.first_day()
         self.run_tool("recipients", "add", 9001, "--name", "Анна Лебедева")
         self.out("render", "--date", "2026-03-10", "--for", 9001)
-        cfg = json.loads((self.tmp / "store" / "config.json").read_text(encoding="utf-8"))
+        cfg = json.loads((self.store / "config.json").read_text(encoding="utf-8"))
         self.assertIn(CHAT, cfg["pending"])                                # only the owner's digest closes the day
 
     # ── one step: compose and send to the same address ───────────────────────────────────────────────────────────
@@ -462,7 +473,7 @@ class Commitments(unittest.TestCase):
     def test_long_digest_goes_as_a_file_with_a_short_text(self):
         self.run_tool("chats", "add", CHAT, "--post", "on")
         for n in range(40):
-            self.add("--who", f"Человек {n}", "--what", "подготовить раздел отчёта номер " + str(n) * 20, "--message", 300 + n,
+            self.add("--who", f"Человек {n}", "--who-id", 9100 + n, "--what", "подготовить раздел отчёта номер " + str(n) * 20, "--message", 300 + n,
                      "--date", "2026-03-10")
         env = self.fake_pdf('printf "%%PDF-1.7 fake" > "$2"')
         done = self.post("--chat", CHAT, "--date", "2026-03-10", "--comment", "Делили отчёт.", env=env)
@@ -474,6 +485,28 @@ class Commitments(unittest.TestCase):
         self.assertTrue(without["sent"])
         self.assertIsNone(self.sent()[1]["file"])
         self.assertIn("Человек 39", self.sent()[1]["text"])
+
+    # ── one list per installation ────────────────────────────────────────────────────────────────────────────────
+
+    def test_the_folder_cannot_be_moved_by_a_variable(self):
+        elsewhere = self.tmp / "thread-folder"
+        moved = {"VALLIS_COMMITMENTS_DIR": str(elsewhere), "XDG_DATA_HOME": str(elsewhere)}
+        self.run_tool("add", "--chat", CHAT, "--who", "Борис Орлов", "--who-id", 9002, "--what", "прислать смету", "--message", 102, env=moved)
+        self.assertFalse(elsewhere.exists())
+        self.assertTrue((self.store / "ledger.json").is_file())
+        self.assertEqual(len(self.out("list", "--json")), 1)                # the same list for every conversation
+        help_text = self.run_tool("--help").stdout
+        self.assertNotIn("VALLIS_COMMITMENTS", help_text)
+        self.assertIn("no setting or variable that moves it", help_text)
+
+    def test_unwritable_folder_is_said_in_words_not_worked_around(self):
+        blocked = self.tmp / "blocked-home"
+        blocked.mkdir()
+        (blocked / ".local").write_text("not a folder")
+        done = self.run_tool("list", ok=True, env={"HOME": str(blocked)})    # reading an empty list is harmless
+        done = self.run_tool("chats", "add", CHAT, ok=False, env={"HOME": str(blocked)})
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("do not keep it anywhere else", done.stderr)
 
     def test_english_digest(self):
         self.run_tool("set", "--language", "en")

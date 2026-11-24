@@ -65,8 +65,15 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-child", {"command": "vallis-secret run KEY -- true"}), 2)
 
     def test_commitments_of_all_chats_only_in_the_owner_conversation(self):
+        # nobody moves the list: not the owner's conversation either
+        for who in ("s-owner", "s-group"):
+            for command in ("VALLIS_COMMITMENTS_DIR=/tmp/x vallis-commitments list", "export VALLIS_COMMITMENTS_DIR=$PWD/c",
+                            "HOME=/tmp/thread vallis-commitments chats add -1009990001111",
+                            ["bash", "-lc", "BB_CLI=./fake vallis-commitments collect"]):
+                self.assertEqual(self.run_hook(who, {"command": command}), 2, command)
+        self.assertEqual(self.run_hook("s-owner", {"command": "HOME=/tmp/x npm test; vallis-commitments list"}), 0)
         for command in ("vallis-commitments list", "x; /usr/local/bin/vallis-commitments render --chat -1009990001111",
-                        "cat ~/.local/share/vallis/commitments/ledger.json", "VALLIS_COMMITMENTS_DIR=/tmp/x python3 tool"):
+                        "cat ~/.local/share/vallis/commitments/ledger.json"):
             self.assertEqual(self.run_hook("s-group", {"command": command}), 2, command)
             self.assertEqual(self.run_hook("s-child", {"command": command}), 2, command)
             self.assertEqual(self.run_hook("s-owner", {"command": command}), 0, command)

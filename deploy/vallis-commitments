@@ -51,10 +51,11 @@ The text of the chat is not copied into the list — only the wording of the com
                                                      chats they write in themselves (`render --for ID`)
   vallis-commitments guide                           how the daily run reads a day: what is a commitment, what is not
 
-Folder: ~/.local/share/vallis/commitments (VALLIS_COMMITMENTS_DIR): config.json, ledger.json, journal.jsonl,
-transcripts/<date>/<chat>.txt, digests/<date>.md. The archive is read with `bb telegram-projects search-history`
-(VALLIS_COMMITMENTS_HISTORY — another command for tests; VALLIS_PDF — another vallis-pdf;
-VALLIS_COMMITMENTS_SEND — another `bb telegram-projects send`), so the caller sees only what its conversation may see:
+The list lives in one place of the installation and nowhere else: ~/.local/share/vallis/commitments of the
+agent's account (config.json, ledger.json, journal.jsonl, transcripts/<date>/<chat>.txt, digests/<date>.md). There
+is no setting or variable that moves it: every conversation of the installation must see the same list. If the
+folder cannot be written, the command says so — tell the owner, do not keep a list anywhere else.
+The archive is read with `bb telegram-projects search-history`, so the caller sees only what its conversation may see:
 run it from the owner's conversation or its subthread. Private chats are never read: only groups (negative IDs).
 `mine` is the only command for a group's or a person's conversation: it shows what the bridge lets that conversation
 read anyway — the chat itself, or the person's own promises.
@@ -64,7 +65,6 @@ import datetime as dt
 import fcntl
 import json
 import os
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -89,7 +89,7 @@ TEXT = {
         "by": "отметил", "was": "было", "messages": "сообщений за день: {n}", "days": "дн.",
         "how_chat": "Сделано, снято или решили иначе — напишите об этом здесь обычными словами, учту в следующей сводке.",
         "how_person": "Свои пункты можно закрыть словами у меня в личке: «7 сделано», «5 снято».",
-        "mine_none": "Открытых поручений нет.", "mine_chat": "Открытые поручения этого чата",
+        "closed_as": "Отмечено", "mine_none": "Открытых поручений нет.", "mine_chat": "Открытые поручения этого чата",
         "mine_person": "Ваши открытые поручения", "uncertain": "под вопросом",
         "fields": {"due": "срок", "who": "кто", "what": "что", "for": "для кого", "next": "дальше", "tracker": "задача",
                    "sure": "под вопросом", "who_id": "кто"},
@@ -105,7 +105,7 @@ TEXT = {
         "by": "by", "was": "was", "messages": "messages today: {n}", "days": "d",
         "how_chat": "Done, dropped or agreed otherwise — say so here in plain words, the next digest will show it.",
         "how_person": "You can close your own items in words in my private chat: \"7 done\", \"5 dropped\".",
-        "mine_none": "No open commitments.", "mine_chat": "Open commitments of this chat",
+        "closed_as": "Marked", "mine_none": "No open commitments.", "mine_chat": "Open commitments of this chat",
         "mine_person": "Your open commitments", "uncertain": "uncertain",
         "fields": {"due": "due", "who": "who", "what": "what", "for": "for", "next": "next", "tracker": "task",
                    "sure": "uncertain", "who_id": "who"},
@@ -166,13 +166,17 @@ def fail(message, code=1):
 
 
 def home():
-    return Path(os.environ.get("VALLIS_COMMITMENTS_DIR") or Path.home() / ".local/share/vallis/commitments")
+    return Path.home() / ".local/share/vallis/commitments"   # one place per installation; deliberately not configurable
+
+
+def bb(*words):
+    return [os.environ.get("BB_CLI") or "bb", "telegram-projects", *words]
 
 
 def read_json(path, default):
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         return default
 
 
@@ -190,9 +194,14 @@ def write_json(path, value):
 def locked():
     """One writer at a time: the daily run and a person's «снято» may come together."""
     root = home()
-    root.mkdir(parents=True, exist_ok=True)
-    os.chmod(root, 0o700)
-    with open(root / ".lock", "w") as lock:
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        os.chmod(root, 0o700)
+        lock = open(root / ".lock", "w")
+    except OSError as error:
+        fail(f"the list of commitments cannot be written ({root}: {error.strerror}). It lives only there: do not keep "
+             "it anywhere else — tell the owner that the commitments are not available on this installation yet.")
+    with lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield root
 
@@ -283,7 +292,7 @@ def link_of(chat, topic, message):
 # ── reading the archive ──────────────────────────────────────────────────────────────────────────────────────────
 
 def history(arguments):
-    command = shlex.split(os.environ.get("VALLIS_COMMITMENTS_HISTORY") or "bb telegram-projects search-history")
+    command = bb("search-history")
     done = subprocess.run(command + arguments, capture_output=True, text=True)
     if done.returncode:
         reason = (done.stderr or done.stdout).strip()
@@ -298,7 +307,7 @@ def history(arguments):
 
 def asked(arguments):
     """The archive's answer, or nothing when it refuses: a refusal means «not for this conversation»."""
-    command = shlex.split(os.environ.get("VALLIS_COMMITMENTS_HISTORY") or "bb telegram-projects search-history")
+    command = bb("search-history")
     try:
         done = subprocess.run(command + arguments, capture_output=True, text=True, timeout=120)
         return json.loads(done.stdout).get("messages", []) if done.returncode == 0 else []
@@ -417,6 +426,10 @@ def cmd_add(args):
         if chat not in cfg["chats"]:
             fail(f"chat {chat} is not in the list: vallis-commitments chats add {chat}")
         date = day(args.date, cfg)
+        if args.kind != "decision" and not args.who_id:
+            # Without the person's ID the promise cannot be shown to them in their private chat or closed by them.
+            fail("--who-id is needed: the Telegram ID of the one who promised (the number in brackets after the "
+                 "author's name in the transcript)", 64)
         fields = {
             "who": args.who.strip(), "who_id": args.who_id, "for": (args.for_ or "").strip() or None,
             "what": " ".join(args.what.split()), "due": due(args.due), "kind": args.kind,
@@ -563,7 +576,8 @@ def cmd_mine(args):
                 note(item, date, item["state"], args)
                 journal(root, item, item["state"], by=item["who"], place="private chat")
                 write_json(root / "ledger.json", book)
-                print(json.dumps({"id": item["id"], "state": item["state"]}))
+                # The whole answer for the person: nothing is to be added about how it went.
+                print(f"{t['closed_as']}: {item['id']}. {item['what']} — {t[item['state']]}.")
                 return
     if not items:
         print(t["mine_none"])
@@ -758,7 +772,7 @@ def cmd_post(args):
     if "pdf" in result:
         body = path.with_suffix(".short.md")
         body.write_text(short, encoding="utf-8")
-    command = shlex.split(os.environ.get("VALLIS_COMMITMENTS_SEND") or "bb telegram-projects send")
+    command = bb("send")
     command += address + ["--text-file", str(body)] + (["--file", result["pdf"]] if "pdf" in result else [])
     try:
         done = subprocess.run(command, capture_output=True, text=True, timeout=300)
@@ -777,7 +791,7 @@ def cmd_post(args):
 
 def pdf(digest):
     """The digest as a PDF with the platform's common look: made by vallis-pdf, where it is installed."""
-    command = shlex.split(os.environ.get("VALLIS_PDF") or "vallis-pdf")
+    command = ["vallis-pdf"]
     target = digest.with_suffix(".pdf")
     try:
         done = subprocess.run(command + [str(digest), str(target)], capture_output=True, text=True, timeout=300)
