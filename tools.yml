@@ -158,6 +158,7 @@ tools:
       backup: GOOGLE_WORKSPACE_LOGIN    # копия входа в хранилище; её дата — дата входа
       max_age_days: 7                   # приложение Google в режиме Testing: вход живёт 7 дней (убрать после публикации)
     default: false
+    installs: [assistant, employee]
 
   commitments:
     what: Поручения и договорённости людей из групп — список и ежедневная сводка, только чтение переписки (С91, С92) — vallis-commitments
