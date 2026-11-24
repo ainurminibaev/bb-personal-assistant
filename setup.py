@@ -201,8 +201,8 @@ def main():
     parser.add_argument("--model", help="Model for the project, for example the provider's current model ID")
     parser.add_argument("--tool-source", action="append", default=[], metavar="ID=SOURCE",
                         help="Install a tool plugin from another source, for example a copy brought by the administrator")
-    parser.add_argument("--shared-conversation-folder", action="store_true",
-                        help="Keep new groups and people's chats in the workspace folder (before С76) instead of their own folders")
+    parser.add_argument("--own-conversation-folders", action="store_true",
+                        help="Put new groups and people's chats into folders of their own (С76); off by default until the owner's word")
     parser.add_argument("--inbox", type=Path,
                         help="Folder for received Telegram files (default: telegram-inbox next to the workspace)")
     args = parser.parse_args()
@@ -319,7 +319,7 @@ def main():
         organization.exclude_installation_files(clone, args.employee, links)
         layout += notes
     folders, rules, allow = conversation_folders(args.kind, root, clone)
-    own_folders = not args.shared_conversation_folder and configure_conversation_folders(folders, rules)
+    own_folders = args.own_conversation_folders and configure_conversation_folders(folders, rules)
     install_guest_guard(package, root, bb("status")["dataDir"], (root, allow) if own_folders else None,
                         user_level=own_folders)
     if args.allow_guest_guard:
