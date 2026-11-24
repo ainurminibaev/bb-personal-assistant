@@ -52,8 +52,8 @@ async function load() {
   });
   await new Promise(r => setTimeout(r, 20));
   const run = (threadId, ...argv) => command.run(argv, { threadId, projectId: "proj" });
-  const dispatch = threadId => hook({ thread: { id: threadId }, parentThreadId: null });
-  return { run, dispatch, kv };
+  const dispatch = (threadId, parentThreadId = null) => hook({ thread: { id: threadId }, parentThreadId });
+  return { run, dispatch, kv, owner };
 }
 
 test("the registry says who does what from the passports; a guest gets no accounts", async () => {
@@ -97,4 +97,14 @@ test("a terminal of the server (no thread) may pause and resume; the pause survi
   assert.equal(first.kv.get("pause").paused, true);
   assert.equal((await first.run(undefined, "resume")).exitCode, 0);
   assert.equal(first.kv.get("pause").paused, false);
+});
+
+test("while paused the owner's chat always passes: after his binding moved to another thread, and work he started there", async () => {
+  const { run, dispatch, owner } = await load();
+  assert.equal((await run("owner-dm", "pause")).exitCode, 0);
+  assert.deepEqual(await dispatch("owner-sub", "owner-dm"), { action: "proceed" });   // a subthread of the owner's chat
+  owner.thread = "owner-dm-2";                                                      // the assistant's pair switched
+  assert.deepEqual(await dispatch("owner-dm-2"), { action: "proceed" });
+  assert.equal((await dispatch("owner-dm")).action, "wait");                        // the old thread is not his chat now
+  assert.equal((await run("owner-dm-2", "resume")).exitCode, 0);
 });
