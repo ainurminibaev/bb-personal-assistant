@@ -1142,6 +1142,25 @@ def write_mcp(root, servers, stored=()):
     return errors
 
 
+def ensure_platform_configured(bb, wait=None):
+    """After a platform update with a new skill BB may not know the skill until a reload; the plugin then shows
+    «agent configure failed: … unknown skill id …» and conversations get no platform skills at all.
+    Reload once and check again. Returns None when clean, else the plugin's status detail."""
+    import time
+    wait = wait or time.sleep
+
+    def detail():
+        plugin = next((p for p in bb("plugin", "list")["plugins"] if p["id"] == "personal-assistant"), None)
+        text = str((plugin or {}).get("statusDetail") or "")
+        return text if "configure failed" in text else None
+
+    if not detail():
+        return None
+    bb("plugin", "reload", "personal-assistant")
+    wait(3)
+    return detail()
+
+
 CATALOG_FILE = Path(".bb") / "tool-sources.json"
 
 

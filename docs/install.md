@@ -41,7 +41,8 @@ has local commits that are not pushed, the installer stops and asks to push them
 When the platform plugin alone is updated (`bb plugin update personal-assistant`) and the release brings a new skill,
 run `bb plugin reload personal-assistant` afterwards and check `bb plugin list`: until the reload BB may not know the
 new skill, and the plugin shows `agent configure failed: … unknown skill id …` — conversations then get no skills of
-the platform at all (seen with voice-breakdown in 0.4.5 and my-commitments in 0.4.7).
+the platform at all (seen with voice-breakdown in 0.4.5 and my-commitments in 0.4.7). The installer does this check
+itself and reloads once; it prints the error if the reload did not help.
 
 ## Release candidates and mirrors
 

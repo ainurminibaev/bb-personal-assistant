@@ -228,6 +228,11 @@ def main():
             tool_errors[name] = error
     if extra:
         tools.wait_for_plugins(bb, [tools.plugin_id(n, REGISTRY[n]) for n in extra if n not in tool_errors])
+    # A release with a new skill: BB may not know it until the plugin reloads (С: update rule, 25.11).
+    configure_error = tools.ensure_platform_configured(bb)
+    if configure_error:
+        print(f"personal-assistant: {configure_error} — conversations get no platform skills until this is fixed.",
+              flush=True)
     # Existing release-tracking installations can lag behind the newest tag.
     releases = {p["id"]: p["version"] for p in bb("plugin", "list")["plugins"]}
     if stable_version(releases.get("personal-assistant", "")) < (0, 2, 3):

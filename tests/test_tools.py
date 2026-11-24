@@ -562,6 +562,34 @@ class CatalogLines(unittest.TestCase):
                          {"command": "mine"})
 
 
+class PlatformConfigured(unittest.TestCase):
+    """After an update that brings a new skill the platform is reloaded once when BB reports «configure failed»."""
+
+    def run_with(self, details):
+        calls = []
+        def bb(*args):
+            calls.append(args)
+            if args[:2] == ("plugin", "list"):
+                return {"plugins": [{"id": "personal-assistant", "statusDetail": details.pop(0) if details else None}]}
+            return {}
+        return tools.ensure_platform_configured(bb, wait=lambda s: None), calls
+
+    def test_clean_needs_nothing(self):
+        result, calls = self.run_with([None])
+        self.assertIsNone(result)
+        self.assertNotIn(("plugin", "reload", "personal-assistant"), calls)
+
+    def test_reloaded_once_and_clean(self):
+        result, calls = self.run_with(['agent configure failed: configure() selected unknown skill id "x"', None])
+        self.assertIsNone(result)
+        self.assertEqual(calls.count(("plugin", "reload", "personal-assistant")), 1)
+
+    def test_still_failing_is_reported(self):
+        failed = 'agent configure failed: unknown skill id "x"'
+        result, _ = self.run_with([failed, failed])
+        self.assertIn("configure failed", result)
+
+
 class McpProcess(unittest.TestCase):
     """A tools.yml line of kind mcp (С51): written into both settings files, keys from the store, login state."""
 
