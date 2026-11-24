@@ -1,5 +1,6 @@
 """Register this assistant workspace and install the release-tracking BB plugins."""
 import argparse
+import os
 import json
 import re
 import shutil
@@ -43,6 +44,33 @@ def clone_workspace(url, root):
     root.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "clone", url, str(root)], check=True)
     root.chmod(0o700)
+
+
+def conversation_folders(kind, root, clone, home=None):
+    """С76: where the own folders of groups and people's chats live, and the role rules they read.
+
+    An employee: ~/conversations of its account, apart from the organization copy. An assistant: next to its
+    workspace, where the owner keeps projects. Rules: the employee's role (AGENTS.md of its folder)."""
+    home = Path(home or Path.home())
+    folders = home / "conversations" if kind == "employee" else root.parent / (root.name + "-conversations")
+    rules = root / "AGENTS.md" if kind == "employee" and (root / "AGENTS.md").is_file() else None
+    allow = [root / "AGENTS.md", root / "CLAUDE.md", root / "skills"] + ([clone / "shared"] if clone else [])
+    return folders, rules, allow
+
+
+def configure_conversation_folders(folders, rules):
+    """The bridge puts new groups and people's chats into their own folders; settings set by hand stay."""
+    config = bb("plugin", "config", "telegram-projects")
+    values = config.get("values", config)
+    if "conversationFoldersRoot" not in values:
+        print("This bridge has no own folders for groups yet (С76): update the bridge, then run setup again.")
+        return False
+    if not values.get("conversationFoldersRoot"):
+        folders.mkdir(mode=0o700, parents=True, exist_ok=True)
+        bb("plugin", "config", "telegram-projects", "set", "conversationFoldersRoot", str(folders))
+    if rules and not values.get("conversationRulesFile"):
+        bb("plugin", "config", "telegram-projects", "set", "conversationRulesFile", str(rules))
+    return True
 
 
 def configure_bridge(kind, inbox):
@@ -89,7 +117,7 @@ def remember_agent(project_id, provider, model):
     print(f"Agent check started in thread {thread.get('id') or thread.get('thread', {}).get('id')}.")
 
 
-def install_guest_guard(package, root, data_dir):
+def install_guest_guard(package, root, data_dir, private=None, user_level=False, home=None):
     """Guest thread guard for Codex and Claude Code: threads with groups and other people keep
     every tool but do not manage BB. Codex runs a new or changed hook only after the owner allows it."""
     target = root / ".bb" / "hooks" / GUARD.name
@@ -107,14 +135,23 @@ def install_guest_guard(package, root, data_dir):
         raise SystemExit(f"{settings} is not valid JSON; fix or remove it, then run setup again.")
     if not isinstance(current, dict):
         raise SystemExit(f"{settings} must hold a JSON object; fix or remove it, then run setup again.")
-    if current.get("dataDir") != str(data_dir) or not settings.exists():
-        settings.write_text(json.dumps({**current, "dataDir": str(data_dir)}, ensure_ascii=False) + "\n", encoding="utf-8")
+    wanted = {**current, "dataDir": str(data_dir)}
+    if private:  # С76: the owner's folder, closed to conversations that live in their own folders
+        folder, allow = private
+        wanted.update(privateRoot=str(folder), privateAllow=[str(a) for a in allow])
+    if wanted != current or not settings.exists():
+        settings.write_text(json.dumps(wanted, ensure_ascii=False) + "\n", encoding="utf-8")
     command = f"python3 {target}"
     entry = {"matcher": "*", "hooks": [{"type": "command", "command": command, "timeout": 30}]}
-    for config in (root / ".codex" / "hooks.json", root / ".claude" / "settings.json"):
+    configs = [root / ".codex" / "hooks.json", root / ".claude" / "settings.json"]
+    if user_level:  # conversations in their own folders are outside the workspace: the account's settings reach them
+        home = Path(home or Path.home())
+        codex_home = Path(os.environ.get("CODEX_HOME") or home / ".codex")
+        configs += [codex_home / "hooks.json", home / ".claude" / "settings.json"]
+    for config in configs:
         if config.is_symlink():
             raise SystemExit(f"Review the linked {config} before setup.")
-        config.parent.mkdir(exist_ok=True)
+        config.parent.mkdir(parents=True, exist_ok=True)
         data = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
         hooks = data.setdefault("hooks", {}).setdefault("PreToolUse", [])
         if not any(h.get("command") == command for group in hooks for h in group.get("hooks", [])):
@@ -151,6 +188,8 @@ def main():
     parser.add_argument("--model", help="Model for the project, for example the provider's current model ID")
     parser.add_argument("--tool-source", action="append", default=[], metavar="ID=SOURCE",
                         help="Install a tool plugin from another source, for example a copy brought by the administrator")
+    parser.add_argument("--shared-conversation-folder", action="store_true",
+                        help="Keep new groups and people's chats in the workspace folder (before С76) instead of their own folders")
     parser.add_argument("--inbox", type=Path,
                         help="Folder for received Telegram files (default: telegram-inbox next to the workspace)")
     args = parser.parse_args()
@@ -266,9 +305,13 @@ def main():
         links, notes = organization.link_skills(clone, args.employee)
         organization.exclude_installation_files(clone, args.employee, links)
         layout += notes
-    install_guest_guard(package, root, bb("status")["dataDir"])
+    folders, rules, allow = conversation_folders(args.kind, root, clone)
+    own_folders = not args.shared_conversation_folder and configure_conversation_folders(folders, rules)
+    install_guest_guard(package, root, bb("status")["dataDir"], (root, allow) if own_folders else None,
+                        user_level=own_folders)
     if args.allow_guest_guard:
-        subprocess.run([sys.executable, str(package / "hooks" / "approve-guest-guard.py"), str(root)], check=True)
+        subprocess.run([sys.executable, str(package / "hooks" / "approve-guest-guard.py"), str(root),
+                        *([str(folders)] if own_folders else [])], check=True)
         print("Guest thread guard installed and allowed in Codex.")
     else:
         print("Guest thread guard installed. Allow it once: the \"Codex hooks\" card in BB, or run setup.py again with --allow-guest-guard.")

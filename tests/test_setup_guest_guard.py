@@ -40,3 +40,41 @@ class SetupGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConversationFolders(unittest.TestCase):
+    """С76: the guard knows the owner's folder and reaches conversation folders through the account's settings."""
+
+    def test_private_folder_and_account_level_hooks(self):
+        import os
+        from unittest.mock import patch
+        from setup import conversation_folders
+        package = Path(__file__).resolve().parent.parent
+        home = Path(tempfile.mkdtemp())
+        clone = Path(tempfile.mkdtemp())
+        root = clone / "employees" / "alpha"
+        root.mkdir(parents=True)
+        (root / "AGENTS.md").write_text("# role\n")
+        folders, rules, allow = conversation_folders("employee", root, clone, home)
+        self.assertEqual(folders, home / "conversations")
+        self.assertEqual(rules, root / "AGENTS.md")
+        self.assertIn(clone / "shared", allow)
+        assistant = Path(tempfile.mkdtemp()) / "personal-assistant"
+        self.assertEqual(conversation_folders("assistant", assistant, None, home)[0],
+                         assistant.parent / "personal-assistant-conversations")
+        self.assertIsNone(conversation_folders("assistant", assistant, None, home)[1])
+        with patch.dict(os.environ, {"CODEX_HOME": ""}):
+            target = install_guest_guard(package, root, "/data/bb", (root, allow), user_level=True, home=home)
+            install_guest_guard(package, root, "/data/bb", (root, allow), user_level=True, home=home)
+        settings = json.loads(target.with_name("guest-thread-guard.json").read_text())
+        self.assertEqual(settings["privateRoot"], str(root))
+        self.assertIn(str(root / "AGENTS.md"), settings["privateAllow"])
+        for config in (home / ".codex" / "hooks.json", home / ".claude" / "settings.json",
+                       root / ".codex" / "hooks.json", root / ".claude" / "settings.json"):
+            groups = json.loads(config.read_text())["hooks"]["PreToolUse"]
+            self.assertEqual(len(groups), 1, config)
+            self.assertIn(str(target), groups[0]["hooks"][0]["command"])
+        # without own folders nothing reaches the account's settings
+        other_home = Path(tempfile.mkdtemp())
+        install_guest_guard(package, Path(tempfile.mkdtemp()), "/data/bb", home=other_home)
+        self.assertFalse((other_home / ".claude" / "settings.json").exists())

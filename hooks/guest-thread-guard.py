@@ -80,6 +80,57 @@ def commitments_problem(commands, paths, guest):
         return COMMITMENTS_REASON
     if any(COMMITMENTS.search(path) for path in paths):
         return COMMITMENTS_REASON
+PRIVATE_REASON = ("This conversation works in its own folder: the owner's private folder (its notes, files and results) "
+                  "is not available here, and nothing from it is sent to this chat. Tell the person it is not available here.")
+
+
+def guard_settings():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guest-thread-guard.json")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _inside(path, root):
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def private_problem(commands, paths, cwd, settings):
+    """С76: a conversation in its own folder never reaches into the owner's folder, except the rule files named
+    by setup.py (privateAllow). A conversation still inside the owner's folder (not moved yet) is not judged here."""
+    root = settings.get("privateRoot")
+    if not root:
+        return None
+    root = os.path.realpath(root)
+    cwd = os.path.realpath(cwd or os.getcwd())
+    if _inside(cwd, root):
+        return None
+    allowed = [os.path.realpath(a) for a in settings.get("privateAllow") or []]
+
+    def reaches(raw):
+        raw = raw.strip("'\"")
+        if not raw or ("/" not in raw and not raw.startswith("~") and raw not in (".", "..")):
+            return False
+        full = os.path.realpath(os.path.join(cwd, os.path.expanduser(raw)))
+        return _inside(full, root) and not any(_inside(full, a) for a in allowed)
+
+    for path in paths:
+        if reaches(path):
+            return PRIVATE_REASON
+    for command in commands:
+        if root in command and not any(a in command for a in allowed):
+            return PRIVATE_REASON
+        try:
+            words = shlex.split(command, posix=True)
+        except ValueError:
+            words = command.split()
+        for word in words:
+            for part in re.split(r"[=:,]", word):
+                if reaches(part):
+                    return PRIVATE_REASON
     return None
 
 
@@ -485,6 +536,8 @@ def main():
         guest, data_dir, thread, bb = True, data_dir_setting(), None, None
     problem = (secrets_problem(commands, paths, guest) or commitments_place_problem(commands)
                or commitments_problem(commands, paths, guest))
+    if not problem and guest:
+        problem = private_problem(commands, paths, event.get("cwd"), guard_settings())
     if problem:
         print(problem, file=sys.stderr)
         return 2

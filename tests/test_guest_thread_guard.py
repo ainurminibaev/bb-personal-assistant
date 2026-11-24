@@ -40,11 +40,13 @@ class GuestGuard(unittest.TestCase):
         with open(os.path.join(hooks, "guest-thread-guard.json"), "w") as f:
             json.dump({"dataDir": data, "guestSchedules": True}, f)
 
-    def run_hook(self, session, tool_input, thread=None):
+    def run_hook(self, session, tool_input, thread=None, cwd=None):
         env = {k: v for k, v in os.environ.items() if not k.startswith("BB_")}
         env["XDG_RUNTIME_DIR"] = self.dir
         if thread: env["BB_THREAD_ID"] = thread
-        return subprocess.run([sys.executable, self.hook], input=json.dumps({"session_id": session, "tool_name": "Bash", "tool_input": tool_input}),
+        event = {"session_id": session, "tool_name": "Bash", "tool_input": tool_input}
+        if cwd: event["cwd"] = cwd
+        return subprocess.run([sys.executable, self.hook], input=json.dumps(event),
                               capture_output=True, text=True, env=env).returncode
 
     def test_credentials_store(self):
@@ -90,6 +92,34 @@ class GuestGuard(unittest.TestCase):
                         "vallis-commitments recipients add 9002", "vallis-commitments render --for 9002",
                         "vallis-commitments mine --person 1 && cat ~/.local/share/vallis/commitments/ledger.json"):
             self.assertEqual(self.run_hook("s-group", {"command": command}), 2, command)
+    def test_c76_a_group_in_its_own_folder_does_not_reach_the_owners_folder(self):
+        private = os.path.join(self.dir, "employees", "alpha")
+        group = os.path.join(self.dir, "conversations", "group-100")
+        shared = os.path.join(self.dir, "shared")
+        for d in (os.path.join(private, "local"), os.path.join(private, "outputs"), group, shared):
+            os.makedirs(d, exist_ok=True)
+        settings = os.path.join(os.path.dirname(self.hook), "guest-thread-guard.json")
+        with open(settings) as f:
+            data = json.load(f)
+        data.update(privateRoot=private, privateAllow=[os.path.join(private, "AGENTS.md"), shared])
+        with open(settings, "w") as f:
+            json.dump(data, f)
+        blocked = [{"command": f"cat {private}/local/agents-custom.md"},
+                   {"command": f"ls {private}"},
+                   {"command": "cat ../../employees/alpha/outputs/report.pdf"},
+                   {"command": ["bash", "-lc", f"cp {private}/outputs/a.pdf outputs/"]},
+                   {"command": f"bb telegram-projects send --file={private}/outputs/a.pdf"},
+                   {"file_path": f"{private}/local/notes.md"},
+                   {"pattern": f"{private}/**"}]
+        for tool_input in blocked:
+            self.assertEqual(self.run_hook("s-group", tool_input, cwd=group), 2, tool_input)
+        for tool_input in ({"command": f"cat {private}/AGENTS.md"}, {"command": f"cat {shared}/AGENTS.md"},
+                           {"command": "ls outputs local"}, {"file_path": f"{group}/local/notes.md"},
+                           {"command": "python3 -c 'print(1/2)'"}):
+            self.assertEqual(self.run_hook("s-group", tool_input, cwd=group), 0, tool_input)
+        # the owner's own conversation, and a group not moved yet (still inside the owner's folder), are not judged here
+        self.assertEqual(self.run_hook("s-owner", {"command": f"cat {private}/local/a"}, cwd=group), 0)
+        self.assertEqual(self.run_hook("s-group", {"command": f"cat {private}/local/a"}, cwd=private), 0)
 
     def test_group_thread_cannot_read_other_threads(self):
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread list"}), 2)
