@@ -5,6 +5,8 @@
 #
 #   deploy/server-setup.sh <user> <port> [bb-version] [agent-package]
 #   deploy/server-setup.sh helper 38886 0.50.1 @openai/codex
+# A second employee on the same server: its own user and a free port pair (<port> for the server, <port>+1 for BB's
+# host daemon — the default 38887 belongs to the first BB). System packages are installed only when missing.
 #
 # Then, as <user>: run setup.py from the assistant release with --kind employee (see README).
 set -euo pipefail
@@ -18,8 +20,13 @@ id "$USER_NAME" >/dev/null 2>&1 || useradd --system --home-dir "$HOME_DIR" --cre
 install -d -m 0750 -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR" "$HOME_DIR/workspace"
 install -d -m 0700 -o "$USER_NAME" -g "$USER_NAME" "$DATA" "$HOME_DIR/.secrets" "$HOME_DIR/telegram-inbox"
 install -d -m 0755 -o "$USER_NAME" -g "$USER_NAME" "$RUNTIME" "$RUNTIME/tools"
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 python3-yaml bubblewrap curl xz-utils sudo ca-certificates age >/dev/null
+# Only what is missing; age comes with the credentials store from its pinned release (tools.yml), not from the system.
+need=(); for pkg in git python3 python3-yaml bubblewrap curl xz-utils sudo ca-certificates; do
+  dpkg -s "$pkg" >/dev/null 2>&1 || need+=("$pkg"); done
+if [ ${#need[@]} -gt 0 ]; then
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-upgrade "${need[@]}" >/dev/null
+fi
 
 if [ ! -x "$RUNTIME/node/bin/node" ]; then
   tmp=$(mktemp -d)
@@ -43,7 +50,7 @@ Group=$USER_NAME
 WorkingDirectory=$HOME_DIR
 Environment=HOME=$HOME_DIR
 Environment=PATH=$RUNTIME/node/bin:$RUNTIME/tools/node_modules/.bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=$RUNTIME/tools/node_modules/.bin/bb-app --bundled --no-in-app-updates --data-dir $DATA --server-bind-host 127.0.0.1 --server-port $PORT
+ExecStart=$RUNTIME/tools/node_modules/.bin/bb-app --bundled --no-in-app-updates --data-dir $DATA --server-bind-host 127.0.0.1 --server-port $PORT --host-daemon-port $((PORT + 1))
 UMask=0077
 NoNewPrivileges=yes
 Restart=on-failure
