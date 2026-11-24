@@ -38,6 +38,11 @@ Run the same command again. With `--organization`, the copy is updated with `git
 refreshed and the differences are printed again; a change in `shared/` reaches the employee this way. If the employee
 has local commits that are not pushed, the installer stops and asks to push them first.
 
+When the platform plugin alone is updated (`bb plugin update personal-assistant`) and the release brings a new skill,
+run `bb plugin reload personal-assistant` afterwards and check `bb plugin list`: until the reload BB may not know the
+new skill, and the plugin shows `agent configure failed: … unknown skill id …` — conversations then get no skills of
+the platform at all (seen with voice-breakdown in 0.4.5 and my-commitments in 0.4.7).
+
 ## Release candidates and mirrors
 
 The installer expects the platform and the bridge from their release sources. To install from an already installed
