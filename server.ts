@@ -46,6 +46,9 @@ export default async function personalAssistant(bb: BbPluginApi) {
     ? ["secrets-store"] : [];
   // Google Drive, Docs and Sheets (С51): its skill where the installer prepared the line's login folder.
   const googleSkills = () => existsSync(join(homedir(), ".secrets", "google-workspace")) ? ["google-workspace"] : [];
+  // Commitments between people and the daily digest (С91, С92): only the owner's conversation reads the groups.
+  const commitmentSkills = () => (process.env.PATH ?? "").split(":").some(dir => dir && existsSync(join(dir, "vallis-commitments")))
+    ? ["commitments"] : [];
   // The credentials store (С37, С43): an agent answers about its own accesses from the store's list, never from memory.
   const accessLine = () => storeSkills().length
     ? "О своих доступах (учётки, входы, ключи) отвечай по списку хранилища: `vallis-secret list` — названия и назначение, без значений."
@@ -89,7 +92,7 @@ export default async function personalAssistant(bb: BbPluginApi) {
   // The credentials store (С37): its skill only where the installer put vallis-secret on the PATH of this BB.
   bb.agents.configure(({project, thread}) =>
     matches(project.id, thread.id)
-      ? { instructions: policy, skills: ["dispatch", "integrations", "task-tracking", "agent-mail", "voice-breakdown", ...storeSkills(), ...googleSkills()], tools: [] }
+      ? { instructions: policy, skills: ["dispatch", "integrations", "task-tracking", "agent-mail", "voice-breakdown", ...storeSkills(), ...googleSkills(), ...commitmentSkills()], tools: [] }
       // Every conversation keeps the tasks given in it and can get the agent's own mail: groups and people's chats too.
       : { skills: ["task-tracking", "agent-mail", "voice-breakdown", ...storeSkills(), ...googleSkills()], tools: [] }
   );

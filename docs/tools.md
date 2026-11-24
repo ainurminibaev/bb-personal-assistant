@@ -47,6 +47,8 @@ tools:
   (`vallis-secret run … --`), its login lives in a closed folder (`login.dir`) the MCP keeps itself. States:
   `needs_setup` (a program or a key is missing), `needs_login` (no login yet), `installed`. Google Drive, Docs and
   Sheets (`google-workspace`, off by default; skill `google-workspace` for the login) is such a line.
+  A line with `check` is a plain command of the package: it is copied and must answer `<command> <check>`
+  (`commitments`: `vallis-commitments list`, see `docs/commitments.md`).
 - `setting` — what has to be configured after installation (`env` variable or `file` in the installation's closed
   folder); without it the line is `needs_setup`.
 

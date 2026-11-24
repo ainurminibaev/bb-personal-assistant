@@ -505,6 +505,12 @@ def _cli_state(name, tool, level, account):
     program = _cli_name(tool)
     if not account.which(program):
         return _row(name, tool, level, "needs_setup", f"{program} is not on the PATH of {account.name}", RERUN)
+    if tool.get("check"):  # a plain command of the platform: no keys, no downloads — it answers its own check
+        done = account.run(program, *tool["check"])
+        if done.returncode:
+            return _row(name, tool, level, "needs_setup",
+                        f"{program} {' '.join(tool['check'])}: {(done.stderr or done.stdout).strip()[-200:]}", RERUN)
+        return _row(name, tool, level, "installed", tool.get("check_note", ""))
     key = account.home / ".config" / "vallis" / "age.key"
     missing = [p for p in tool.get("requires", []) if not account.which(p)]
     if missing and not key.is_file():  # age-keygen makes the account's key; afterwards sops alone does the work
@@ -966,6 +972,8 @@ def install_cli(tool, account, admins=()):
     missing = [p for p in tool.get("requires", []) if not account.which(p)]
     if missing:
         return f"not installed: {', '.join(missing)}"
+    if tool.get("check"):  # a plain command: nothing to initialize
+        return None
     done = account.run(str(target), "init")
     if done.returncode:
         return f"{target.name} init: {(done.stderr or done.stdout).strip()[-200:]}"

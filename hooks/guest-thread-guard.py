@@ -52,6 +52,18 @@ def secrets_problem(commands, paths, guest):
     return None
 
 
+COMMITMENTS_REASON = ("This is a guest conversation: the list of commitments covers every chat of the organization "
+                      "and is read only in the owner's conversation. Tell the person it is not available here.")
+COMMITMENTS = re.compile(r"(\bvallis-commitments\b|vallis/commitments(?:[/\s'\"]|$)|\bVALLIS_COMMITMENTS_)")
+
+
+def commitments_problem(commands, paths, guest):
+    """A guest turn does not read the commitments of other chats: neither by the command nor from its folder."""
+    if guest and any(COMMITMENTS.search(text) for text in (*commands, *paths)):
+        return COMMITMENTS_REASON
+    return None
+
+
 def data_dir_setting():
     """The BB data directory, written next to the hook by setup.py. Agents start hooks without BB variables."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "guest-thread-guard.json")
@@ -449,7 +461,7 @@ def main():
         guest, data_dir, thread, bb = is_guest(event)
     except Exception:
         guest, data_dir, thread, bb = True, data_dir_setting(), None, None
-    problem = secrets_problem(commands, paths, guest)
+    problem = secrets_problem(commands, paths, guest) or commitments_problem(commands, paths, guest)
     if problem:
         print(problem, file=sys.stderr)
         return 2

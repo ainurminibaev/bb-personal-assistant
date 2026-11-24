@@ -32,6 +32,28 @@ class Selection(unittest.TestCase):
             if tool["kind"] == "plugin":
                 self.assertTrue(tool.get("source"), name)
 
+    def test_commitments_is_a_plain_command_of_the_package(self):
+        tool = dict(REGISTRY["commitments"])
+        self.assertTrue((tools.PACKAGE / tool["path"]).is_file())
+        self.assertEqual(sorted(tool["installs"]), ["assistant", "employee"])
+        with tempfile.TemporaryDirectory() as home:
+            home = Path(home)
+            bin_dir = home / ".local" / "bin"
+            bin_dir.mkdir(parents=True)
+            env = dict(os.environ, HOME=str(home), PATH=f"{bin_dir}:{os.environ['PATH']}",
+                       VALLIS_COMMITMENTS_DIR=str(home / "store"))
+            account = FakeAccount(home)
+            account.which = lambda p: __import__("shutil").which(p, path=env["PATH"])
+            account.run = lambda *a, **k: subprocess.run(list(a), env=env, text=True, capture_output=True)
+            with patch.object(tools, "_cli_dir", lambda a: bin_dir):
+                row = tools.tool_state("commitments", tool, (True, "platform", ""), account, {}, home, {})
+                self.assertEqual(row["state"], "needs_setup")
+                self.assertIsNone(tools.install_cli(tool, account))
+                self.assertTrue((bin_dir / "vallis-commitments").is_file())
+                self.assertFalse((home / ".config" / "vallis").exists())      # no keys, nothing initialized
+                row = tools.tool_state("commitments", tool, (True, "platform", ""), account, {}, home, {})
+                self.assertEqual(row["state"], "installed", row)
+
     def test_bridge_source_matches_the_migration(self):
         from migrate_bridge import TRACKING
         self.assertEqual(REGISTRY["telegram-projects"]["source"], TRACKING)
