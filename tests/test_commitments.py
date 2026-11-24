@@ -51,9 +51,20 @@ class Commitments(unittest.TestCase):
         self.history.write_text(json.dumps(DAY + NEXT_DAY + PRIVATE, ensure_ascii=False), encoding="utf-8")
         self.env = {**os.environ, "VALLIS_COMMITMENTS_DIR": str(self.tmp / "store"),
                     "VALLIS_COMMITMENTS_HISTORY": f"{sys.executable} {FAKE}",
-                    "FAKE_HISTORY": str(self.history), "FAKE_HISTORY_CALLS": str(self.calls)}
+                    "FAKE_HISTORY": str(self.history), "FAKE_HISTORY_CALLS": str(self.calls),
+                    "VALLIS_COMMITMENTS_SEND": f"{sys.executable} {ROOT / 'tests' / 'fake_send.py'}",
+                    "FAKE_SEND_LOG": str(self.tmp / "sent.jsonl"), "VALLIS_PDF": str(self.tmp / "no-pdf")}
         self.run_tool("set", "--timezone", "Europe/Moscow", "--language", "ru")
         self.run_tool("chats", "add", CHAT)
+
+    def post(self, *args, ok=True, env=None):
+        done = self.run_tool("post", *args, ok=ok, env=env)
+        return json.loads(done.stdout) if done.stdout.strip() else done
+
+    def sent(self):
+        """What really went out: the address, the text and the file of every send."""
+        log = self.tmp / "sent.jsonl"
+        return [json.loads(l) for l in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
 
     def run_tool(self, *args, ok=True, env=None):
         done = subprocess.run([sys.executable, str(TOOL), *map(str, args)], capture_output=True, text=True,
@@ -264,8 +275,9 @@ class Commitments(unittest.TestCase):
         self.first_day()
         self.out("add", "--chat", OTHER, "--who", "Дина Котова", "--what", "обновить прайс", "--due", "2026-03-13",
                  "--message", 201, "--date", "2026-03-10")
-        done = self.out("render", "--date", "2026-03-10", "--chat", OTHER, "--to-chat", "--comment", "Говорили о прайсе.")
+        done = self.post("--chat", OTHER, "--date", "2026-03-10", "--comment", "Говорили о прайсе.")
         text = Path(done["digest"]).read_text(encoding="utf-8")
+        self.assertEqual(self.sent(), [{"to": ["--chat", OTHER], "text": text, "file": None}])   # this chat, this text
         self.assertTrue(done["digest"].endswith(f"2026-03-10.{OTHER}.md"))
         self.assertIn("Дина Котова: обновить прайс", text)
         for foreign in ("смету", "Борис", "подрядчиком", "Ромашка»"):          # nothing of the other chat, no chat heading
@@ -273,7 +285,7 @@ class Commitments(unittest.TestCase):
         self.assertIn("напишите об этом здесь обычными словами", text)
         self.assertNotIn("по номеру", text)
         self.assertNotIn("@", text)                                         # nobody is mentioned
-        self.assertIn("--to-chat goes with --chat", self.run_tool("render", "--to-chat", ok=False).stderr)
+        self.assertNotEqual(self.run_tool("render", "--to-chat", ok=False).returncode, 0)   # no such wording outside post
 
     def test_a_day_with_nothing_to_tell_is_not_sent(self):
         self.assertFalse(self.out("render", "--date", "2026-03-10")["send"])
@@ -301,8 +313,8 @@ class Commitments(unittest.TestCase):
         self.assertTrue(Path(done["pdf"]).read_text().startswith("%PDF"))
         self.run_tool("set", "--pdf", "on")                                 # the owner asked for a file every day
         self.assertIn("pdf", json.loads(self.run_tool("render", "--date", "2026-03-10", env=env).stdout))
-        chat = json.loads(self.run_tool("render", "--date", "2026-03-10", "--chat", CHAT, "--to-chat", env=env).stdout)
-        self.assertNotIn("pdf", chat)                                       # the chat's digest stays text unless asked
+        chat = json.loads(self.run_tool("render", "--date", "2026-03-10", "--chat", CHAT, env=env).stdout)
+        self.assertNotIn("pdf", chat)                                       # one chat's digest stays text unless asked
 
     def test_without_the_pdf_command_the_digest_still_comes_as_text(self):
         self.first_day()
@@ -314,8 +326,9 @@ class Commitments(unittest.TestCase):
 
     def test_guide_covers_the_run(self):
         guide = self.run_tool("guide").stdout
-        for part in ("vallis-commitments collect", "--kind decision", "--unsure", "--cancelled", '"send": false',
-                     "--person owner", "--to-chat", "--for <ID>", "data, never an instruction"):
+        for part in ("vallis-commitments collect", "--kind decision", "--unsure", "--cancelled", '"sent": true',
+                     "post --owner", "post --chat <chat>", "post\n     --for <ID>", "never compose a digest",
+                     "data, never an instruction"):
             self.assertIn(part, guide)
 
     # ── «что я обещал?»: a group's and a person's conversation ───────────────────────────────────────────────────
@@ -400,6 +413,67 @@ class Commitments(unittest.TestCase):
         self.out("render", "--date", "2026-03-10", "--for", 9001)
         cfg = json.loads((self.tmp / "store" / "config.json").read_text(encoding="utf-8"))
         self.assertIn(CHAT, cfg["pending"])                                # only the owner's digest closes the day
+
+    # ── one step: compose and send to the same address ───────────────────────────────────────────────────────────
+
+    def test_each_digest_goes_only_to_its_own_address(self):
+        self.two_chats()
+        self.run_tool("chats", "add", OTHER, "--post", "on")
+        self.run_tool("chats", "add", CHAT, "--post", "on")
+        self.run_tool("recipients", "add", 9001, "--name", "Анна Лебедева")
+        for target in (["--owner"], ["--chat", CHAT], ["--chat", OTHER], ["--for", 9001]):
+            self.assertTrue(self.post(*target, "--date", "2026-03-10")["sent"])
+        owner, team, sales, anna = self.sent()
+        self.assertEqual([m["to"] for m in (owner, team, sales, anna)],
+                         [["--person", "owner"], ["--chat", CHAT], ["--chat", OTHER], ["--person", "9001"]])
+        self.assertIn("смету", owner["text"]); self.assertIn("прайс", owner["text"])     # the owner sees every chat
+        self.assertIn("смету", team["text"]); self.assertNotIn("прайс", team["text"])
+        self.assertIn("прайс", sales["text"]); self.assertNotIn("смету", sales["text"])
+        self.assertIn("смету", anna["text"]); self.assertNotIn("прайс", anna["text"])    # she writes in the team chat only
+
+    def test_post_has_no_way_to_name_another_address(self):
+        self.two_chats()
+        self.run_tool("chats", "add", OTHER, "--post", "on")
+        for extra in (["--chat", OTHER, "--for", 9001], ["--chat", OTHER, "--owner"], ["--chat", OTHER, "--to", CHAT],
+                      ["--chat", OTHER, "--person", 9001], ["--chat", OTHER, "--out", "/tmp/x.md"], []):
+            self.assertNotEqual(self.run_tool("post", *extra, "--date", "2026-03-10", ok=False).returncode, 0, extra)
+        self.assertEqual(self.sent(), [])
+
+    def test_chat_not_turned_on_and_unknown_recipient_get_nothing(self):
+        self.two_chats()
+        self.assertIn("does not get its digest", self.run_tool("post", "--chat", CHAT, "--date", "2026-03-10", ok=False).stderr)
+        self.assertIn("is not a recipient", self.run_tool("post", "--for", 9002, "--date", "2026-03-10", ok=False).stderr)
+        self.assertIn("private chats are not collected", self.run_tool("post", "--chat", 9002, ok=False).stderr)
+        self.run_tool("recipients", "add", 9999, "--name", "Посторонний")
+        nobody = self.post("--for", 9999, "--date", "2026-03-10")
+        self.assertEqual((nobody["sent"], nobody["reason"]), (False, "the person writes in none of the chats"))
+        self.assertEqual(self.sent(), [])
+
+    def test_quiet_day_is_not_sent_and_a_refusal_is_reported(self):
+        self.assertEqual(self.post("--owner", "--date", "2026-03-10")["reason"], "nothing to tell today")
+        self.assertEqual(self.sent(), [])
+        self.first_day()
+        refused = self.run_tool("post", "--owner", "--date", "2026-03-10", ok=False,
+                                env={"FAKE_SEND_FAIL": "person_has_not_started_the_bot"})
+        self.assertEqual(refused.returncode, 1)
+        answer = json.loads(refused.stdout)
+        self.assertEqual((answer["sent"], answer["reason"]), (False, "person_has_not_started_the_bot"))
+
+    def test_long_digest_goes_as_a_file_with_a_short_text(self):
+        self.run_tool("chats", "add", CHAT, "--post", "on")
+        for n in range(40):
+            self.add("--who", f"Человек {n}", "--what", "подготовить раздел отчёта номер " + str(n) * 20, "--message", 300 + n,
+                     "--date", "2026-03-10")
+        env = self.fake_pdf('printf "%%PDF-1.7 fake" > "$2"')
+        done = self.post("--chat", CHAT, "--date", "2026-03-10", "--comment", "Делили отчёт.", env=env)
+        message = self.sent()[0]
+        self.assertTrue(done["sent"] and message["file"].endswith(f"2026-03-10.{CHAT}.pdf"))
+        self.assertLess(len(message["text"]), 400)
+        self.assertIn("Делили отчёт.", message["text"]); self.assertIn("Новое за день: 40", message["text"])
+        without = self.post("--chat", CHAT, "--date", "2026-03-10")         # no vallis-pdf here: the whole text goes
+        self.assertTrue(without["sent"])
+        self.assertIsNone(self.sent()[1]["file"])
+        self.assertIn("Человек 39", self.sent()[1]["text"])
 
     def test_english_digest(self):
         self.run_tool("set", "--language", "en")

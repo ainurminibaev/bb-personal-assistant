@@ -38,6 +38,9 @@ time zone, language), `ledger.json`, `journal.jsonl`, `transcripts/<date>/<chat>
 - PDF: `render --pdf` (or `set --pdf on` for every day) calls `vallis-pdf`; where it is missing or fails, the answer
   says so and the digest goes as text.
 - A day with nothing new, closed, changed, overdue or due is not sent (`"send": false`).
+- Sending is one step with composing: `post --owner | --chat <chat> | --for <ID>` takes the address from the same
+  argument as the content, so a chat's digest cannot go to another chat by the agent's mistake. `render` only
+  composes, to look at.
 
 ## Check
 

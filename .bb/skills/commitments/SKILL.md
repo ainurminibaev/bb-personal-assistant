@@ -48,17 +48,20 @@ asks for a digest now («сведи сегодня») — do the same here, for 
   message — each its own command; answer with one line of what changed.
 - «Это ещё не сделано» about a closed one — `reopen <number> --by …`.
 - «Присылай PDF» — `vallis-commitments set --pdf on`: the daily run sends the file with a three-line summary.
-  «Пришли отчёт за сегодня файлом» — `vallis-commitments render --pdf` and send it here.
+  «Пришли отчёт за сегодня файлом» — `vallis-commitments post --owner --pdf`: it composes and sends in one step.
 - «Сводку по этому чату — в сам чат» — `vallis-commitments chats add <chat ID> --post on` (`--post off` stops it):
   from the next run the group gets the digest of itself only, without mentions. Tell the owner that the people of
   the group will see it.
 
 - «Присылай сводку и Анне» — `vallis-commitments recipients add <her Telegram ID> --name "<name>"` (`recipients
   remove` stops it). She gets a digest of the chats she writes in herself and nothing of the others — the command
-  checks it at every run; tell the owner which chats that is now (`render --for <ID>` names them). Her private chat
+  checks it at every run; tell the owner which chats that is now (`render --for <ID>` names them, without sending). Her private chat
   with you must be open: otherwise the run tells you it did not reach her.
 - People ask «что я обещал?» in their group or private chat themselves: those conversations have their own skill
   and see only their own chat or their own promises.
+
+A digest is always sent by `vallis-commitments post` (to the owner, to a chat, to a recipient): it takes the
+address from the same argument as the content. Never send a digest file with `bb telegram-projects send` yourself.
 
 Do not write to people about their commitments, and do not post a digest to a group the owner did not turn on in
 this conversation: by default the digest goes to the owner only. The digest of several chats never goes to a chat
