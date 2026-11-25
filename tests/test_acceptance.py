@@ -41,8 +41,12 @@ class Checks(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             folder = Path(d)
             self.assertEqual(a.exchange_prints("второй", "aaaa1111", folder), {})
-            (folder / "первый").write_text("aaaa1111\n")
-            self.assertEqual(a.exchange_prints("второй", "aaaa1111", folder), {"первый": "aaaa1111"})
+            import pwd, os as _os
+            me = pwd.getpwuid(_os.getuid()).pw_name
+            (folder / me).write_text("aaaa1111\n")             # a file owned by the account of that name counts
+            (folder / "чужой").write_text("bbbb2222\n")        # a file named after another account but not its own — no
+            self.assertEqual(a.exchange_prints("второй", "aaaa1111", folder), {me: "aaaa1111"})
+            self.assertEqual(oct((folder / "второй").stat().st_mode)[-3:], "644")
             self.assertEqual((folder / "второй").read_text(), "aaaa1111")
         self.assertIsNone(a.exchange_prints("x", "y", Path("/nonexistent/prints")))
 

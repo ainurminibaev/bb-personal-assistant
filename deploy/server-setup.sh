@@ -20,6 +20,11 @@ id "$USER_NAME" >/dev/null 2>&1 || useradd --system --home-dir "$HOME_DIR" --cre
 install -d -m 0750 -o "$USER_NAME" -g "$USER_NAME" "$HOME_DIR" "$HOME_DIR/workspace"
 install -d -m 0700 -o "$USER_NAME" -g "$USER_NAME" "$DATA" "$HOME_DIR/.secrets" "$HOME_DIR/telegram-inbox"
 install -d -m 0755 -o "$USER_NAME" -g "$USER_NAME" "$RUNTIME" "$RUNTIME/tools"
+# С114: fingerprints of the employees' model logins (8 hex of a hash of the account ID, never a token), one file per
+# employee written by its own account. Sticky folder: nobody removes or replaces another's file; a reader trusts a file
+# only when its owner is the account of the same name.
+install -d -m 1777 -o root -g root /var/lib/vallis-agents /var/lib/vallis-agents/login-prints
+chmod 0755 /var/lib/vallis-agents
 # Only what is missing; age comes with the credentials store from its pinned release (tools.yml), not from the system.
 need=(); for pkg in git python3 python3-yaml bubblewrap curl xz-utils sudo ca-certificates; do
   dpkg -s "$pkg" >/dev/null 2>&1 || need+=("$pkg"); done

@@ -9,6 +9,7 @@ a mention in a test group) come in the next version.
 """
 import hashlib
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,15 +107,30 @@ def check_login(own, others):
 
 
 def exchange_prints(me, own, folder=PRINTS):
-    """Write this employee's print, read the others'. None when the shared folder is not there."""
+    """Write this employee's print (644, its own file), read the others'. A file counts only when its owner is the
+    account of the same name — nobody can put a print in another's name. None when the shared folder is not there."""
+    import pwd
     if not folder.is_dir():
         return None
+    mine = folder / me
     if own:
         try:
-            (folder / me).write_text(own)
+            if not mine.exists() or mine.stat().st_uid == os.getuid():
+                mine.write_text(own)
+                mine.chmod(0o644)
         except OSError:
             pass
-    return {p.name: p.read_text().strip() for p in folder.iterdir() if p.name != me and p.is_file()}
+    out = {}
+    for p in folder.iterdir():
+        if p.name == me or not p.is_file():
+            continue
+        try:
+            if pwd.getpwuid(p.stat().st_uid).pw_name != p.name:
+                continue
+        except KeyError:
+            continue
+        out[p.name] = p.read_text().strip()[:8]
+    return out
 
 
 def check_resources(meminfo_text):
