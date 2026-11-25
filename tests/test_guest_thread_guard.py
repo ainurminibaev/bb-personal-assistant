@@ -195,6 +195,16 @@ class GuestGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread list"}), 2)
         self.assertEqual(self.run_hook("s-group", {"command": "bb thread spawn --prompt x"}), 2)
 
+    def test_spawn_refusal_names_the_working_form(self):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("BB_")}
+        env["XDG_RUNTIME_DIR"] = self.dir
+        event = {"session_id": "s-group", "tool_name": "Bash",
+                 "tool_input": {"command": "bb thread spawn --parent-self --project proj_other --prompt x"}}
+        r = subprocess.run([sys.executable, self.hook], input=json.dumps(event), capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--parent-self --project", r.stderr)
+        self.assertNotIn("proj_other", r.stderr)
+
     def test_guest_uses_bb_within_its_own_reach(self):
         ok = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 0, c)
         no = lambda c: self.assertEqual(self.run_hook("s-group", {"command": c}), 2, c)

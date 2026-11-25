@@ -27,6 +27,9 @@ ASSISTANT_REASON = ("This is a guest conversation of a personal assistant: no co
                     "this conversation's folder. The owner can allow it; tell the person it is not available here.")
 SUBTHREADS_REASON = ("This conversation already has {n} subthreads working at once — the limit that keeps the server "
                      "responsive. Wait until one finishes (`bb thread wait <id>`), then start the next; tell the person it is queued.")
+SPAWN_REASON = ("In this guest conversation a subthread starts only as its own child, in this conversation's project, on this "
+                "machine: `bb thread spawn --parent-self --project {project} --prompt …` (no --host, --environment or other "
+                "places). Its result comes back to this thread. Run it again in this form.")
 BLOCK_REASON = ("This is a guest conversation: BB only within its own thread, subthreads and schedules; no other conversations. "
                 "Start a subthread with `bb thread spawn --parent-self --prompt …` (its result comes back to this thread). "
                 "Earlier messages: `bb telegram-projects search-history`. Tell the person what is not available here.")
@@ -394,7 +397,10 @@ def guest_bb_allowed(args, scope):
             parent = "--parent-self" in args or scope.owns(flag(args, "--parent-thread") or "")
             project = flag(args, "--project")
             elsewhere = any(f in args or flag(args, f) for f in ELSEWHERE)
-            return parent and not elsewhere and (project is None or project == scope.project)
+            if parent and not elsewhere and (project is None or project == scope.project):
+                return True
+            scope.reason = SPAWN_REASON.format(project=scope.project or "<this conversation's project>")
+            return False
         if head[1] == "update" and (flag(args, "--parent-thread") or "--clear-parent-thread" in args):
             # A guest may rename its own threads, never move them out of its conversation.
             return scope.owns(flag(args, "--parent-thread") or "") and "--clear-parent-thread" not in args and \
