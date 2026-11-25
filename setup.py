@@ -103,6 +103,20 @@ def configure_bridge(kind, inbox):
         bb("plugin", "config", "telegram-projects", "set", "voiceRouterPath", str(router))
 
 
+EMPLOYEE_IDLE_SESSION_MINUTES = 10
+
+
+def configure_idle_sessions(kind):
+    """An employee's idle model sessions are released after 10 minutes, not BB's 30: every live session keeps its MCP
+    servers (Google ~300 MB each), and a test run once filled a 12 GB server (25.11). Only BB's default is replaced."""
+    if kind != "employee":
+        return
+    settings = bb("settings", "show")
+    general = settings.get("generalSettings", settings)
+    if general.get("idleProviderSessionTimeoutMinutes") == 30:
+        bb("settings", "general", "idleProviderSessionTimeoutMinutes", str(EMPLOYEE_IDLE_SESSION_MINUTES))
+
+
 def configure_time_zone(description, employee):
     """The bridge's time zone is written explicitly: an empty one makes «today» (С103) Moscow while the rest of the
     bridge uses the server's zone. The description's zone wins; otherwise Europe/Moscow. A set value is kept."""
@@ -316,6 +330,7 @@ def main():
         tools.wait_for_plugins(bb, [tools.plugin_id(n, REGISTRY[n]) for n in extra if n not in tool_errors])
     # A release with a new skill: BB may not know it until the plugin reloads (С: update rule, 25.11).
     configure_time_zone(description, employee)
+    configure_idle_sessions(args.kind)
     configure_error = tools.ensure_platform_configured(bb)
     if configure_error:
         print(f"personal-assistant: {configure_error} — conversations get no platform skills until this is fixed.",

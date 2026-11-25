@@ -53,3 +53,22 @@ class TimeZone(unittest.TestCase):
     def test_a_set_zone_or_an_older_bridge_is_left_alone(self):
         self.assertEqual(self.run_with({}, {}, {"timeZone": "Europe/Berlin"}), [])
         self.assertEqual(self.run_with({}, {}, {}), [])
+
+
+class IdleSessions(unittest.TestCase):
+    def run_with(self, kind, minutes):
+        calls = []
+        def bb(*args):
+            calls.append(args)
+            return {"generalSettings": {"idleProviderSessionTimeoutMinutes": minutes}} if args == ("settings", "show") else {}
+        with patch.object(setup, "bb", bb):
+            setup.configure_idle_sessions(kind)
+        return [c for c in calls if c[:2] == ("settings", "general")]
+
+    def test_employee_default_becomes_ten_minutes(self):
+        self.assertEqual(self.run_with("employee", 30), [("settings", "general", "idleProviderSessionTimeoutMinutes", "10")])
+
+    def test_other_kinds_and_chosen_values_are_left_alone(self):
+        self.assertEqual(self.run_with("assistant", 30), [])
+        self.assertEqual(self.run_with("employee", 45), [])
+        self.assertEqual(self.run_with("employee", 10), [])
