@@ -45,7 +45,7 @@ async function load(binding, telegram = bridge(), dataFile = "/data/plugins/pers
   await settle();
   for (const stop of stops) stop();   // the plugin is unloaded: its background services stop
   return { command, instructions, queries, schedules, aiServices, services, rpc: () => rpcHandlers, changeBinding: next => changed(next),
-           contact: threadId => contributed({threadId, projectId: "any"}) };
+           contact: threadId => contributed({threadId, projectId: "any"}), contributedFor: (projectId, threadId) => contributed({threadId, projectId}) };
 }
 
 test("owner contact refreshes in the plugin's background service, so a reload stops it", async () => {
@@ -157,7 +157,7 @@ test("an assistant installation tells every other thread the active assistant co
   assert.match(contact("assistant-main"), /Текст человеку — в стиле этого чата[^\n]*без канцелярита и списков[^\n]*Есть инструмент стиля чата — вызови его перед черновиком; нет — посмотри несколько недавних сообщений этого места[^\n]*\(С109\)/); // every conversation
   assert.match(contact("assistant-main"), /Пароль, токен или ключ прислали в чат — не используешь и не цитируешь[^\n]*защищённой форме[^\n]*предложи удалить \(С110\)/); // every conversation
   assert.match(contact("assistant-main"), /Тебя добавили в группу или попросили представиться там[^\n]*только если у бота выключена приватность[^\n]*не молчи и не проси добавить бота[^\n]*\(С113\)/); // every conversation
-  assert.match(contact("assistant-main"), /Своё устройство — модель и поставщик[^\n]*только владельцу в его личке[^\n]*об этом расскажет владелец \(С116\)/); // every conversation
+  assert.match(contact("assistant-main"), /Своё устройство — модель и поставщик[^\n]*только в своём разговоре владельца \(строка «Вид разговора»[^\n]*об этом расскажет владелец \(С116\)/); // every conversation
   assert.match(contact("assistant-main"), /\(С8, С65\)\. Расписание дела одно[^\n]*Ход из запуска по расписанию новое создать не может[^\n]*bb automation update[^\n]*«следующая проверка не поставлена»/); // every conversation
   assert.match(contact("assistant-main"), /Одно сообщение — сам ответ[^\n]*без «передал исполнителю[^\n]*называешь срок[^\n]*от одного лица[^\n]*NO_REPLY[^\n]*\(С101\)/); // every conversation
   assert.match(contact("assistant-main"), /дополнить своё только что отправленное сообщение[^\n]*не правкой[^\n]*ответом на своё сообщение[^\n]*Дополню[^\n]*без повторной отметки человека \(С101\)/); // every conversation
@@ -256,4 +256,12 @@ test("the team lead's skill comes only where the installation's settings turn it
   assert.ok(config("owner").skills.includes("team-lead"));
   p.changeBinding({projectId: "personal", threadId: "owner", teamLead: false});
   assert.ok(!config("group").skills.includes("team-lead"));
+});
+
+test("С116: the owner's own conversation is named as such; the rule leans on that, not on a signature in the turn", async () => {
+  const p = await load({projectId: "personal", threadId: "owner"});
+  assert.match(p.contributedFor("personal", "owner"), /Вид разговора: свой разговор владельца/);
+  // A thread without the guard's settings next to its project: no guess either way.
+  assert.doesNotMatch(p.contributedFor("other", "t1") ?? "", /Вид разговора:/);
+  assert.match(p.contributedFor("personal", "owner"), /только в своём разговоре владельца/);
 });
