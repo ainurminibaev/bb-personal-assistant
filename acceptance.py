@@ -76,7 +76,12 @@ def check_org_copy(clone, run=subprocess.run):
     if fetch.returncode or not head or not remote:
         return _row("org_copy", FAIL, "копию описания организации не удалось сверить", "проверить зеркало описания")
     if head != remote:
-        return _row("org_copy", FAIL, "копия описания организации отстала от зеркала",
+        counts = run(["git", "-C", str(clone), "rev-list", "--left-right", "--count", "HEAD...@{u}"],
+                     capture_output=True, text=True).stdout.split()
+        dirty = run(["git", "-C", str(clone), "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
+        behind = counts[1] if len(counts) == 2 else "?"
+        more = "; в копии есть свои незакоммиченные правки — сначала их сохранить" if dirty else ""
+        return _row("org_copy", FAIL, f"копия описания организации отстала на {behind} коммит(ов){more}",
                     "подтянуть копию (git pull --ff-only в папке организации)")
     return _row("org_copy", OK, "копия описания организации совпадает с зеркалом")
 
@@ -170,7 +175,8 @@ def check_avatar(folder, employee, data_dir):
         return None
     marker = Path(data_dir) / "personal-assistant-avatar.sha256" if data_dir else None
     if not marker or not marker.is_file():
-        return _row("avatar", FAIL, "аватар из паспорта ещё не поставлен", "повторить установщик")
+        return _row("avatar", UNCHECKED, "отметки установщика нет — аватар мог стоять вручную",
+                    "повторить установщик: он сверит и запишет отметку")
     if marker.read_text().strip() != hashlib.sha256(picture.read_bytes()).hexdigest():
         return _row("avatar", FAIL, "аватар в паспорте сменился, у бота старый", "повторить установщик")
     return _row("avatar", OK, "аватар из паспорта")
