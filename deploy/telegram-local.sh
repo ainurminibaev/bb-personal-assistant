@@ -10,6 +10,11 @@
 #   telegram-local.sh bots-talk --bb-data DIR [--api URL]   turn on bot-to-bot communication for this bridge's bot (setMySettings
 #                                                           can_communicate_with_bots, Bot API 10.5+): agents of the organization
 #                                                           see each other in shared chats; switch to local does it too
+#   telegram-local.sh avatar --bb-data DIR --file IMAGE [--api URL]
+#                                                           set the bot's profile photo from the employee's passport picture
+#                                                           (setMyProfilePhoto, static; PNG is converted to JPG by ffmpeg) and
+#                                                           check it through getUserProfilePhotos. Only this method: with no
+#                                                           photo, removeMyProfilePhoto would delete the current one
 #
 # FILE holds TELEGRAM_API_ID and TELEGRAM_API_HASH of a Telegram application (my.telegram.org). It is copied
 # to /var/lib/telegram-api/credentials.env (600, root) and never printed.
@@ -85,6 +90,28 @@ bots_talk() {
   unset token
 }
 
+avatar() {
+  need bb-data; need file
+  [ -f "${opt[file]}" ] || { echo "no image file: ${opt[file]}" >&2; exit 2; }
+  local api=${opt[api]:-$URL} token tmp id
+  token=$(cat "${opt[bb-data]}/plugins/telegram-projects/secrets/botToken" 2>/dev/null || true)
+  [ -n "$token" ] || { echo "bot token not found in the bridge secrets" >&2; exit 1; }
+  tmp=$(mktemp --suffix=.jpg)
+  if ! ffmpeg -loglevel error -y -i "${opt[file]}" -q:v 2 "$tmp"; then rm -f "$tmp"; unset token; echo "could not convert the picture" >&2; exit 1; fi
+  if ! curl -s --max-time 60 -X POST "$api/bot$token/setMyProfilePhoto" \
+      -F 'photo={"type":"static","photo":"attach://p"}' -F "p=@$tmp" | grep -q '"ok":true'; then
+    rm -f "$tmp"; unset token; echo "setMyProfilePhoto refused (the Bot API server must know it: telegram-local.sh upgrade)" >&2; exit 1
+  fi
+  rm -f "$tmp"
+  id=$(curl -s --max-time 30 "$api/bot$token/getMe" | sed -n 's/.*"id":\([0-9]*\).*/\1/p' | head -1)
+  if curl -s --max-time 30 "$api/bot$token/getUserProfilePhotos?user_id=$id&limit=1" | grep -q '"total_count":[1-9]'; then
+    echo "The bot's profile photo is set."
+  else
+    unset token; echo "the photo was sent, but the bot shows none" >&2; exit 1
+  fi
+  unset token
+}
+
 upgrade_server() {
   running || { echo "the server is not running: telegram-local.sh install" >&2; exit 1; }
   [ "$(docker inspect -f '{{.Config.Image}}' $NAME)" = "$IMAGE" ] && { echo "Already on the pinned image."; return; }
@@ -144,5 +171,6 @@ case "$cmd" in
   switch) switch_bot ;;
   upgrade) upgrade_server ;;
   bots-talk) bots_talk ;;
-  *) sed -n '2,18p' "$0"; exit 2 ;;
+  avatar) avatar ;;
+  *) sed -n '2,23p' "$0"; exit 2 ;;
 esac
