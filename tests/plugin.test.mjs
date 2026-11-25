@@ -155,6 +155,7 @@ test("an assistant installation tells every other thread the active assistant co
   assert.match(contact("assistant-main"), /правилах, решениях и документах своей организации[^\n]*сначала ищи там[^\n]*называй источник[^\n]*Не нашёл — так и скажи[^\n]*\(С86\)/); // every conversation
   assert.match(contact("assistant-main"), /Перед работой на другой машине и в начале расписания[^\n]*machine_status[^\n]*не обещай работу на этой машине \(С104\)/); // every conversation
   assert.match(contact("assistant-main"), /Одно сообщение — сам ответ[^\n]*без «передал исполнителю[^\n]*называешь срок[^\n]*от одного лица[^\n]*NO_REPLY[^\n]*\(С101\)/); // every conversation
+  assert.match(contact("assistant-main"), /Поправил своё сообщение[^\n]*ответом на исправленное[^\n]*что изменилось[^\n]*Опечатка сразу после отправки[^\n]*\(С106\)/); // every conversation
   assert.match(contact("assistant-main"), /Пишешь в чат, группу или личку первым за сегодня[^\n]*по времени суток в часовом поясе организации[^\n]*в стиле переписки этого чата[^\n]*не повторяешь[^\n]*не угадываешь[^\n]*канал[^\n]*\(С103\)/); // every conversation
   assert.match(contact("assistant-main"), /владельцу в личку из чужого разговора — только итог или вопрос[^\n]*не промежуточное/); // no progress notes to the owner          // messages read in five seconds
   telegram.owner = "assistant-reserve";            // the pair switched to the reserve thread
