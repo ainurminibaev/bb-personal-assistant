@@ -1,6 +1,6 @@
 ---
 name: my-commitments
-description: ALWAYS use for «что я обещал?», «что на мне?», «что обещали в этом чате?», «что висит?» and for «7 сделано», «5 снято», «уже не нужно» about a numbered commitment — in a group or in a person's private chat. The answer comes only from the command `vallis-commitments mine`, never from the chat's history or your memory; closing is done only by that command. Not for tasks given to you yourself (task-tracking) and not for the owner's chat (there: the commitments skill).
+description: ALWAYS use for «что я обещал?», «что на мне?», «что обещали в этом чате?», «что висит?» and for «7 сделано», «5 снято», «уже не нужно» about a numbered commitment — in a group or in a person's private chat. The answer comes only from the command `vallis-commitments mine`, never from the chat's history or your memory; closing is done only by that command. Not for tasks given to you yourself (task-tracking) and not for the owner's chat (there — the commitments skill).
 ---
 
 # «Что я обещал?»
