@@ -10,32 +10,39 @@ import { join } from "node:path";
  * The agent gets only «sent» or the reason; nothing goes to a group or to another person.
  */
 
-const API = "https://api.agentmail.to/v0";
+// AGENTMAIL_API_URL: another address of the same API (the stand's mail double); the service by default.
+const API = process.env.AGENTMAIL_API_URL?.trim() || "https://api.agentmail.to/v0";
 
 /** The code of a confirmation letter, or none when it is not unambiguous.
  * 1) A code standing alone on its line (how Google and most services lay it out) — when exactly one such line.
- * 2) Otherwise a number right after a code word («код», «code», «verification», «подтвержд») — when exactly one;
- *    years and addresses of the footer («© 2026», «1600 Amphitheatre») are not codes. */
+ * 2) Otherwise, in each line or sentence with a code word («код», «code», «verification», «подтвержд»), the number
+ *    right after the word; when there is none, a number that opens the next sentence. Exactly one distinct — the code.
+ *    Lines with «©» (the footer: year, street, postal code) are skipped; a year is never a code. */
 export function extractCode(text: string): string | undefined {
+  const NUM = /\b(G-\d{4,8}|\d{4,8})\b/;
+  const year = (c: string) => /^(19|20)\d\d$/.test(c);
   const own = new Set<string>();
   for (const line of text.split(/\r?\n/)) {
     const m = /^\s*(G-\d{4,8}|\d{4,8})\s*$/.exec(line);
-    if (m && !/^(19|20)\d\d$/.test(m[1])) own.add(m[1]);
+    if (m && !year(m[1])) own.add(m[1]);
   }
   if (own.size === 1) return [...own][0];
   if (own.size > 1) return undefined;
-  const flat = text.replace(/\s+/g, " ");
+  const parts = text.split(/\r?\n|(?<=[.!?])\s+/).map(p => p.trim()).filter(Boolean).filter(p => !p.includes("©"));
   const found = new Set<string>();
   const word = /(код|code|verification|подтвержд)/gi;
-  for (let m = word.exec(flat); m; m = word.exec(flat)) {
-    const after = flat.slice(m.index + m[0].length, m.index + 160);
-    const re = /(©\s*)?\b(G-\d{4,8}|\d{4,8})\b(\s+[A-Z][a-z]+)?/g;
-    for (let c = re.exec(after); c; c = re.exec(after)) {
-      if (c[1] || c[3]) continue;                       // «© 2026», «1600 Amphitheatre»: the footer, not a code
-      found.add(c[2]);
-      break;
+  parts.forEach((part, n) => {
+    let hit = false;
+    for (let m = word.exec(part); m; m = word.exec(part)) {
+      const c = NUM.exec(part.slice(m.index + m[0].length));
+      if (c && !year(c[1])) { found.add(c[1]); hit = true; }
     }
-  }
+    word.lastIndex = 0;
+    if (!hit && /(код|code|verification|подтвержд)/i.test(part)) {
+      const next = /^(G-\d{4,8}|\d{4,8})\b/.exec(parts[n + 1] ?? "");
+      if (next && !year(next[1])) found.add(next[1]);
+    }
+  });
   return found.size === 1 ? [...found][0] : undefined;
 }
 

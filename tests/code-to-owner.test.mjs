@@ -112,3 +112,11 @@ test("С85: no unambiguous code — nothing sent, the agent is told to offer the
   assert.match(sent[0].text, /111111/);
   assert.doesNotMatch(whole.stdout, /111111/);                              // the agent never sees the letter
 });
+
+test("С85: letters of the big services (digits made up) — one code each", () => {
+  assert.equal(extractCode("Microsoft account\n\nSecurity code\n\nPlease use the following security code for the Microsoft account a***@agentmail.to.\n\nSecurity code: 370519\n\nIf you don't recognize the Microsoft account, you can click here to remove your email address from that account.\n\nThanks,\nThe Microsoft account team"), "370519");
+  assert.equal(extractCode("Your Apple ID Code is: 552107. Don't share it with anyone.\n© 2026 Apple Inc. One Apple Park Way, Cupertino, CA 95014"), "552107");
+  assert.equal(extractCode("Hey agent!\n\nHere is your GitHub launch code: 40318826\n\nContinue signing up for GitHub by entering the code above.\n\nGitHub, Inc. ・88 Colin P Kelly Jr Street・San Francisco, CA 94107"), "40318826");
+  assert.equal(extractCode("Код подтверждения: 7342\nНикому не сообщайте этот код.\n\n© 2026 ООО «Яндекс»"), "7342");
+  assert.equal(extractCode("Telegram code: 61904\nDo not give this code to anyone, even if they say they are from Telegram!"), "61904");
+});

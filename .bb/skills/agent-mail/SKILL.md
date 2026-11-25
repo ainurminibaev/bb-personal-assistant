@@ -27,6 +27,11 @@ Work with the service API directly by its documentation: create an inbox with a 
 and the purpose), then list the inbox messages and read the one you wait for. Poll calmly (every 10–20 seconds,
 a few minutes at most) and stop when the letter has come. Take only what the task needs from it: the code or the link.
 
+The owner asks for a confirmation code from your mailbox (he is registering you somewhere): run
+`bb personal-assistant code-to-owner --from <service>` — the code goes only to his private chat, you never see it.
+The code is not read unambiguously → do not ask him to request a new code: ask him with one button whether to send
+him the whole letter, and on his yes run the same command with `--whole`.
+
 ## Where the new login goes
 
 - With the credentials store: every password you create is made and kept by
