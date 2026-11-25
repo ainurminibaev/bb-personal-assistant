@@ -12,15 +12,29 @@ import { join } from "node:path";
 
 const API = "https://api.agentmail.to/v0";
 
-/** One code next to a code word («код», «code», «verification», «подтвержд»); several different — none. */
+/** The code of a confirmation letter, or none when it is not unambiguous.
+ * 1) A code standing alone on its line (how Google and most services lay it out) — when exactly one such line.
+ * 2) Otherwise a number right after a code word («код», «code», «verification», «подтвержд») — when exactly one;
+ *    years and addresses of the footer («© 2026», «1600 Amphitheatre») are not codes. */
 export function extractCode(text: string): string | undefined {
+  const own = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*(G-\d{4,8}|\d{4,8})\s*$/.exec(line);
+    if (m && !/^(19|20)\d\d$/.test(m[1])) own.add(m[1]);
+  }
+  if (own.size === 1) return [...own][0];
+  if (own.size > 1) return undefined;
   const flat = text.replace(/\s+/g, " ");
   const found = new Set<string>();
   const word = /(код|code|verification|подтвержд)/gi;
   for (let m = word.exec(flat); m; m = word.exec(flat)) {
-    const after = flat.slice(m.index, m.index + 160);
-    const c = /\b(G-\d{4,8}|\d{4,8})\b/.exec(after.slice(m[0].length));
-    if (c) found.add(c[1]);
+    const after = flat.slice(m.index + m[0].length, m.index + 160);
+    const re = /(©\s*)?\b(G-\d{4,8}|\d{4,8})\b(\s+[A-Z][a-z]+)?/g;
+    for (let c = re.exec(after); c; c = re.exec(after)) {
+      if (c[1] || c[3]) continue;                       // «© 2026», «1600 Amphitheatre»: the footer, not a code
+      found.add(c[2]);
+      break;
+    }
   }
   return found.size === 1 ? [...found][0] : undefined;
 }
@@ -72,8 +86,12 @@ export async function codeToOwner(argv: string[], rpc: Rpc, now = Date.now()) {
   if (!letter) return { exitCode: 1, stderr: `За ${minutes} мин подходящего письма нет — попросите владельца запросить код заново.` };
   const full = await fetch(`${API}/inboxes/${encodeURIComponent(inbox)}/messages/${encodeURIComponent(letter.message_id)}`,
     { headers: H }).then(r => r.ok ? r.json() : {}).catch(() => ({})) as { text?: string; html?: string; subject?: string };
-  const code = extractCode(`${full.subject ?? ""} ${full.text ?? (full.html ?? "").replace(/<[^>]+>/g, " ")}`);
-  if (!code) return { exitCode: 1, stderr: "В письме нет однозначного кода — владельцу ничего не отправлено." };
+  const body = full.text ?? (full.html ?? "").replace(/<[^>]+>/g, " ");
+  const whole = argv.includes("--whole");
+  const code = whole ? undefined : extractCode(`${full.subject ?? ""}\n${body}`);
+  if (!code && !whole) return { exitCode: 1, stderr: "Код в письме не распознан однозначно — владельцу ничего не отправлено. " +
+    "Спроси владельца одной кнопкой, прислать ли ему письмо целиком (`bb telegram-projects send --person owner --ask`); " +
+    "на «да» — `bb personal-assistant code-to-owner --whole` с тем же --from. Не проси его запрашивать новый код." };
   // The owner's private chat: the bridge's binding of topic 0. Only there.
   const status = await rpc("status", null).catch(() => undefined);
   const threadId = status?.chatBindings?.find((b: { topicId: number; threadId?: string }) => b.topicId === 0 && b.threadId)?.threadId;
@@ -81,7 +99,12 @@ export async function codeToOwner(argv: string[], rpc: Rpc, now = Date.now()) {
   const when = new Date(Date.parse(letter.timestamp ?? letter.created_at)).toLocaleTimeString("ru-RU",
     { timeZone: "Europe/Moscow", hour: "2-digit", minute: "2-digit" });
   const deliveryId = `code-to-owner-${letter.message_id}`.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 100);
-  await rpc("sendToTelegram", { threadId, topicId: 0, explicit: true, deliveryId,
-    text: `Код подтверждения из моей рабочей почты: ${code} (письмо «${String(letter.subject ?? "").slice(0, 80)}», ${when} МСК).\n\nТолько вам — по вашей просьбе.` });
-  return { exitCode: 0, stdout: `Код отправлен владельцу в личку (письмо ${when} МСК). Сам код в этот разговор не выводится.` };
+  const subject = String(letter.subject ?? "").slice(0, 80);
+  const text = code
+    ? `Код подтверждения из моей рабочей почты: ${code} (письмо «${subject}», ${when} МСК).\n\nТолько вам — по вашей просьбе.`
+    : `Письмо «${subject}» (${when} МСК) целиком, по вашей просьбе:\n\n${body.replace(/\n{3,}/g, "\n\n").trim().slice(0, 3500)}`;
+  await rpc("sendToTelegram", { threadId, topicId: 0, explicit: true, deliveryId: whole ? `${deliveryId}-whole`.slice(0, 100) : deliveryId, text });
+  return { exitCode: 0, stdout: code
+    ? `Код отправлен владельцу в личку (письмо ${when} МСК). Сам код в этот разговор не выводится.`
+    : `Письмо целиком отправлено владельцу в личку (${when} МСК). Его текст в этот разговор не выводится.` };
 }
