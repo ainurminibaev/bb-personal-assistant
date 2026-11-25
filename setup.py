@@ -1,7 +1,10 @@
 """Register this assistant workspace and install the release-tracking BB plugins."""
 import argparse
+import hashlib
 import os
 import json
+import urllib.request
+import uuid
 import re
 import shutil
 from pathlib import Path
@@ -164,6 +167,86 @@ def configure_curators(description, employee):
     lead = employee.get("leads_chats")
     if isinstance(lead, bool) and "leadsChatsByDefault" in values and values.get("leadsChatsByDefault") != ("yes" if lead else "no"):
         bb("plugin", "config", "telegram-projects", "set", "leadsChatsByDefault", "yes" if lead else "no")
+
+
+def avatar_file(folder, employee):
+    """The bot's picture from the employee's folder: the passport's `avatar`, else avatar.png / avatar.jpg."""
+    names = [employee.get("avatar")] if (employee or {}).get("avatar") else ["avatar.png", "avatar.jpg"]
+    for name in names:
+        path = Path(folder) / str(name)
+        if path.is_file():
+            return path
+    return None
+
+
+def telegram_call(api, token, method, fields=None, files=None):
+    """One Bot API call; multipart when a file is sent. The token never leaves this function."""
+    url = f"{api}/bot{token}/{method}"
+    if files:
+        boundary = uuid.uuid4().hex
+        body = b""
+        for name, value in (fields or {}).items():
+            body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").encode()
+        for name, (filename, data) in files.items():
+            body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n"
+                     "Content-Type: image/jpeg\r\n\r\n").encode() + data + b"\r\n"
+        body += f"--{boundary}--\r\n".encode()
+        request = urllib.request.Request(url, data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    else:
+        query = "&".join(f"{k}={v}" for k, v in (fields or {}).items())
+        request = urllib.request.Request(url + (f"?{query}" if query else ""))
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read())
+    except Exception as error:  # noqa: BLE001 — a readiness line, not a crash of the installer
+        body = getattr(error, "read", lambda: b"")()
+        try:
+            return json.loads(body)
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "description": type(error).__name__}
+
+
+def as_jpeg(path, run=subprocess.run):
+    """Telegram takes a static profile photo as JPG: PNG and others go through ffmpeg when it is there."""
+    if path.suffix.lower() in (".jpg", ".jpeg"):
+        return path.read_bytes()
+    if not shutil.which("ffmpeg"):
+        return None
+    done = run(["ffmpeg", "-loglevel", "error", "-i", str(path), "-q:v", "2", "-f", "mjpeg", "-"],
+               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return done.stdout if done.returncode == 0 and done.stdout else None
+
+
+def configure_avatar(folder, employee, data_dir, values, call=telegram_call, run=subprocess.run):
+    """The bot's profile photo from the employee's passport picture (setMyProfilePhoto, Bot API 9.4+/local 10.5).
+    Set when the picture changed since the last setup or the bot has none; only this method — removeMyProfilePhoto is
+    never called. Returns one readiness line, or None when the passport has no picture."""
+    picture = avatar_file(folder, employee)
+    if picture is None:
+        return None
+    secret = Path(data_dir) / "plugins" / "telegram-projects" / "secrets" / "botToken"
+    token = secret.read_text().strip() if secret.is_file() else ""
+    if not token:
+        return f"Avatar: {picture.name} waits for the bot — rerun setup after the bot is connected."
+    api = str(values.get("telegramApiRoot") or "https://api.telegram.org").rstrip("/")
+    digest = hashlib.sha256(picture.read_bytes()).hexdigest()
+    marker = Path(data_dir) / "personal-assistant-avatar.sha256"
+    me = call(api, token, "getMe").get("result") or {}
+    photos = call(api, token, "getUserProfilePhotos", {"user_id": me.get("id"), "limit": 1}).get("result") or {}
+    if marker.is_file() and marker.read_text().strip() == digest and photos.get("total_count"):
+        return f"Avatar: set from {picture.name}."
+    data = as_jpeg(picture, run)
+    if data is None:
+        return f"Avatar: {picture.name} is not JPG and ffmpeg is missing — install ffmpeg and rerun setup."
+    done = call(api, token, "setMyProfilePhoto", {"photo": json.dumps({"type": "static", "photo": "attach://p"})},
+                {"p": ("avatar.jpg", data)})
+    if not done.get("ok"):
+        return f"Avatar: not set ({done.get('description', 'no answer')}) — check the Bot API server version."
+    photos = call(api, token, "getUserProfilePhotos", {"user_id": me.get("id"), "limit": 1}).get("result") or {}
+    if not photos.get("total_count"):
+        return "Avatar: sent, but the bot shows no photo — check it in Telegram."
+    marker.write_text(digest)
+    return f"Avatar: set from {picture.name}."
 
 
 def remember_agent(project_id, provider, model):
@@ -452,6 +535,11 @@ def main():
     preferences = bb("plugin", "rpc", "call", "telegram-projects", "preferences")
     print(f"Workspace registered as BB project {project['id']}.")
     print(configure_owner_chat(project["id"], status), flush=True)
+    if clone is not None:
+        values = bb("plugin", "config", "telegram-projects")
+        line = configure_avatar(root, employee, data_dir, values.get("values", values))
+        if line:
+            print(line, flush=True)
     status = bb("plugin", "rpc", "call", "telegram-projects", "status")
     personal = [b for b in status["chatBindings"] if b.get("topicId") == 0
                 and b.get("threadId") and b.get("projectId") == project["id"]]

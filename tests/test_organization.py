@@ -176,6 +176,7 @@ class Organization(unittest.TestCase):
                                               enabled=True, version="0.3.1")}  # an employee has no knowledge base
         settings = {"installKind": "employee", "telegramInboxRoot": "/inbox", "timeZone": "Europe/Moscow"}
         created = []
+        general = []
 
         def cli(*args):
             if args == ("machine", "list"):
@@ -186,6 +187,11 @@ class Organization(unittest.TestCase):
                 return {"values": dict(settings)}
             if args == ("status",):
                 return {"dataDir": str(work / "bb-data")}
+            if args == ("settings", "show"):   # BB's own default: an employee's installer replaces it with 10 (be0bff2)
+                return {"generalSettings": {"idleProviderSessionTimeoutMinutes": 30}}
+            if args[:2] == ("settings", "general"):
+                general.append(args[2:])
+                return {}
             if args == ("project", "list"):
                 return []
             if args[:2] == ("project", "create"):
@@ -211,6 +217,7 @@ class Organization(unittest.TestCase):
         self.assertIn("alpha", created[0])
         self.assertTrue((root / ".codex" / "hooks.json").is_file())
         self.assertIn("employee.yml model: m1; installation: m2", out.getvalue())
+        self.assertEqual(general, [("idleProviderSessionTimeoutMinutes", "10")])
         self.assertIn("1 difference(s)", out.getvalue())
         status = subprocess.run(["git", "status", "--porcelain"], cwd=work / "org", text=True,
                                 stdout=subprocess.PIPE).stdout
