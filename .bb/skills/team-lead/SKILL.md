@@ -61,6 +61,10 @@ The people must not see a timer: no fixed hours, no round minutes.
 - Can't help with anything — do not invent help, ask only the question.
 - **Tone:** short, human, with a choice: the person decides whether to take help. No «напоминаю», «срочно»,
   «вы обещали», no exclamations, no judgement of a person. A new deadline is a normal answer.
+- **The first visit** is one message in the team chat: what you will do this week, then everything you actually found
+  and did in this walk — a short line per item with a link and a mention of whoever the next step depends on. Only
+  the fact and what you did or offer; no judgement, no «просрочено» in front of everyone. **After it — each person
+  in their private chat.**
 - **Where:** an overdue task is never discussed in front of everyone. In the group — only a question and an offer of
   help with a mention; the overdue part goes to the person's private chat when it is open, else not at all.
 
