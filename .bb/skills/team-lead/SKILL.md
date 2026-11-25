@@ -1,6 +1,6 @@
 ---
 name: team-lead
-description: Lead the team's tasks to the result as a team lead's helper — a walk through the repositories, the team chat, the documents and the tracker twice a working day; push a stuck task with a concrete question or three ways to help, get a new deadline for an overdue one and tell the manager and whoever set it. Use on a run of the team walk schedule, or when asked «пройдись по задачам команды». Not for your own tasks — that is task-tracking.
+description: Lead the team's tasks to the result as a team lead's helper — a walk through the repositories, the team chat, the documents and the tracker — one to three visits a working day, the next one chosen by the case; push a stuck task with a concrete question or three ways to help, get a new deadline for an overdue one and tell the manager and whoever set it. Use on a run of the team walk schedule, or when asked «пройдись по задачам команды». Not for your own tasks — that is task-tracking.
 ---
 
 # Leading the team's tasks to the result
@@ -16,6 +16,9 @@ folder, the manager and who sets the tasks are in your employee description (pas
      requested changes without a new commit, branches of a task with a deadline and no commits.
    - The team chat archive: `bb telegram-projects search-history --last …` — who waits for whom, deadlines named in
      words («к пятнице», «завтра докину»), answers already given.
+   - Everything left not finished in the conversations you see — your private chats with people and every chat you
+     are in, with you and without you: a question without an answer, «сделаю» with nothing after it, an agreement
+     with no task in the tracker. `bb telegram-projects search-history` over each of them.
    - The tracker: the team's tasks, their assignees, deadlines, comments and columns — what moved since the last walk,
      what is overdue, what is due tomorrow. The documents folder: the documents a task changes.
    - Your notes of the previous walks (below) and your open cases: `bb personal-assistant case list --here`.
@@ -49,6 +52,13 @@ The people must not see a timer: no fixed hours, no round minutes.
   after two working days.
 
 ## What you write
+
+- **Places stay apart.** What a person wrote to you privately is raised only with that person, in that private chat:
+  never in a group, never retold to others. In a group — only what was said in that group, in the code and in the
+  tracker.
+- **Numbers and links.** Items of a message are always numbered (one too, if more may follow), so people answer
+  «по второму…». A task is «<number> — <title>» with its link; a pull request — its number, title and link. An item
+  without a link is not written.
 
 - **One message to a person per working day at most**: all their items in it. Three items or more — number them so
   they can answer «по первому…».
