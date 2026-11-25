@@ -81,3 +81,39 @@ export async function toolsReport(folder: string | undefined, guest: boolean, re
     return { exitCode: 1, stderr: "Сверку инструментов не удалось собрать: запустите установщик (setup.py)." };
   }
 }
+
+/** `bb personal-assistant accounts` (С110): what is connected and checked, what waits for the owner and which step —
+ * from the same report, without values. */
+export function renderAccounts(report: Report, age?: string) {
+  const tools = (report.tools ?? []).filter(r => r.state !== "excluded");
+  const ok = tools.filter(r => r.state === "installed");
+  const waiting = tools.filter(r => r.state === "needs_login" || r.state === "needs_setup");
+  const broken = tools.filter(r => !["installed", "needs_login", "needs_setup"].includes(r.state));
+  const lines = ["Подключено:"];
+  for (const r of ok) lines.push(`- ${r.id}`);
+  for (const a of (report.accesses ?? []).filter(a => !a.state || a.state === "present"))
+    lines.push(`- ${a.name}${a.what ? ` — ${clean(a.what)}` : ""}`);
+  if (lines.length === 1) lines.push("- нет");
+  lines.push("Ждёт владельца:");
+  for (const r of waiting) lines.push(`- ${r.id}: ${STATE[r.state]}${r.action ? ` — ${clean(r.action)}` : ""}`);
+  if (!waiting.length) lines.push("- ничего");
+  if (broken.length) {
+    lines.push("Ошибки:");
+    for (const r of broken) lines.push(`- ${r.id}: ${r.reason ? clean(r.reason) : STATE[r.state] ?? r.state}`);
+  }
+  if (age) lines.push(`Сверка: ${age}.`);
+  return lines.join("\n");
+}
+
+export async function accountsReport(folder: string | undefined, refresh = refreshReport) {
+  if (!folder) return { exitCode: 1, stderr: "No project folder for this thread." };
+  const path = join(folder, "local", "tools-report.json");
+  const made = await stat(path).then(i => i.mtimeMs, () => 0);
+  if (made < LOADED_AT) await refresh(folder);
+  try {
+    const [text, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
+    return { exitCode: 0, stdout: renderAccounts(JSON.parse(text) as Report, info.mtime.toISOString().slice(0, 16).replace("T", " ") + " UTC") };
+  } catch {
+    return { exitCode: 1, stderr: "Сверку инструментов не удалось собрать: запустите установщик (setup.py)." };
+  }
+}

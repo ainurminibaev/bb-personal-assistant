@@ -47,3 +47,18 @@ test("a report made before this plugin version was loaded is checked again; a fr
   await toolsReport(folder, false, refresh);                     // now fresh: no second check
   assert.equal(refreshed, 1);
 });
+
+test("С110: accounts — connected, waiting for the owner with the step, errors; no values or paths", async () => {
+  const { renderAccounts } = await import("../tools-status.ts");
+  const out = renderAccounts({ tools: [
+    { id: "google-workspace", state: "installed" },
+    { id: "github", state: "needs_login", action: "вход gh по коду устройства: владелец жмёт Authorize" },
+    { id: "browser", state: "excluded" },
+    { id: "speech", state: "error", reason: "служба не отвечает /var/run/x.sock" },
+  ], accesses: [{ name: "AGENTMAIL_API_KEY", what: "почта агента", state: "present" }, { name: "OLD", state: "missing" }] }, "2026-11-25 12:00 UTC");
+  assert.match(out, /Подключено:\n- google-workspace\n- AGENTMAIL_API_KEY — почта агента/);
+  assert.match(out, /Ждёт владельца:\n- github: нужен вход — вход gh по коду устройства/);
+  assert.match(out, /Ошибки:\n- speech: служба не отвечает …/);
+  assert.doesNotMatch(out, /browser|OLD|\/var\/run/);
+  assert.match(renderAccounts({}), /Подключено:\n- нет\nЖдёт владельца:\n- ничего/);
+});
