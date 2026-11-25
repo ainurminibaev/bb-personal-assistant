@@ -89,8 +89,9 @@ def configure_conversation_folders(folders, rules):
     return True
 
 
-def configure_bridge(kind, inbox):
-    """The kind of installation and the folder for received files; existing settings stay."""
+def configure_bridge(kind, inbox, machine=None):
+    """The kind of installation, the folder for received files and the machine files are handed to; existing
+    settings stay."""
     config = bb("plugin", "config", "telegram-projects")
     values = config.get("values", config)
     if values.get("installKind") != kind:
@@ -98,6 +99,10 @@ def configure_bridge(kind, inbox):
     if not values.get("telegramInboxRoot"):
         inbox.mkdir(mode=0o700, parents=True, exist_ok=True)
         bb("plugin", "config", "telegram-projects", "set", "telegramInboxRoot", str(inbox))
+    # Received files go only to conversations on this machine; an empty value refuses every file ("Чат работает на
+    # другом сервере", 25.11: the owner's picture in a new employee's private chat). Set when empty.
+    if machine and "telegramFileHostId" in values and not values.get("telegramFileHostId"):
+        bb("plugin", "config", "telegram-projects", "set", "telegramFileHostId", machine)
     # Voice of the bridge goes through the server's speech service when it is installed (a path that no longer
     # exists, e.g. a retired local recognizer, is replaced; a working custom router stays).
     router = VOICE_ROUTER
@@ -107,6 +112,18 @@ def configure_bridge(kind, inbox):
 
 
 EMPLOYEE_IDLE_SESSION_MINUTES = 10
+
+
+def files_readiness(values, machine):
+    """One line: are files in the owner's private chat accepted (the inbox folder and the files' machine are set)."""
+    if not values.get("telegramInboxRoot"):
+        return "Files in chats: not accepted — the bridge has no telegramInboxRoot."
+    host = values.get("telegramFileHostId")
+    if "telegramFileHostId" in values and not host:
+        return "Files in chats: not accepted — telegramFileHostId is empty; rerun setup."
+    if host and machine and host != machine:
+        return f"Files in chats: go to machine {host}, not to this installation's {machine} — check telegramFileHostId."
+    return "Files in chats: accepted."
 
 
 def configure_idle_sessions(kind):
@@ -427,7 +444,7 @@ def main():
         raise SystemExit("Update Telegram Bridge through BB Settings → Updates, then rerun setup. "
                          "Transferring coordinator instructions requires stable Telegram Bridge 0.9.21 or later.")
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    configure_bridge(args.kind, (args.inbox or root.parent / "telegram-inbox").expanduser().resolve())
+    configure_bridge(args.kind, (args.inbox or root.parent / "telegram-inbox").expanduser().resolve(), args.machine)
     if clone is not None:
         configure_curators(description, employee)
     try:
@@ -535,6 +552,8 @@ def main():
     preferences = bb("plugin", "rpc", "call", "telegram-projects", "preferences")
     print(f"Workspace registered as BB project {project['id']}.")
     print(configure_owner_chat(project["id"], status), flush=True)
+    bridge_values = bb("plugin", "config", "telegram-projects")
+    print(files_readiness(bridge_values.get("values", bridge_values), args.machine), flush=True)
     if clone is not None:
         values = bb("plugin", "config", "telegram-projects")
         line = configure_avatar(root, employee, data_dir, values.get("values", values))
