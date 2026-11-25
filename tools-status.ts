@@ -117,3 +117,14 @@ export async function accountsReport(folder: string | undefined, refresh = refre
     return { exitCode: 1, stderr: "Сверку инструментов не удалось собрать: запустите установщик (setup.py)." };
   }
 }
+
+/** `bb personal-assistant acceptance` (С114): the installer's acceptance by deed for this project's folder. */
+export function acceptanceRun(folder: string | undefined): Promise<{ exitCode: number; stdout?: string; stderr?: string }> {
+  if (!folder) return Promise.resolve({ exitCode: 1, stderr: "No project folder for this thread." });
+  const setup = join(PACKAGE, "setup.py");
+  if (!existsSync(setup)) return Promise.resolve({ exitCode: 1, stderr: "Установщик платформы не найден." });
+  return new Promise(resolve => execFile("python3", [setup, "acceptance", "--workspace", folder],
+    { cwd: folder, timeout: 180_000, maxBuffer: 4 << 20 },
+    (error, stdout, stderr) => resolve({ exitCode: error ? (typeof error.code === "number" ? error.code : 1) : 0,
+      stdout: String(stdout), stderr: String(stderr).slice(-2000) })));
+}

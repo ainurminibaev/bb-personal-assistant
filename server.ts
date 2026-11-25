@@ -10,7 +10,7 @@ import { COMMITMENTS_USAGE, commitmentsScript, runCommitments } from "./commitme
 import { refreshGuardCopies } from "./guard-refresh";
 import { deliver, deliverScheduleAlerts } from "./schedule-alerts";
 import { ownerContact } from "./owner-contact";
-import { toolsReport, accountsReport } from "./tools-status";
+import { toolsReport, accountsReport, acceptanceRun } from "./tools-status";
 import { codeToOwner } from "./code-to-owner";
 import { CASE_USAGE, runCase } from "./case-command";
 import { openCasesHint } from "./cases";
@@ -202,6 +202,7 @@ export default async function personalAssistant(bb: BbPluginApi) {
       { name: "case", usage: CASE_USAGE, summary: "Case cards of tracked tasks on disk: open, set, close, show, list, find, check (this chat's cases)." },
       { name: "commitments", usage: COMMITMENTS_USAGE, summary: "Commitments between people and the daily digests: the work of vallis-commitments on the server's side, in the installation's folder." },
       { name: "tools", usage: "bb personal-assistant tools [--guest]", summary: "What this agent can use: tools and accesses from the installer's last check, in words, without values." },
+      { name: "acceptance", usage: "bb personal-assistant acceptance", summary: "Acceptance by deed (С114): the installation's checks without a person — passed / failed and what to do." },
       { name: "accounts", usage: "bb personal-assistant accounts", summary: "What is connected and checked, what waits for the owner and which step (С110), without values." },
     ],
     async run(argv, ctx) {
@@ -237,6 +238,11 @@ export default async function personalAssistant(bb: BbPluginApi) {
         // С85: never in a guest conversation — the guest guard does not let it through; here only the owner's bridge.
         return codeToOwner(argv.slice(1), (method, input) =>
           bb.sdk.plugins.callRpc({ pluginId: "telegram-projects", method, input, outputSchema: z.any() } as never));
+      }
+      if (argv[0] === "acceptance" && argv.length === 1) {
+        const project = ctx.projectId ? await bb.sdk.projects.get({ projectId: ctx.projectId }).catch(() => undefined) : undefined;
+        const sources = (project as { sources?: { path?: string; isDefault?: boolean }[] } | undefined)?.sources ?? [];
+        return acceptanceRun((sources.find(s => s.isDefault) ?? sources[0])?.path);
       }
       if (argv[0] === "accounts" && argv.length === 1) {
         const project = ctx.projectId ? await bb.sdk.projects.get({ projectId: ctx.projectId }).catch(() => undefined) : undefined;

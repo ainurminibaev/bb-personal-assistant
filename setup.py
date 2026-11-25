@@ -292,6 +292,23 @@ def configure_access(description, owner):
     return "Access: organization people approved — " + ", ".join(p["name"] for p in wanted) + "."
 
 
+def acceptance_main(argv):
+    """С114: acceptance by deed, the checks without a person; the result in local/acceptance.json."""
+    import acceptance
+    parser = argparse.ArgumentParser(prog="setup.py acceptance")
+    parser.add_argument("--workspace", type=Path, default=Path.cwd())
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    root = args.workspace.expanduser().resolve()
+    rows = acceptance.collect(root, bb, Path.home(), tools.bb_data_dir(bb))
+    acceptance.save(root, rows)
+    if args.json:
+        print(json.dumps({"rows": rows, "summary": acceptance.summary(rows)}, ensure_ascii=False, indent=2))
+    else:
+        print(acceptance.render(rows))
+    return 0 if all(r["state"] != acceptance.FAIL for r in rows) else 1
+
+
 def remember_agent(project_id, provider, model):
     """BB remembers the agent and model of the last start in a project; a short check sets both."""
     args = ["thread", "spawn", "--project", project_id, "--title", "Setup: agent check",
@@ -348,6 +365,8 @@ def install_guest_guard(package, root, data_dir, private=None, user_level=False,
 
 
 def main():
+    if sys.argv[1:2] == ["acceptance"]:
+        sys.exit(acceptance_main(sys.argv[2:]))
     if sys.argv[1:2] == ["tools"]:
         # setup.py tools status [--json] [--workspace <folder>]: the state of every tool of this installation.
         sys.exit(tools.main(sys.argv[2:]))
