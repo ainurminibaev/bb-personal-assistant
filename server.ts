@@ -150,8 +150,14 @@ export default async function personalAssistant(bb: BbPluginApi) {
   const here = dirname(fileURLToPath(import.meta.url));
   const guard = [join(here, "hooks", "guest-thread-guard.py"), join(here, "..", "hooks", "guest-thread-guard.py")]
     .find(path => existsSync(path)) ?? join(here, "hooks", "guest-thread-guard.py");
-  void Promise.resolve().then(() => bb.sdk.projects.list({})).then(projects => {
+  void Promise.resolve().then(() => bb.sdk.projects.list({})).then(async projects => {
     const roots = projects.flatMap(p => (p as { sources?: { path?: string }[] }).sources ?? []).flatMap(s => s.path ? [s.path] : []);
+    // A conversation may run in an environment folder of its own (a checkout or worktree next to the source): its copy
+    // of the guard is refreshed too, or an old copy keeps refusing what the new release allows (stand, 25.11).
+    for (const p of projects as { id: string }[]) {
+      const envs = await Promise.resolve(bb.sdk.environments?.list?.({ projectId: p.id, limit: 100 })).catch(() => []) ?? [];
+      for (const e of envs as { path?: string | null }[]) if (e.path) roots.push(e.path);
+    }
     refreshGuardCopies(guard, roots);
   }).catch(() => { /* an unreadable workspace keeps its copy; setup.py refreshes it too */ });
   // Schedules in guest conversations are not capped; a burst past the guard's thresholds reaches the owner once.
