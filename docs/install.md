@@ -115,6 +115,10 @@ agent's PATH. If the app is in testing mode, the agent's address must be in its 
   `vallis-decide` answers «not allowed for this account» and the bridge silently picks no reactions and topic icons.
 - The bridge's list of the organization's bots (`agentBots`): the other employees' bots, so their messages in groups
   are accepted.
+- Bot-to-bot communication: `sudo deploy/telegram-local.sh bots-talk --bb-data <its BB data folder>` (setMySettings
+  can_communicate_with_bots; `switch --to local` does it too). The local Bot API server must be 10.5 or later —
+  `sudo deploy/telegram-local.sh upgrade` recreates it from the pinned image, the previous container stays stopped as
+  `vallis-telegram-api-prev` for a rollback. A bot with group privacy on sees another bot's messages only as an admin.
 
 ## A confirmation code for the owner
 

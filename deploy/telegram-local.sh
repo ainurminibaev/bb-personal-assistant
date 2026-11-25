@@ -5,6 +5,11 @@
 #   telegram-local.sh install --credentials FILE            set up the shared server, or reuse the running one
 #   telegram-local.sh switch  --bb-user USER --bb-url URL --bb-data DIR [--to local|cloud] [--restart-unit UNIT] [--bb-path PATH]
 #                                                           move one bot's bridge to the local server or back
+#   telegram-local.sh upgrade                               recreate the server from the pinned image (data kept); the previous
+#                                                           container stays stopped as vallis-telegram-api-prev for a rollback
+#   telegram-local.sh bots-talk --bb-data DIR [--api URL]   turn on bot-to-bot communication for this bridge's bot (setMySettings
+#                                                           can_communicate_with_bots, Bot API 10.5+): agents of the organization
+#                                                           see each other in shared chats; switch to local does it too
 #
 # FILE holds TELEGRAM_API_ID and TELEGRAM_API_HASH of a Telegram application (my.telegram.org). It is copied
 # to /var/lib/telegram-api/credentials.env (600, root) and never printed.
@@ -12,7 +17,8 @@
 set -euo pipefail
 
 NAME=vallis-telegram-api
-IMAGE=aiogram/telegram-bot-api@sha256:f31a6bc348b3e0e94eb40fe83b3d147bcdd37897900b3896f9667bb3d026e661
+# Bot API 10.5 or later: setMySettings (bot-to-bot communication) is not in 10.0. Pinned by digest.
+IMAGE=aiogram/telegram-bot-api@sha256:e5dda1cf525887aa6a9629824bc5984a9809614d9c2109aed9374c25ae29f957
 ROOT=/var/lib/telegram-api
 PORT=${PORT:-8083}
 URL=http://127.0.0.1:$PORT
@@ -45,6 +51,11 @@ install_server() {
   install -m 0600 -o root -g root "${opt[credentials]}" $ROOT/credentials.env
   docker rm -f $NAME >/dev/null 2>&1 || true
   # The server runs under its own account; each bot's BB reads its files through the group membership.
+  run_server
+  echo "Local Telegram server runs: $URL, data $ROOT/data."
+}
+
+run_server() {
   docker run -d --name $NAME --restart unless-stopped \
     --user "$(id -u $SERVICE_USER):$(id -g $SERVICE_USER)" \
     --env-file $ROOT/credentials.env \
@@ -53,13 +64,36 @@ install_server() {
     --entrypoint telegram-bot-api $IMAGE --local --dir=$ROOT/data --temp-dir=$ROOT/temp --http-port=8081 >/dev/null
   for _ in $(seq 1 30); do curl -s -o /dev/null "$URL" && break; sleep 1; done
   running || { echo "local Telegram server did not start" >&2; exit 1; }
-  echo "Local Telegram server runs: $URL, data $ROOT/data."
 }
 
 bb_as() { cd / && sudo -u "${opt[bb-user]}" env HOME="$(getent passwd "${opt[bb-user]}" | cut -d: -f6)" \
   BB_DATA_DIR="${opt[bb-data]}" BB_SERVER_URL="${opt[bb-url]}" PATH="${opt[bb-path]:-$PATH}" bb "$@"; }
 setting() { bb_as plugin config telegram-projects set "$1" "$2" >/dev/null || { echo "could not set $1" >&2; exit 1; }; }
 current() { bb_as plugin config telegram-projects 2>/dev/null | sed -n "s/^$1 = \"\{0,1\}\([^\" ]*\)\"\{0,1\} .*/\1/p" | head -1; }
+
+bots_talk() {
+  need bb-data
+  local api=${opt[api]:-$URL} token
+  token=$(cat "${opt[bb-data]}/plugins/telegram-projects/secrets/botToken" 2>/dev/null || true)
+  [ -n "$token" ] || { echo "bot token not found in the bridge secrets" >&2; exit 1; }
+  if curl -s --max-time 30 -X POST "$api/bot$token/setMySettings" -H 'Content-Type: application/json' \
+      -d '{"can_communicate_with_bots":true}' | grep -q '"ok":true'; then
+    echo "Bot-to-bot communication is on."
+  else
+    echo "setMySettings refused: the Bot API server must be 10.5 or later (telegram-local.sh upgrade)" >&2; unset token; exit 1
+  fi
+  unset token
+}
+
+upgrade_server() {
+  running || { echo "the server is not running: telegram-local.sh install" >&2; exit 1; }
+  [ "$(docker inspect -f '{{.Config.Image}}' $NAME)" = "$IMAGE" ] && { echo "Already on the pinned image."; return; }
+  docker pull -q "$IMAGE" >/dev/null
+  docker rm -f $NAME-prev >/dev/null 2>&1 || true
+  docker stop -t 20 $NAME >/dev/null && docker rename $NAME $NAME-prev
+  run_server
+  echo "Upgraded. Rollback: docker rm -f $NAME && docker rename $NAME-prev $NAME && docker start $NAME"
+}
 
 switch_bot() {
   need bb-user; need bb-url; need bb-data
@@ -86,6 +120,7 @@ switch_bot() {
     local host; host=$(bb_as machine list 2>/dev/null | awk '$2=="server"{for(i=1;i<=NF;i++) if($i ~ /^host_/) print $i}' | head -1)
     [ -n "$host" ] && setting telegramFileHostId "$host"
     echo "Bot @$username uses the local Telegram server."
+    bots_talk || echo "Bot-to-bot communication is not on yet: telegram-local.sh bots-talk after an upgrade." >&2
     if [ -n "${opt[restart-unit]:-}" ]; then
       trap - EXIT; setting enabled "$WAS_ENABLED"; setting chatEnabled "$WAS_CHAT"
       systemctl restart "${opt[restart-unit]}"   # the BB process picks up the new group membership
@@ -107,5 +142,7 @@ switch_bot() {
 case "$cmd" in
   install) install_server ;;
   switch) switch_bot ;;
-  *) sed -n '2,13p' "$0"; exit 2 ;;
+  upgrade) upgrade_server ;;
+  bots-talk) bots_talk ;;
+  *) sed -n '2,18p' "$0"; exit 2 ;;
 esac
