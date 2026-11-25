@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import policy from "./.bb/AGENTS.md" with { type: "text" };
@@ -15,7 +16,7 @@ import { CASE_USAGE, runCase } from "./case-command";
 import { openCasesHint } from "./cases";
 import { pauseControl } from "./pause";
 import { autoCases } from "./auto-case";
-import { formatRegistry, organizationOf, registry } from "./team";
+import { formatRegistry, organizationOf, organizationPeople, registry } from "./team";
 import { formatUsage, usage } from "./usage";
 import { organizationRoot, turnRules } from "./turn-rules";
 import { registerServerSpeech } from "./server-speech";
@@ -31,6 +32,13 @@ export const rpcContract = ({
   pauseStatus: {
     input: z.object({}).strict(),
     output: z.object({ paused: z.boolean(), since: z.number().nullable() }),
+  },
+  // С111: the organization's people for the bridge — one list for every employee; null without an organization copy.
+  organizationPeople: {
+    input: z.null(),
+    output: z.object({ version: z.string(), organization: z.string(), me: z.string(),
+      people: z.array(z.object({ id: z.number().int().positive(), name: z.string(), roles: z.array(z.string()),
+        of: z.array(z.string()).optional() })) }).nullable(),
   },
 });
 
@@ -138,6 +146,10 @@ export default async function personalAssistant(bb: BbPluginApi) {
     pauseStatus: async () => {
       await pause.ready;
       return { paused: pause.isPaused(), since: pause.isPaused() ? pause.since() : null };
+    },
+    organizationPeople: async () => {
+      if (!folders.size) await refreshFolders().catch(() => {});
+      return organizationPeople(installationFolder(), s => createHash("sha256").update(s).digest("hex"));
     },
   });
 

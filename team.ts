@@ -81,3 +81,51 @@ export function formatRegistry(rows: Passport[], guest: boolean): string {
     return lines.join("\n");
   }).join("\n\n");
 }
+
+export type OrgPerson = { id: number; name: string; roles: string[]; of?: string[] };
+
+/** organization.yml `people:` — `  <name>:` then `    telegram: <id>` / `    approved: false`; comments ignored. */
+export function parsePeople(text: string): { name: string; telegram?: number; approved: boolean }[] {
+  const out: { name: string; telegram?: number; approved: boolean }[] = [];
+  let inside = false;
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\s+#.*$/, "").replace(/^#.*$/, "");
+    if (!line.trim()) continue;
+    if (/^\S/.test(line)) { inside = /^people:\s*$/.test(line); continue; }
+    if (!inside) continue;
+    const person = /^ {2}(\S[^:]*):\s*$/.exec(line);
+    if (person) { out.push({ name: unquote(person[1].trim()), approved: true }); continue; }
+    const field = /^ {4}([a-z_]+):\s*(.+)$/.exec(line);
+    if (field && out.length) {
+      const cur = out[out.length - 1];
+      if (field[1] === "telegram" && /^\d+$/.test(field[2].trim())) cur.telegram = Number(field[2].trim());
+      if (field[1] === "approved") cur.approved = field[2].trim() !== "false";
+    }
+  }
+  return out;
+}
+
+/** С111: the organization's people for the bridge — the same list for every employee of the organization. Owner and
+ * curator come from the passports (names as in `people`); everyone listed with a Telegram ID is approved unless
+ * `approved: false`. null when the installation does not work from an organization copy. */
+export function organizationPeople(folder: string | undefined, hash: (s: string) => string):
+    { version: string; organization: string; me: string; people: OrgPerson[] } | null {
+  const org = organizationOf(folder);
+  if (!org) return null;
+  const text = readFileSync(join(org.clone, "organization.yml"), "utf8");
+  const passports = registry(org.clone);
+  const names = (v: string | string[] | undefined) => (Array.isArray(v) ? v : v ? [v] : []).map(String);
+  const people: OrgPerson[] = [];
+  for (const p of parsePeople(text)) {
+    if (!p.telegram) continue;
+    const roles: string[] = [];
+    if (passports.some(x => names(x.owner).includes(p.name))) roles.push("owner");
+    const of = passports.filter(x => names(x.curator).includes(p.name)).map(x => x.id).sort();
+    if (of.length) roles.push("curator");
+    if (p.approved) roles.push("approved");
+    people.push({ id: p.telegram, name: p.name, roles, ...(of.length ? { of } : {}) });
+  }
+  people.sort((a, b) => a.id - b.id);
+  return { version: "op-" + hash(JSON.stringify(people)).slice(0, 8), organization: String(parseSimpleYaml(text).name ?? ""),
+    me: org.me, people };
+}
