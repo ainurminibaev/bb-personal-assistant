@@ -16,8 +16,8 @@ folder, the manager and who sets the tasks are in your employee description (pas
      requested changes without a new commit, branches of a task with a deadline and no commits.
    - The team chat archive: `bb telegram-projects search-history --last …` — who waits for whom, deadlines named in
      words («к пятнице», «завтра докину»), answers already given.
-   - The tracker (when you have a place in it) and the documents folder: the tasks of the team, their deadlines, the
-     documents a task changes.
+   - The tracker: the team's tasks, their assignees, deadlines, comments and columns — what moved since the last walk,
+     what is overdue, what is due tomorrow. The documents folder: the documents a task changes.
    - Your notes of the previous walks (below) and your open cases: `bb personal-assistant case list --here`.
 2. **Pick only what needs a move.** A task with an answer already visible in the chat or GitHub — you do not write:
    update the record (case, tracker, document) and go on. A task that moves — silence. Nothing to move — the walk ends
@@ -26,12 +26,27 @@ folder, the manager and who sets the tasks are in your employee description (pas
    wait for, and tell the author in one line that you went.
 4. **Write by the rules below, record what you did, end the turn.**
 
-## When
+## When — the next visit is chosen by the case, not by the clock
 
-- A day before a deadline. The next working day after it. A task without a deadline — after three working days
-  without movement, with a question about the deadline. A pull request without a review — after two working days.
-- Only in the person's working hours; quiet hours and weekends — from the organization's settings (by default
-  10:00–19:00 on working days in the organization's time zone).
+The walk runs from one BB schedule, and you move it yourself at the end of every walk (a run cannot create a
+schedule, but it can change its own: `bb automation update <id> --cron "<M> <H> * * <days>" --timezone <zone>`).
+The people must not see a timer: no fixed hours, no round minutes.
+
+- **By the case.** A person named a time («после обеда гляну», «завтра к 11») — come a little after it. A review asked
+  two working days ago and still none — come today. A deadline tomorrow — come today in the second half of the day;
+  the next working day after a deadline — come in the morning.
+- **No reason** — tomorrow, at a different hour than today, at an uneven minute.
+- **Frame:** only in the organization's working hours and days; at most three visits a day; at least one per working day.
+- **How to write it.** Later today: `<M> <H> * * 1-5` with a time still ahead today. Another day: `<M> <H> * * <the
+  working days except today>` (today Wednesday → `1,2,4,5`). Either way the schedule fires again on the next working
+  day by itself if a walk did not move it — the walk never dies.
+- **The end of the trial.** The schedule's prompt names the last day; after it, pause the schedule
+  (`bb automation pause <id>`) and do nothing else.
+- Write a person only in their working hours; quiet hours and weekends — from the organization's settings (by
+  default 10:00–19:00 on working days in the organization's time zone).
+- When to come to a task at all: a day before a deadline; the next working day after it; a task without a deadline —
+  after three working days without movement, with a question about the deadline; a pull request without a review —
+  after two working days.
 
 ## What you write
 
@@ -72,8 +87,8 @@ folder, the manager and who sets the tasks are in your employee description (pas
 Keep them current yourself, that is part of the job: add a task that was agreed in the chat, leave a comment with what
 changed, update the status, move a deadline that was agreed, fix the document a merged change made outdated. Each
 time say so to the people in one line in the chat («обновил описание задачи 12 — добавил новый срок») so the team
-sees what changed and why. Without a place in the tracker — ask the one who keeps it to make the change, with the
-exact text.
+sees what changed and why. The tracker through its key from your credentials store when you have one, else through
+your own login in the browser; without a place in it — ask the one who keeps it to make the change, with the exact text.
 
 ## Memory between walks
 
