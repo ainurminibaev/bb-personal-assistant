@@ -266,6 +266,32 @@ def configure_avatar(folder, employee, data_dir, values, call=telegram_call, run
     return f"Avatar: set from {picture.name}."
 
 
+def configure_access(description, owner):
+    """The organization's people (organization.yml `people`, curators among them) are approved in the bridge of a new
+    employee: they may give it tasks in groups and its groups stay theirs (25.11: the curator was missing, a group of
+    the curator became a guest one). People already approved stay; the owner is not listed. Returns one line."""
+    people = (description or {}).get("people") or {}
+    wanted = []
+    for name, value in people.items():
+        tid = value.get("telegram") if isinstance(value, dict) else None
+        if isinstance(tid, int) and tid > 0 and tid != owner:
+            wanted.append({"id": tid, "name": str(name)[:64]})
+    if not wanted:
+        return "Access: organization.yml names no people with a Telegram ID — the curator cannot give tasks yet."
+    current = bb("plugin", "rpc", "call", "telegram-projects", "rightsAccess") or []
+    known = {p.get("id") for p in current}
+    added = [p for p in wanted if p["id"] not in known]
+    if added:
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"people": current + added}, f, ensure_ascii=False)
+        try:
+            bb("plugin", "rpc", "call", "telegram-projects", "rightsAccessSet", "--input-file", f.name)
+        finally:
+            os.unlink(f.name)
+    return "Access: organization people approved — " + ", ".join(p["name"] for p in wanted) + "."
+
+
 def remember_agent(project_id, provider, model):
     """BB remembers the agent and model of the last start in a project; a short check sets both."""
     args = ["thread", "spawn", "--project", project_id, "--title", "Setup: agent check",
@@ -559,6 +585,7 @@ def main():
         line = configure_avatar(root, employee, data_dir, values.get("values", values))
         if line:
             print(line, flush=True)
+        print(configure_access(description, status.get("owner")), flush=True)
     status = bb("plugin", "rpc", "call", "telegram-projects", "status")
     personal = [b for b in status["chatBindings"] if b.get("topicId") == 0
                 and b.get("threadId") and b.get("projectId") == project["id"]]
