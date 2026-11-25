@@ -153,6 +153,7 @@ test("an assistant installation tells every other thread the active assistant co
   assert.match(contact("assistant-main"), /Голосовое длиннее порога[^\n]*в том числе пересланное[^\n]*voice-breakdown[^\n]*\(С56\)/); // every conversation, also employees
   assert.match(contact("assistant-main"), /Не хватает права или настройки[^\n]*сам идёшь к владельцу с готовой просьбой[^\n]*точный путь, куда нажать[^\n]*сам проверь, что право появилось[^\n]*\(С77\)/); // ask the owner for a right yourself
   assert.match(contact("assistant-main"), /правилах, решениях и документах своей организации[^\n]*сначала ищи там[^\n]*называй источник[^\n]*Не нашёл — так и скажи[^\n]*\(С86\)/); // every conversation
+  assert.match(contact("assistant-main"), /Одно сообщение — сам ответ[^\n]*без «передал исполнителю[^\n]*называешь срок[^\n]*от одного лица[^\n]*NO_REPLY[^\n]*\(С101\)/); // every conversation
   assert.match(contact("assistant-main"), /владельцу в личку из чужого разговора — только итог или вопрос[^\n]*не промежуточное/); // no progress notes to the owner          // messages read in five seconds
   telegram.owner = "assistant-reserve";            // the pair switched to the reserve thread
   contact("x"); await settle();
