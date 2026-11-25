@@ -12,9 +12,11 @@ export type ConversationKind = "owner" | "guest";
 export function conversationKind(guard: string, folder: string | undefined, threadId: string | undefined,
                                  run: (args: string[]) => string = args => execFileSync("python3", args, { encoding: "utf8", timeout: 5000 })): ConversationKind | null {
   if (!folder || !threadId || !existsSync(guard)) return null;
+  // An employee: the guard's settings next to its project. The owner's assistant has no guard copy there: the BB data
+  // folder of this server (BB_DATA_DIR of the plugin host) — the same records the guard reads.
   let dataDir = "";
   try { dataDir = JSON.parse(readFileSync(join(folder, ".bb", "hooks", "guest-thread-guard.json"), "utf8")).dataDir ?? ""; }
-  catch { return null; }
+  catch { dataDir = process.env.BB_DATA_DIR ?? ""; }
   if (!dataDir) return null;
   try {
     const out = run([guard, "--thread", threadId, dataDir]).trim();
