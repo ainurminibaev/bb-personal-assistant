@@ -156,6 +156,7 @@ test("an assistant installation tells every other thread the active assistant co
   assert.match(contact("assistant-main"), /Перед работой на другой машине и в начале расписания[^\n]*machine_status[^\n]*не обещай работу на этой машине \(С104\)/); // every conversation
   assert.match(contact("assistant-main"), /Текст человеку — в стиле этого чата[^\n]*без канцелярита и списков[^\n]*Есть инструмент стиля чата — вызови его перед черновиком; нет — посмотри несколько недавних сообщений этого места[^\n]*\(С109\)/); // every conversation
   assert.match(contact("assistant-main"), /Пароль, токен или ключ прислали в чат — не используешь и не цитируешь[^\n]*защищённой форме[^\n]*предложи удалить \(С110\)/); // every conversation
+  assert.match(contact("assistant-main"), /Тебя добавили в группу или попросили представиться там[^\n]*только по отметке @[^\n]*не молчи и не проси добавить бота[^\n]*\(С113\)/); // every conversation
   assert.match(contact("assistant-main"), /Одно сообщение — сам ответ[^\n]*без «передал исполнителю[^\n]*называешь срок[^\n]*от одного лица[^\n]*NO_REPLY[^\n]*\(С101\)/); // every conversation
   assert.match(contact("assistant-main"), /дополнить своё только что отправленное сообщение[^\n]*не правкой[^\n]*ответом на своё сообщение[^\n]*Дополню[^\n]*без повторной отметки человека \(С101\)/); // every conversation
   assert.match(contact("assistant-main"), /Поправил своё сообщение[^\n]*ответом на исправленное[^\n]*что изменилось[^\n]*Опечатка сразу после отправки[^\n]*\(С106\)/); // every conversation
