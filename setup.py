@@ -114,6 +114,29 @@ def configure_time_zone(description, employee):
     bb("plugin", "config", "telegram-projects", "set", "timeZone", zone)
 
 
+def configure_owner_chat(project_id, status, run=subprocess.run):
+    """С102: the owner's private chat is bound to the employee's project by the installer, never by «/project» in the
+    chat. The bridge binds it itself when the owner pairs the bot (employeeProject); a bot already paired is bound now.
+    Returns one readiness line."""
+    values = bb("plugin", "config", "telegram-projects")
+    values = values.get("values", values)
+    if "employeeProject" in values and values.get("employeeProject") != project_id:
+        bb("plugin", "config", "telegram-projects", "set", "employeeProject", project_id)
+    own = [b for b in status.get("chatBindings", []) if b.get("topicId") == 0]
+    if not status.get("owner"):
+        return f"Owner chat: binds itself to project {project_id} when the owner pairs the bot."
+    if not own:
+        done = run(["bb", "telegram-projects", "bind-owner-chat", "--project", project_id],
+                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if done.returncode:
+            return f"Owner chat: not bound ({(done.stderr or done.stdout).strip()[-160:]}) — check the bridge."
+        return f"Owner chat: bound to project {project_id}; the owner's first message starts the conversation."
+    if own[0].get("projectId") != project_id:
+        return f"Owner chat: bound to another project ({own[0].get('projectId')}) — left as it is."
+    return ("Owner chat: bound, the agent answers in it." if own[0].get("threadId")
+            else "Owner chat: bound; the owner's first message starts the conversation.")
+
+
 def configure_curators(description, employee):
     """С94: the employee's curators (passport) lead its topics with the owner — the bridge's `curators`."""
     ids, missing = organization.curator_ids(description, employee)
@@ -413,6 +436,8 @@ def main():
     status = bb("plugin", "rpc", "call", "telegram-projects", "status")
     preferences = bb("plugin", "rpc", "call", "telegram-projects", "preferences")
     print(f"Workspace registered as BB project {project['id']}.")
+    print(configure_owner_chat(project["id"], status), flush=True)
+    status = bb("plugin", "rpc", "call", "telegram-projects", "status")
     personal = [b for b in status["chatBindings"] if b.get("topicId") == 0
                 and b.get("threadId") and b.get("projectId") == project["id"]]
     if personal:

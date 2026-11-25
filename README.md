@@ -27,7 +27,7 @@ These instructions apply to the 0.2 release line. For the older ZIP, use the [v0
    The language option sets the Telegram menu on first installation. Running setup again preserves the language you selected in BB.
 
 3. Open the project in BB and create the personal coordinator thread. Create your bot with BotFather. In BB's Telegram connection settings, save its token, enable sync and chat, and follow the owner pairing link.
-4. Send `/project` in your private Telegram chat, choose the project, then select your coordinator under Chats. Run the same setup command once more so the assistant plugin can find the selected thread. Run `bb personal-assistant doctor` to check the project and thread IDs. Start a fresh provider session in that thread to load the new instructions.
+4. Write to the bot in your private chat. Setup has bound that chat to the project already (with bridge 0.9.72 or later — on its own when you pair the bot), so your first message starts the coordinator conversation; no `/project` is needed. Run the same setup command once more so the assistant plugin finds that thread, then `bb personal-assistant doctor` to check the project and thread IDs.
 5. Send “What projects can you work in?” from Telegram. With a new registry, the assistant should explain that it can do one-off work here and that you can authorize additional projects. Open the same conversation in BB and check that it contains the question and answer. Inside the coordinator, `bb personal-assistant work` lists its open child threads.
 
 If you already use the original Telegram Projects plugin, check the [migration guide](BRIDGE-MIGRATION.md) before installation. Both bridges use the same BB plugin ID.
