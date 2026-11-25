@@ -21,6 +21,8 @@ Never promise a status, a reminder or a return you have not scheduled: create th
 
 For the next step set a one-off schedule on the subthread and tie it to the case: name it `<case id>: <step>` and right after creating it run `case set <id> --schedule <automation id>` (`--unschedule <id>` when you remove or replace it). A reminder that is not in the card is lost on a restart. `bb automation create --project <this project> --name "<case id>: <step>" --in <30m|2h|1d> --target-thread <subthread> --provider <providerId> --model <model> --reasoning low --prompt "<what to check>"` (`--at <ISO time>` for an exact moment). When an answer comes earlier, cancel or move it. On each run read the subthread, compare with the answers received, then act. Never repeat a reminder its journal already shows.
 
+A run of a schedule cannot create a new schedule (BB refuses: «Threads executing an automation run cannot create automations»), but it can change its own. So the next check of a case is moved, not created: `bb automation update <the case's schedule> --at <time>` (or `--cron`, or pause), the same schedule from the case card. No schedule on the case and you are in a run — record `case set <id> --note "следующая проверка не поставлена"` and tell the person who gave the task in one line.
+
 ## Status
 
 - On request («что с задачей?») — answer at once, in the same place.
