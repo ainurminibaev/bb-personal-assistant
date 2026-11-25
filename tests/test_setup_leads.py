@@ -32,3 +32,24 @@ class LeadsChats(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TimeZone(unittest.TestCase):
+    def run_with(self, description, employee, values):
+        calls = []
+        def bb(*args):
+            calls.append(args)
+            return {"values": dict(values)} if args == ("plugin", "config", "telegram-projects") else {}
+        with patch.object(setup, "bb", bb):
+            setup.configure_time_zone(description, employee)
+        return [c[4:] for c in calls if c[:4] == ("plugin", "config", "telegram-projects", "set")]
+
+    def test_empty_zone_is_written_explicitly(self):
+        self.assertEqual(self.run_with({}, {}, {"timeZone": ""}), [("timeZone", "Europe/Moscow")])
+        self.assertEqual(self.run_with({"timezone": "Asia/Yekaterinburg"}, {}, {"timeZone": ""}), [("timeZone", "Asia/Yekaterinburg")])
+        self.assertEqual(self.run_with({"timezone": "Asia/Yekaterinburg"}, {"timezone": "Europe/Samara"}, {"timeZone": ""}),
+                         [("timeZone", "Europe/Samara")])
+
+    def test_a_set_zone_or_an_older_bridge_is_left_alone(self):
+        self.assertEqual(self.run_with({}, {}, {"timeZone": "Europe/Berlin"}), [])
+        self.assertEqual(self.run_with({}, {}, {}), [])

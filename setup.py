@@ -103,6 +103,17 @@ def configure_bridge(kind, inbox):
         bb("plugin", "config", "telegram-projects", "set", "voiceRouterPath", str(router))
 
 
+def configure_time_zone(description, employee):
+    """The bridge's time zone is written explicitly: an empty one makes «today» (С103) Moscow while the rest of the
+    bridge uses the server's zone. The description's zone wins; otherwise Europe/Moscow. A set value is kept."""
+    values = bb("plugin", "config", "telegram-projects")
+    values = values.get("values", values)
+    if "timeZone" not in values or str(values.get("timeZone") or "").strip():
+        return
+    zone = (employee or {}).get("timezone") or (description or {}).get("timezone") or "Europe/Moscow"
+    bb("plugin", "config", "telegram-projects", "set", "timeZone", zone)
+
+
 def configure_curators(description, employee):
     """С94: the employee's curators (passport) lead its topics with the owner — the bridge's `curators`."""
     ids, missing = organization.curator_ids(description, employee)
@@ -281,6 +292,7 @@ def main():
     if extra:
         tools.wait_for_plugins(bb, [tools.plugin_id(n, REGISTRY[n]) for n in extra if n not in tool_errors])
     # A release with a new skill: BB may not know it until the plugin reloads (С: update rule, 25.11).
+    configure_time_zone(description, employee)
     configure_error = tools.ensure_platform_configured(bb)
     if configure_error:
         print(f"personal-assistant: {configure_error} — conversations get no platform skills until this is fixed.",
