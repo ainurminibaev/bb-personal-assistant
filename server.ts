@@ -50,6 +50,7 @@ export default async function personalAssistant(bb: BbPluginApi) {
     projectId: { type: "string", label: "Personal assistant project ID", default: "" },
     threadId: { type: "string", label: "Personal coordinator thread ID", default: "" },
     ownerContact: { type: "boolean", label: "Tell every thread of this BB how to reach the owner through the assistant (assistant installation only)", default: true },
+    teamLead: { type: "boolean", label: "Lead the team's tasks to the result (team-lead skill): an employee that walks the team's tasks on a schedule", default: false },
   });
   let binding = await settings.get();
   settings.onChange(next => { binding = next; });
@@ -63,6 +64,8 @@ export default async function personalAssistant(bb: BbPluginApi) {
   const storeSkills = () => (process.env.PATH ?? "").split(":").some(dir => dir && existsSync(join(dir, "vallis-secret")))
     ? ["secrets-store"] : [];
   // Google Drive, Docs and Sheets (С51): its skill where the installer prepared the line's login folder.
+  // The team lead's helper (С93): only where the installation's settings turn it on.
+  const teamLeadSkills = () => binding.teamLead === true ? ["team-lead"] : [];
   const googleSkills = () => existsSync(join(homedir(), ".secrets", "google-workspace")) ? ["google-workspace"] : [];
   // Commitments between people and the daily digest (С91, С92): only the owner's conversation reads the groups.
   // A group's or a person's conversation gets only «что я обещал?» (my-commitments): its own chat, the person's own promises.
@@ -158,9 +161,9 @@ export default async function personalAssistant(bb: BbPluginApi) {
   // The credentials store (С37): its skill only where the installer put vallis-secret on the PATH of this BB.
   bb.agents.configure(({project, thread}) =>
     matches(project.id, thread.id)
-      ? { instructions: policy, skills: ["dispatch", "integrations", "task-tracking", "tell-person", "agent-mail", "voice-breakdown", ...storeSkills(), ...googleSkills(), ...commitmentSkills()], tools: [] }
+      ? { instructions: policy, skills: ["dispatch", "integrations", "task-tracking", "tell-person", "agent-mail", "voice-breakdown", ...storeSkills(), ...googleSkills(), ...commitmentSkills(), ...teamLeadSkills()], tools: [] }
       // Every conversation keeps the tasks given in it, passes words to people (С90) and can get the agent's own mail: groups and people's chats too.
-      : { skills: ["task-tracking", "tell-person", "agent-mail", "voice-breakdown", ...storeSkills(), ...googleSkills(), ...commitmentSkills(false)], tools: [] }
+      : { skills: ["task-tracking", "tell-person", "agent-mail", "voice-breakdown", ...storeSkills(), ...googleSkills(), ...commitmentSkills(false), ...teamLeadSkills()], tools: [] }
   );
 
   // The built plugin runs from dist/; the guard ships next to it in the package root.

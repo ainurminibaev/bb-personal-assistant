@@ -246,3 +246,14 @@ test("commitments run on the server's side: the installation's folder and the ca
     Object.assign(process.env, saved);
   }
 });
+
+test("the team lead's skill comes only where the installation's settings turn it on, and can be turned off", async () => {
+  const p = await load({projectId: "personal", threadId: "owner"});
+  const config = threadId => p.instructions({project: {id: "personal"}, thread: {id: threadId}});
+  assert.ok(!config("group").skills.includes("team-lead"));
+  p.changeBinding({projectId: "personal", threadId: "owner", teamLead: true});
+  assert.ok(config("group").skills.includes("team-lead"));
+  assert.ok(config("owner").skills.includes("team-lead"));
+  p.changeBinding({projectId: "personal", threadId: "owner", teamLead: false});
+  assert.ok(!config("group").skills.includes("team-lead"));
+});
