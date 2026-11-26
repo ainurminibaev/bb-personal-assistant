@@ -278,3 +278,19 @@ test("turn rules include case-reply recording across chats and checking recipien
   assert.match(skill, /follow the general turn rules/);
   assert.doesNotMatch(skill, /Never write to a chat the person is not in/);
 });
+
+test("С44 / tell-person: owner request without a named place tries private chat first even from a group; explicit place wins; non-owner restriction stays", async () => {
+  const p = await load({projectId: "personal", threadId: "owner"});
+  const rules = p.contributedFor("personal", "owner");
+  assert.match(rules, /Просьба владельца «передай\/напиши Олегу …» без названного места — сначала доступная личка Олега, в том числе когда поручение пришло из группы/);
+  assert.match(rules, /если личка закрыта или штатная отправка туда недоступна — подходящий разрешённый общий чат, где Олег состоит/);
+  assert.match(rules, /Место названо явно \(«в чате поддержки», «в этой группе»\) — туда/);
+  assert.match(rules, /Не владелец просит передать третьему .* только в разрешённый общий чат, где есть оба/);
+  assert.doesNotMatch(rules, /даже если личка с ним открыта/);
+  const { readFileSync } = await import("node:fs");
+  const skill = readFileSync(new URL("../.bb/skills/tell-person/SKILL.md", import.meta.url), "utf8");
+  assert.match(skill, /use the person's private chat first.*including when the owner's request came from a group/s);
+  assert.match(skill, /The named place always takes priority/);
+  assert.match(skill, /Never write to a third person's private chat on a non-owner's request/);
+  assert.doesNotMatch(skill, /even if their private chat is open/);
+});

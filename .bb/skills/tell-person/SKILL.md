@@ -1,6 +1,6 @@
 ---
 name: tell-person
-description: Pass a message or an assignment to a person on someone's request — «скажи Борису…», «передай Анне…», «напиши ему, что…», «попроси её…» — by the right way (the chat where the person is, their private chat, or a question to the requester first) and tell the requester honestly how it reached them. Use whenever you are asked to tell, remind or ask another person something; not for answering the person you are talking to.
+description: Pass a message or an assignment to a person on someone's request — «скажи Борису…», «передай Анне…», «напиши ему, что…», «попроси её…» — by the right way (for the owner: their private chat first even when asked in a group, else an allowed shared chat where they are, or an explicitly named place; for non-owners: only an allowed shared chat where both are present) and tell the requester honestly how it reached them. Use whenever you are asked to tell, remind or ask another person something; not for answering the person you are talking to.
 ---
 
 # «Скажи такому-то»: reach the person and say how
@@ -16,23 +16,24 @@ conversation may send, and its refusal is an answer for the requester, not an ob
 - The person's Telegram ID and the groups they write in: `bb telegram-projects search-history --author "<name>" --last 3`
   (`authorId`, `chat`, `chatTitle`). Two people fit the name — ask the requester which one; never guess.
 
-## 2. Which way — by where you were asked
+## 2. Which way — by who asked and what place was named
 
-**In a group or topic** (anyone who may ask you there):
-- The person is in this group — write here and mention them, even if their private chat is open: the request was
-  made in public and stays there. `bb telegram-projects send --text "[Борис](tg://user?id=<ID>), …"`.
-- «В личку» was said — a private chat from a group is written only for the owner or for the person themself.
-  Asked by someone else — write here with a mention and say why.
-- The person is not in this group — you cannot reach them from here. Say so and name what works: the owner can ask
-  you in their own chat, or the requester writes in a chat where the person is.
+**Owner's request (in the owner's private chat OR in a group/topic):**
+- A place was named explicitly («в чате разработчиков», «в этой группе») — send to that named place with a mention:
+  `bb telegram-projects send --chat "<group>" --text "[Борис](tg://user?id=<ID>), …"`. The named place always takes priority.
+- No place was named — **use the person's private chat first** whenever it is open and allowed in `send --targets`,
+  **including when the owner's request came from a group**: `bb telegram-projects send --person "<name>" --text "…"`.
+- If their private chat is closed or ordinary sending to it is unavailable — send to a suitable allowed shared group
+  where the person is a member (prefer the source group if the person is in it, otherwise a working group where they
+  are), with a mention. Never carry private details into a shared group without permission.
+- Neither private chat nor an allowed shared group is available — report «не дошло» honestly with the exact reason
+  and offer the link `https://t.me/<your bot>` (the person presses Start, the owner approves).
 
-**In the owner's chat:**
-- A place was named («в чате поддержки») — there, with a mention.
-- No place — the person's private chat: `bb telegram-projects send --person "<name>" --text "…"`.
-- Their private chat is closed — do not pick another place yourself. Ask the owner in the same answer: «У Бориса
-  личка со мной не открыта. Написать ему в „<group where he is>“ с отметкой?» — and offer the link that opens it:
-  `https://t.me/<your bot>` (he presses Start, the owner approves). On «да» — write in that group with a mention.
-- No shared group either — «не дошло»: the link is the only way; say so.
+**Non-owner's request in a group or topic** (another participant who may ask you there):
+- Never write to a third person's private chat on a non-owner's request (only for the owner or for the person themself).
+- Write only to an allowed shared group where both the requester and the recipient are present (prefer this group if
+  the person is in it), with a mention; when writing to another shared group, sign «по просьбе <requester>».
+- If the person is not in any allowed shared group (or the bridge refuses) — refuse honestly and say what works.
 
 **In another person's private chat** (someone who is not the owner asks you to tell a third person):
 1. Never the third person's private chat.
@@ -47,13 +48,15 @@ conversation may send, and its refusal is an answer for the requester, not an ob
 такому-то». The only case for a question to the owner is when the person asks for access in so many words («попроси
 владельца разрешить мне писать Борису», «дайте мне доступ») — then one question with buttons, as for any access.
 
-**A colleague agent asks you in a shared topic** — the same as a request in a group: mention the person there.
+**A colleague agent asks you in a shared topic** — the same as a non-owner request in a group: write in an allowed
+shared group where the person is, with a mention.
 
 ## 3. What you write
 
 One message, readable in five seconds: who asks, what, by when if a time was named, where to answer.
 «Борис, Анна просит прислать смету по складу до четверга. Ответить можно здесь.» Nothing from other conversations
-beyond what the request needs; no «напоминаю» and no pressure — you pass words, the requester sets the tone.
+beyond what the request needs; never carry private information into a group without permission; no «напоминаю» and
+no pressure — you pass words, the requester sets the tone.
 
 ## 4. Tell the requester how it reached them
 
