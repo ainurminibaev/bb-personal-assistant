@@ -279,18 +279,27 @@ test("turn rules include case-reply recording across chats and checking recipien
   assert.doesNotMatch(skill, /Never write to a chat the person is not in/);
 });
 
-test("С44 / tell-person: owner request without a named place tries private chat first even from a group; explicit place wins; non-owner restriction stays", async () => {
+test("С44 / tell-person: owner request without a named place tries private chat first even from a group; explicit place wins; private-details and non-owner guards stay", async () => {
   const p = await load({projectId: "personal", threadId: "owner"});
-  const rules = p.contributedFor("personal", "owner");
-  assert.match(rules, /Просьба владельца «передай\/напиши Олегу …» без названного места — сначала доступная личка Олега, в том числе когда поручение пришло из группы/);
-  assert.match(rules, /если личка закрыта или штатная отправка туда недоступна — подходящий разрешённый общий чат, где Олег состоит/);
-  assert.match(rules, /Место названо явно \(«в чате поддержки», «в этой группе»\) — туда/);
-  assert.match(rules, /Не владелец просит передать третьему .* только в разрешённый общий чат, где есть оба/);
-  assert.doesNotMatch(rules, /даже если личка с ним открыта/);
+  for (const [proj, thr] of [["personal", "owner"], ["other", "group"]]) {
+    const rules = p.contributedFor(proj, thr);
+    assert.match(rules, /Просьба владельца «передай\/напиши Олегу …» без названного места — сначала доступная личка Олега, в том числе когда поручение пришло из группы/);
+    assert.match(rules, /подходящий разрешённый общий чат, где Олег состоит \(сначала исходная группа, если он там есть, иначе рабочая группа с ним\)/);
+    assert.match(rules, /если сведения приватные — в группу не выносишь, спроси владельца/);
+    assert.match(rules, /Место названо явно \(«в чате поддержки», «в этой группе», «в личку»\) — только туда/);
+    assert.match(rules, /Не владелец просит передать третьему .* только в разрешённый общий чат, где есть оба, с подписью «по просьбе …» \(без лички третьего/);
+    assert.match(rules, /Приватные сведения без разрешения в общий чат не выносишь/);
+    assert.match(rules, /попробуй ещё один-два штатных пути в рамках разрешённых правилом С44/);
+    assert.doesNotMatch(rules, /даже если личка с ним открыта/);
+    assert.doesNotMatch(rules, /закрыта — сразу скажи и предложи группу/);
+  }
   const { readFileSync } = await import("node:fs");
   const skill = readFileSync(new URL("../.bb/skills/tell-person/SKILL.md", import.meta.url), "utf8");
   assert.match(skill, /use the person's private chat first.*including when the owner's request came from a group/s);
-  assert.match(skill, /The named place always takes priority/);
+  assert.match(skill, /prefer the \*\*source group\*\* if\s+the person is in it, otherwise a \*\*working group\*\*/);
+  assert.match(skill, /Explicitly named place.*always takes priority/);
+  assert.match(skill, /private or sensitive details.*do \*\*not\*\* carry them into a shared group/s);
   assert.match(skill, /Never write to a third person's private chat on a non-owner's request/);
   assert.doesNotMatch(skill, /even if their private chat is open/);
+  assert.doesNotMatch(skill, /do not pick another place yourself/);
 });
