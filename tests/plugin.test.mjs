@@ -303,3 +303,25 @@ test("С44 / tell-person: owner request without a named place tries private chat
   assert.doesNotMatch(skill, /even if their private chat is open/);
   assert.doesNotMatch(skill, /do not pick another place yourself/);
 });
+
+test("all .bb/skills/*/SKILL.md files have valid YAML frontmatter without unquoted ': '", async () => {
+  const { readdirSync, readFileSync } = await import("node:fs");
+  const skillsRoot = new URL("../.bb/skills", import.meta.url);
+  const dirs = readdirSync(skillsRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+  assert.ok(dirs.includes("tell-person"));
+  for (const dir of dirs) {
+    const raw = readFileSync(new URL(`../.bb/skills/${dir}/SKILL.md`, import.meta.url), "utf8");
+    const m = raw.match(/^---\n([\s\S]*?)\n---\n/);
+    assert.ok(m, `${dir}/SKILL.md must start with YAML frontmatter`);
+    const fm = m[1];
+    assert.match(fm, new RegExp(`^name:\\s*${dir}\\s*$`, "m"), `${dir}/SKILL.md name must match directory`);
+    for (const line of fm.split("\n")) {
+      const kv = line.match(/^([a-zA-Z0-9_-]+):\s+(.*)$/);
+      if (!kv) continue;
+      const val = kv[2].trim();
+      if (val && !val.startsWith('"') && !val.startsWith("'") && !val.startsWith("|") && !val.startsWith(">")) {
+        assert.ok(!val.includes(": "), `${dir}/SKILL.md unquoted ${kv[1]} must not contain ": " (breaks YAML parser)`);
+      }
+    }
+  }
+});

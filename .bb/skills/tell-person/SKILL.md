@@ -1,6 +1,6 @@
 ---
 name: tell-person
-description: Pass a message or an assignment to a person on someone's request — «скажи Борису…», «передай Анне…», «напиши ему, что…», «попроси её…» — by the right way (for the owner: their private chat first even when asked in a group, else an allowed shared chat where they are, or an explicitly named place; for non-owners: only an allowed shared chat where both are present) and tell the requester honestly how it reached them. Use whenever you are asked to tell, remind or ask another person something; not for answering the person you are talking to.
+description: Pass a message or an assignment to a person on someone's request — «скажи Борису…», «передай Анне…», «напиши ему, что…», «попроси её…» — by the right way (for the owner — their private chat first even when asked in a group, else an allowed shared chat where they are, or an explicitly named place; for non-owners — only an allowed shared chat where both are present) and tell the requester honestly how it reached them. Use whenever you are asked to tell, remind or ask another person something; not for answering the person you are talking to.
 ---
 
 # «Скажи такому-то»: reach the person and say how
