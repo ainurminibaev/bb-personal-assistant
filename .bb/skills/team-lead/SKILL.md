@@ -31,6 +31,8 @@ folder, the manager and who sets the tasks are in your employee description (pas
 
 ## When — the next visit is chosen by the case, not by the clock
 
+The walk runs from one BB schedule aimed at the owner's private conversation with you (`--target-thread`): only that conversation may write to the team's groups and people's private chats; a group's conversation writes only to its own group, and a run outside any Telegram conversation writes only to the owner. Before sending, check with `bb telegram-projects send --targets` that the place is there and that the person is in that chat. If a send is refused, tell the owner the refusal word for word, not a guess.
+
 The walk runs from one BB schedule, and you move it yourself at the end of every walk (a run cannot create a
 schedule, but it can change its own: `bb automation update <id> --cron "<M> <H> * * <days>" --timezone <zone>`).
 The people must not see a timer: no fixed hours, no round minutes.
