@@ -265,3 +265,16 @@ test("С116: the owner's own conversation is named as such; the rule leans on th
   assert.doesNotMatch(p.contributedFor("other", "t1") ?? "", /Вид разговора:/);
   assert.match(p.contributedFor("personal", "owner"), /только в своём разговоре владельца/);
 });
+
+test("turn rules include case-reply recording across chats and checking recipient chat / refused send paths (cases 43, 44)", async () => {
+  const p = await load({projectId: "personal", threadId: "owner"});
+  const rules = p.contributedFor("personal", "owner");
+  assert.match(rules, /Получил от человека ответ по открытому делу — сразу отметь это в карточке дела/);
+  assert.match(rules, /найди сообщения этого человека во всех своих местах, включая личку, начиная с момента, когда был задан вопрос/);
+  assert.match(rules, /Перед отправкой человеку сверь по списку мест, что он есть в этом чате/);
+  assert.match(rules, /Причину отказа не выдумывай и на владельца не ссылайся, если он этого не говорил/);
+  const { readFileSync } = await import("node:fs");
+  const skill = readFileSync(new URL("../.bb/skills/team-lead/SKILL.md", import.meta.url), "utf8");
+  assert.match(skill, /follow the general turn rules/);
+  assert.doesNotMatch(skill, /Never write to a chat the person is not in/);
+});
