@@ -168,6 +168,40 @@ def check_configured(plugin_list_text):
     return _row("configured", OK, "платформа настроена")
 
 
+def check_group_rights(run=subprocess.run):
+    """С117 / С114: verify real bot rights in connected groups via `bb telegram-projects check-rights --json`."""
+    res = run(["bb", "telegram-projects", "check-rights", "--json"], capture_output=True, text=True)
+    stdout = (res.stdout or "").strip()
+    stderr = (res.stderr or "").strip()
+    if res.returncode != 0:
+        low = stderr.lower()
+        if any(tok in low for tok in ("usage:", "unknown", "unexpected_argument", "not found")):
+            return _row("group_rights", UNCHECKED,
+                        "мост не поддерживает проверку прав в группах (нужен telegram-projects 0.9.84+)",
+                        "обновить telegram-projects до 0.9.84+")
+        detail = f" ({stderr.splitlines()[0][:120]})" if stderr else ""
+        return _row("group_rights", FAIL, f"права бота в группах не удалось проверить{detail}",
+                    "проверить подключение бота и повторить приёмку")
+    try:
+        data = json.loads(stdout) if stdout else {}
+    except ValueError:
+        return _row("group_rights", FAIL, "ответ проверки прав бота в группах не удалось разобрать",
+                    "проверить версию и состояние telegram-projects")
+    groups = data.get("groups") if isinstance(data, dict) else None
+    if not isinstance(groups, list):
+        return _row("group_rights", FAIL, "проверка прав бота в группах вернула неожиданный ответ",
+                    "проверить версию и состояние telegram-projects")
+    if not groups:
+        return _row("group_rights", OK, "подключённых групп нет — права в группах не требуются")
+    bad = [g for g in groups if isinstance(g, dict) and not g.get("ok")]
+    if bad:
+        titles = ", ".join(f"«{g.get('title') or 'группа'}»" for g in bad)
+        hints = [str(g.get("hint") or "").strip() for g in bad if str(g.get("hint") or "").strip()]
+        action = " ".join(hints) if hints else "выдать боту права администратора в указанных группах"
+        return _row("group_rights", FAIL, f"не хватает прав бота в группах: {titles}", action)
+    return _row("group_rights", OK, f"права бота в подключённых группах ({len(groups)}) в порядке")
+
+
 def check_avatar(folder, employee, data_dir):
     import setup
     picture = setup.avatar_file(folder, employee or {})
@@ -219,6 +253,7 @@ def collect(root, bb, home, data_dir, others=None, run=subprocess.run, meminfo=N
         check_resources(meminfo if meminfo is not None else Path("/proc/meminfo").read_text()),
         check_idle(bb("settings", "show")),
         check_configured(listing),
+        check_group_rights(run),
         check_avatar(root, employee, data_dir),
     ]
     return [r for r in rows if r]

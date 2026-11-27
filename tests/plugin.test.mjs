@@ -325,3 +325,13 @@ test("all .bb/skills/*/SKILL.md files have valid YAML frontmatter without unquot
     }
   }
 });
+
+test("0.4.14 step 1 mycelium: turn rules and task-tracking skill instruct saving delivery address and using case deliver", async () => {
+  const { readFileSync } = await import("node:fs");
+  const skill = readFileSync(new URL("../.bb/skills/task-tracking/SKILL.md", import.meta.url), "utf8");
+  assert.match(skill, /case deliver <id>/);
+  assert.match(skill, /--deliver-chat/);
+  assert.match(skill, /undelivered/);
+  const srv = readFileSync(new URL("../server.ts", import.meta.url), "utf8");
+  assert.match(srv, /case deliver <id>/);
+});

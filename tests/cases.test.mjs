@@ -189,3 +189,128 @@ test("a schedule made from a Telegram chat becomes a case by itself; the agent i
   assert.equal((await terminal("list")).stdout.split("\n").filter(l => l.includes("поставщику")).length, 1);
   assert.match((await run("group-task", "show", id)).stdout, /"auto_step"/);
 });
+
+test("backward compatibility: legacy case card without deliver/delivered fields loads and updates cleanly", async () => {
+  const { root, run } = await setup({
+    conversations: { "group": { kind: "group", chatId: -10077, topicId: 12 } },
+  });
+  const dir = join(root, "local", "cases");
+  mkdirSync(dir, { recursive: true });
+  const legacyCard = [
+    "---",
+    'id: "c-20261120-legacy"',
+    'title: "Старое дело"',
+    'state: "open"',
+    'opened: "2026-11-20T10:00:00.000Z"',
+    'since: "2026-11-20T10:00:00.000Z"',
+    'chat: "tg:-10077:12"',
+    'place: "группа «Тест»"',
+    'by: "Анна"',
+    'message: ""',
+    'thread: "group"',
+    'next: "проверить"',
+    "waiting: null",
+    "schedules: []",
+    "promises: []",
+    "places: []",
+    'people: ["Анна"]',
+    'result: ""',
+    "---",
+    "2026-11-20 10:00 принято",
+    "",
+  ].join("\n");
+  writeFileSync(join(dir, "c-20261120-legacy.md"), legacyCard);
+  writeFileSync(join(dir, "index.md"), "c-20261120-legacy | open | группа «Тест» | Анна | Старое дело | проверить | 2026-11-20 | tg:-10077:12\n");
+
+  const shown = await run("group", "show", "c-20261120-legacy");
+  assert.equal(shown.exitCode, 0, shown.stderr);
+  const card = JSON.parse(shown.stdout);
+  assert.equal(card.deliver, null);
+  assert.equal(card.delivered, null);
+
+  const noTarget = await run("group", "deliver", "c-20261120-legacy", "--text", "Ответ");
+  assert.equal(noTarget.exitCode, 1);
+  assert.match(noTarget.stderr, /no_delivery_target/);
+
+  const upd = await run("group", "set", "c-20261120-legacy", "--deliver-chat", "-10077", "--deliver-topic", "12");
+  assert.equal(upd.exitCode, 0, upd.stderr);
+  const card2 = JSON.parse((await run("group", "show", "c-20261120-legacy")).stdout);
+  assert.deepEqual(card2.deliver, { chat: "-10077", topic: "12" });
+});
+
+test("step 1 mycelium: case open saves delivery address, case deliver sends via bridge with caller thread, blocks duplicate, records refusal", async () => {
+  const { chmodSync } = await import("node:fs");
+  const { root, run } = await setup({
+    conversations: {
+      "group": { kind: "group", chatId: -100555, topicId: 7 },
+      "group-task": { kind: "group", chatId: -100555, topicId: 7 },
+      "owner-chat": { kind: "owner", chatId: 42, topicId: 0 },
+    },
+  });
+
+  const opened = await run("group", "open", "--title", "Проверка доставки", "--by", "Иван", "--place", "группа «Тест», тема 7", "--message", "321", "--thread", "group-task");
+  assert.equal(opened.exitCode, 0, opened.stderr);
+  const id = opened.stdout.split("\n")[0].trim();
+  const card = JSON.parse((await run("group", "show", id)).stdout);
+  assert.deepEqual(card.deliver, { chat: "-100555", topic: "7", replyTo: "321" });
+  assert.equal(card.delivered, null);
+
+  const dmOpened = await run("group", "open", "--title", "Ответ в личку", "--deliver-person", "777", "--deliver-reply-to", "55");
+  assert.equal(dmOpened.exitCode, 0, dmOpened.stderr);
+  const dmId = dmOpened.stdout.split("\n")[0].trim();
+  const dmCard = JSON.parse((await run("group", "show", dmId)).stdout);
+  assert.deepEqual(dmCard.deliver, { person: "777", replyTo: "55" });
+
+  const binDir = mkdtempSync(join(tmpdir(), "fake-bb-"));
+  const logFile = join(binDir, "calls.jsonl");
+  const modeFile = join(binDir, "mode.txt");
+  writeFileSync(modeFile, "ok");
+  const fakeBb = join(binDir, "bb");
+  writeFileSync(fakeBb, `#!/usr/bin/env node
+const fs = require("node:fs");
+const mode = fs.readFileSync(${JSON.stringify(modeFile)}, "utf8").trim();
+fs.appendFileSync(${JSON.stringify(logFile)}, JSON.stringify({ argv: process.argv.slice(2), thread: process.env.BB_THREAD_ID || null, project: process.env.BB_PROJECT_ID || null }) + "\\n");
+if (mode === "ok") {
+  process.stdout.write(JSON.stringify({ sent: true, messageId: 901 }));
+  process.exit(0);
+} else {
+  process.stderr.write("send_refused: нет прав писать в этот чат");
+  process.exit(1);
+}
+`);
+  chmodSync(fakeBb, 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${binDir}:${prevPath}`;
+  try {
+    const res = await run("group-task", "deliver", id, "--text", "Итог готов");
+    assert.equal(res.exitCode, 0, res.stderr);
+    assert.match(res.stdout, /msg 901/);
+
+    const calls1 = readFileSync(logFile, "utf8").trim().split("\n").map(l => JSON.parse(l));
+    assert.equal(calls1.length, 1);
+    assert.deepEqual(calls1[0].argv, ["telegram-projects", "send", "--chat", "-100555", "--topic", "7", "--reply-to", "321", "--text", "Итог готов"]);
+    assert.equal(calls1[0].thread, "group-task");
+
+    const after = JSON.parse((await run("group", "show", id)).stdout);
+    assert.equal(after.delivered.messageId, 901);
+    assert.equal(after.delivered.byThread, "group-task");
+    assert.ok(after.journal.some(j => j.includes("доставлено") && j.includes("msg 901")));
+
+    const dup = await run("group-task", "deliver", id, "--text", "Повтор");
+    assert.equal(dup.exitCode, 1);
+    assert.match(dup.stderr, /already_delivered/);
+    assert.equal(readFileSync(logFile, "utf8").trim().split("\n").length, 1);
+
+    writeFileSync(modeFile, "refuse");
+    const refused = await run("group", "deliver", dmId, "--text", "Попытка");
+    assert.equal(refused.exitCode, 1);
+    assert.match(refused.stderr, /send_refused: нет прав писать в этот чат/);
+    const dmAfter = JSON.parse((await run("group", "show", dmId)).stdout);
+    assert.equal(dmAfter.delivered, null);
+    assert.equal(dmAfter.state, "undelivered");
+    assert.ok(dmAfter.journal.some(j => j.includes("доставка не прошла") && j.includes("send_refused")));
+  } finally {
+    process.env.PATH = prevPath;
+  }
+});

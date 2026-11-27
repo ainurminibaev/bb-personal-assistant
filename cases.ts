@@ -13,6 +13,20 @@ import { join } from "node:path";
 export const STATES = ["open", "waiting", "decision", "done_unverified", "undelivered", "closed"] as const;
 export type CaseState = typeof STATES[number];
 
+export interface DeliveryTarget {
+  chat?: string;           // target group chatId or title (for --chat)
+  topic?: string;          // target forum topicId or name (for --topic)
+  person?: string;         // target private chat: userId, "owner", or name (for --person)
+  replyTo?: string;        // source messageId to reply to (for --reply-to)
+}
+
+export interface DeliveryRecord {
+  at: string;              // ISO timestamp of confirmed delivery
+  messageId?: number;      // Telegram messageId returned by the bridge
+  target: string;          // human-readable destination
+  byThread?: string;       // BB threadId that ran the delivery
+}
+
 export interface Card {
   id: string;
   title: string;
@@ -30,6 +44,8 @@ export interface Card {
   promises: string[];      // what was promised to people, with dates
   places: string[];        // links to spaces (tracker task, document, branch)
   people: string[];
+  deliver: DeliveryTarget | null;    // promised answer destination (step 1 mycelium)
+  delivered: DeliveryRecord | null;  // confirmed delivery receipt from the bridge
   result: string;
   journal: string[];       // last movements, newest last
 }
@@ -37,7 +53,31 @@ export interface Card {
 const JOURNAL_KEEP = 10;
 const ARCHIVE_DAYS = 90;
 const FIELDS: (keyof Card)[] = ["id", "title", "state", "opened", "since", "chat", "place", "by", "message", "thread",
-  "next", "waiting", "schedules", "promises", "places", "people", "result"];
+  "next", "waiting", "schedules", "promises", "places", "people", "deliver", "delivered", "result"];
+
+export function normalizeDeliveryTarget(d: DeliveryTarget | null | undefined): DeliveryTarget | null {
+  if (!d) return null;
+  const chat = d.chat?.trim() || undefined;
+  const topic = d.topic?.trim() || undefined;
+  const person = d.person?.trim() || undefined;
+  const replyTo = d.replyTo?.trim() || undefined;
+  if (!chat && !topic && !person && !replyTo) return null;
+  // Never store both person and chat/topic: person targets a private chat, chat/topic targets a group.
+  if (person) return { person, ...(replyTo ? { replyTo } : {}) };
+  return { ...(chat ? { chat } : {}), ...(topic ? { topic } : {}), ...(replyTo ? { replyTo } : {}) };
+}
+
+export function formatDeliveryTarget(d: DeliveryTarget | null | undefined): string {
+  if (!d) return "";
+  const parts: string[] = [];
+  if (d.person) parts.push(`личка: ${d.person}`);
+  else {
+    if (d.chat) parts.push(`чат ${d.chat}`);
+    if (d.topic) parts.push(`тема ${d.topic}`);
+  }
+  if (d.replyTo) parts.push(`ответ на #${d.replyTo}`);
+  return parts.join(", ");
+}
 
 export const casesDir = (root: string) => join(root, "local", "cases");
 
@@ -57,6 +97,9 @@ export function parse(text: string): Card {
   }
   card.journal = m[2].split("\n").filter(Boolean);
   for (const k of ["schedules", "promises", "places", "people"] as const) card[k] = Array.isArray(card[k]) ? card[k] : [];
+  // Backward compatibility with existing case cards on disk written before 0.4.14.
+  card.deliver = card.deliver && typeof card.deliver === "object" ? normalizeDeliveryTarget(card.deliver as DeliveryTarget) : null;
+  card.delivered = card.delivered && typeof card.delivered === "object" ? card.delivered : null;
   return card;
 }
 
@@ -139,7 +182,7 @@ function save(root: string, card: Card, now: Date) {
 }
 
 export interface OpenArgs { title: string; chat: string; place?: string; by?: string; message?: string; thread?: string;
-  next?: string; promise?: string; schedule?: string; space?: string }
+  next?: string; promise?: string; schedule?: string; space?: string; deliver?: DeliveryTarget | null }
 
 export function openCase(root: string, a: OpenArgs, now = new Date()): Card {
   if (!a.title?.trim()) throw new Error("--title is required");
@@ -150,7 +193,8 @@ export function openCase(root: string, a: OpenArgs, now = new Date()): Card {
     const card: Card = { id, title: a.title.trim(), state: "open", opened: now.toISOString(), since: now.toISOString(),
       chat: a.chat, place: a.place ?? "", by: a.by ?? "", message: a.message ?? "", thread: a.thread ?? "",
       next: a.next ?? "", waiting: null, schedules: a.schedule ? [a.schedule] : [], promises: a.promise ? [a.promise] : [],
-      places: a.space ? [a.space] : [], people: a.by ? [a.by] : [], result: "", journal: [`${stamp(now)} принято`] };
+      places: a.space ? [a.space] : [], people: a.by ? [a.by] : [], deliver: normalizeDeliveryTarget(a.deliver),
+      delivered: null, result: "", journal: [`${stamp(now)} принято`] };
     save(root, card, now);
     return card;
   });
@@ -158,7 +202,7 @@ export function openCase(root: string, a: OpenArgs, now = new Date()): Card {
 
 export interface SetArgs { state?: string; next?: string; thread?: string; waitingWho?: string; waitingWhat?: string;
   waitingBack?: string; noWaiting?: boolean; promise?: string; scheduleAdd?: string[]; scheduleRemove?: string[];
-  space?: string; person?: string; note?: string; result?: string }
+  space?: string; person?: string; deliver?: DeliveryTarget | null; clearDeliver?: boolean; note?: string; result?: string }
 
 export function setCase(root: string, id: string, a: SetArgs, now = new Date()): Card {
   return withLock(casesDir(root), () => {
@@ -181,6 +225,18 @@ export function setCase(root: string, id: string, a: SetArgs, now = new Date()):
     if (a.scheduleRemove?.length) c.schedules = c.schedules.filter(s => !a.scheduleRemove!.includes(s));
     if (a.space && !c.places.includes(a.space)) c.places.push(a.space);
     if (a.person && !c.people.includes(a.person)) c.people.push(a.person);
+    if (a.clearDeliver) c.deliver = null;
+    else if (a.deliver) {
+      const prev = c.deliver ?? {};
+      const merged: DeliveryTarget = a.deliver.person
+        ? { person: a.deliver.person, replyTo: a.deliver.replyTo !== undefined ? a.deliver.replyTo : prev.replyTo }
+        : (a.deliver.chat !== undefined || a.deliver.topic !== undefined)
+          ? { chat: a.deliver.chat !== undefined ? a.deliver.chat : prev.chat,
+              topic: a.deliver.topic !== undefined ? a.deliver.topic : prev.topic,
+              replyTo: a.deliver.replyTo !== undefined ? a.deliver.replyTo : prev.replyTo }
+          : { ...prev, ...a.deliver };
+      c.deliver = normalizeDeliveryTarget(merged);
+    }
     if (a.result !== undefined) c.result = a.result;
     c.since = now.toISOString();
     c.journal.push(`${stamp(now)} ${a.note ?? describe(a)}`);
@@ -196,8 +252,39 @@ function describe(a: SetArgs): string {
   if (a.waitingWho) parts.push(`ждём ${a.waitingWho}`);
   if (a.scheduleAdd?.length) parts.push(`расписание ${a.scheduleAdd.join(", ")}`);
   if (a.promise) parts.push(`обещано: ${a.promise}`);
+  if (a.deliver) parts.push(`адрес ответа: ${formatDeliveryTarget(a.deliver) || "обновлён"}`);
+  if (a.clearDeliver) parts.push("адрес ответа очищен");
   if (a.next) parts.push(`дальше: ${a.next}`);
   return parts.join("; ") || "изменено";
+}
+
+/** Record a bridge-confirmed delivery in the case card and its journal. */
+export function recordDelivery(root: string, id: string, rec: DeliveryRecord, now = new Date()): Card {
+  return withLock(casesDir(root), () => {
+    const c = readCard(root, id);
+    c.delivered = rec;
+    if (c.state === "undelivered") c.state = "open";
+    c.since = now.toISOString();
+    const msg = typeof rec.messageId === "number" ? `, msg ${rec.messageId}` : "";
+    c.journal.push(`${stamp(now)} доставлено (${rec.target}${msg})`);
+    c.journal = c.journal.slice(-JOURNAL_KEEP);
+    save(root, c, now);
+    return c;
+  });
+}
+
+/** Record a failed/refused delivery attempt without marking the case delivered. */
+export function recordDeliveryFailure(root: string, id: string, reason: string, now = new Date()): Card {
+  return withLock(casesDir(root), () => {
+    const c = readCard(root, id);
+    if (c.state !== "closed") c.state = "undelivered";
+    c.since = now.toISOString();
+    const short = clean(reason).slice(0, 160) || "ошибка отправки";
+    c.journal.push(`${stamp(now)} доставка не прошла: ${short}`);
+    c.journal = c.journal.slice(-JOURNAL_KEEP);
+    save(root, c, now);
+    return c;
+  });
 }
 
 /** Close: the card says closed with its result; the schedules to remove are returned to the caller. */

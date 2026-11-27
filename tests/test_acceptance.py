@@ -1,3 +1,4 @@
+import json
 """С114: acceptance checks without a person — each 25.11 case gives «не прошло — что сделать»; a shared model login is the
 owner's decision, not a failure; the summary refuses the launch while anything failed."""
 import sys, tempfile, unittest
@@ -74,6 +75,48 @@ class Checks(unittest.TestCase):
         self.assertIn("— сделать", a.render(rows))
         self.assertEqual(a.summary(rows[:2]), "Приёмка: всё прошло.")
 
+
+    def test_group_rights_all_ok_and_empty(self):
+        class R:
+            def __init__(self, rc=0, out="", err=""):
+                self.returncode, self.stdout, self.stderr = rc, out, err
+
+        ok_json = '{"ok": true, "bot": "b_bot", "privacyMode": false, "groups": [{"chatId": -1001, "title": "Отдел", "ok": true, "missing": [], "hint": ""}]}'
+        r_ok = a.check_group_rights(lambda *args, **kw: R(0, ok_json))
+        self.assertEqual(r_ok["state"], a.OK)
+        self.assertIn("1", r_ok["text"])
+
+        empty_json = '{"ok": true, "bot": "b_bot", "privacyMode": false, "groups": []}'
+        r_empty = a.check_group_rights(lambda *args, **kw: R(0, empty_json))
+        self.assertEqual(r_empty["state"], a.OK)
+
+    def test_group_rights_missing_returns_c77_path(self):
+        class R:
+            def __init__(self, rc=0, out="", err=""):
+                self.returncode, self.stdout, self.stderr = rc, out, err
+
+        hint = "В группе «Разработка» не хватает прав: Удаление сообщений. Откройте группу → название группы сверху → «Изменить» → «Администраторы» → @b_bot → включите: Удаление сообщений."
+        bad_json = json.dumps({"ok": False, "bot": "b_bot", "groups": [
+            {"chatId": -1001, "title": "Разработка", "ok": False, "missing": ["can_delete_messages"], "hint": hint},
+            {"chatId": -1002, "title": "Общий", "ok": True, "missing": [], "hint": ""},
+        ]}, ensure_ascii=False)
+        r = a.check_group_rights(lambda *args, **kw: R(0, bad_json))
+        self.assertEqual(r["state"], a.FAIL)
+        self.assertIn("Разработка", r["text"])
+        self.assertIn("Откройте группу → название группы сверху", r["action"])
+        self.assertIn(hint, a.render([r]))
+
+    def test_group_rights_errors_and_old_bridge(self):
+        class R:
+            def __init__(self, rc=0, out="", err=""):
+                self.returncode, self.stdout, self.stderr = rc, out, err
+
+        r_old = a.check_group_rights(lambda *args, **kw: R(2, "", "Usage: bb telegram-projects ..."))
+        self.assertEqual(r_old["state"], a.UNCHECKED)
+
+        r_err = a.check_group_rights(lambda *args, **kw: R(1, "", "bot_token_missing"))
+        self.assertEqual(r_err["state"], a.FAIL)
+        self.assertIn("bot_token_missing", r_err["text"])
 
 if __name__ == "__main__":
     unittest.main()
