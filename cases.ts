@@ -1,4 +1,5 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 
 /**
@@ -21,10 +22,19 @@ export interface DeliveryTarget {
 }
 
 export interface DeliveryRecord {
-  at: string;              // ISO timestamp of confirmed delivery
+  at: string;              // ISO timestamp of confirmed (or uncertain) delivery
   messageId?: number;      // Telegram messageId returned by the bridge
   target: string;          // human-readable destination
   byThread?: string;       // BB threadId that ran the delivery
+  uncertain?: boolean;     // true on send_outcome_unknown, timeout, or partial/incomplete send
+  note?: string;           // bridge note or reason when uncertain/partial
+}
+
+export interface DeliveryLease {
+  nonce: string;
+  at: string;
+  pid: number;
+  byThread?: string;
 }
 
 export interface Card {
@@ -45,23 +55,32 @@ export interface Card {
   places: string[];        // links to spaces (tracker task, document, branch)
   people: string[];
   deliver: DeliveryTarget | null;    // promised answer destination (step 1 mycelium)
-  delivered: DeliveryRecord | null;  // confirmed delivery receipt from the bridge
+  delivered: DeliveryRecord | null;  // confirmed or uncertain delivery receipt from the bridge
+  delivering?: DeliveryLease | null; // short-lived atomic lease while `case deliver` is in flight
   result: string;
   journal: string[];       // last movements, newest last
 }
 
 const JOURNAL_KEEP = 10;
 const ARCHIVE_DAYS = 90;
+const DELIVERY_LEASE_MS = 120_000;
 const FIELDS: (keyof Card)[] = ["id", "title", "state", "opened", "since", "chat", "place", "by", "message", "thread",
-  "next", "waiting", "schedules", "promises", "places", "people", "deliver", "delivered", "result"];
+  "next", "waiting", "schedules", "promises", "places", "people", "deliver", "delivered", "delivering", "result"];
+
+const optStr = (v: unknown): string | undefined => {
+  if (v === null || v === undefined) return undefined;
+  const s = String(v).trim();
+  return s || undefined;
+};
 
 export function normalizeDeliveryTarget(d: DeliveryTarget | null | undefined): DeliveryTarget | null {
-  if (!d) return null;
-  const chat = d.chat?.trim() || undefined;
-  const topic = d.topic?.trim() || undefined;
-  const person = d.person?.trim() || undefined;
-  const replyTo = d.replyTo?.trim() || undefined;
-  if (!chat && !topic && !person && !replyTo) return null;
+  if (!d || typeof d !== "object" || Array.isArray(d)) return null;
+  const chat = optStr(d.chat);
+  const topic = optStr(d.topic);
+  const person = optStr(d.person);
+  const replyTo = optStr(d.replyTo);
+  // A replyTo without any destination (person/chat/topic) is not a valid delivery target.
+  if (!chat && !topic && !person) return null;
   // Never store both person and chat/topic: person targets a private chat, chat/topic targets a group.
   if (person) return { person, ...(replyTo ? { replyTo } : {}) };
   return { ...(chat ? { chat } : {}), ...(topic ? { topic } : {}), ...(replyTo ? { replyTo } : {}) };
@@ -98,8 +117,18 @@ export function parse(text: string): Card {
   card.journal = m[2].split("\n").filter(Boolean);
   for (const k of ["schedules", "promises", "places", "people"] as const) card[k] = Array.isArray(card[k]) ? card[k] : [];
   // Backward compatibility with existing case cards on disk written before 0.4.14.
-  card.deliver = card.deliver && typeof card.deliver === "object" ? normalizeDeliveryTarget(card.deliver as DeliveryTarget) : null;
-  card.delivered = card.delivered && typeof card.delivered === "object" ? card.delivered : null;
+  card.deliver = card.deliver && typeof card.deliver === "object" && !Array.isArray(card.deliver)
+    ? normalizeDeliveryTarget(card.deliver as DeliveryTarget)
+    : null;
+  const rawDel = card.delivered as Record<string, unknown> | null | undefined;
+  card.delivered = rawDel && typeof rawDel === "object" && !Array.isArray(rawDel) && typeof rawDel.at === "string"
+    ? (rawDel as unknown as DeliveryRecord)
+    : null;
+  const rawLease = card.delivering as Record<string, unknown> | null | undefined;
+  card.delivering = rawLease && typeof rawLease === "object" && !Array.isArray(rawLease)
+    && typeof rawLease.nonce === "string" && typeof rawLease.at === "string"
+    ? (rawLease as unknown as DeliveryLease)
+    : null;
   return card;
 }
 
@@ -194,7 +223,7 @@ export function openCase(root: string, a: OpenArgs, now = new Date()): Card {
       chat: a.chat, place: a.place ?? "", by: a.by ?? "", message: a.message ?? "", thread: a.thread ?? "",
       next: a.next ?? "", waiting: null, schedules: a.schedule ? [a.schedule] : [], promises: a.promise ? [a.promise] : [],
       places: a.space ? [a.space] : [], people: a.by ? [a.by] : [], deliver: normalizeDeliveryTarget(a.deliver),
-      delivered: null, result: "", journal: [`${stamp(now)} принято`] };
+      delivered: null, delivering: null, result: "", journal: [`${stamp(now)} принято`] };
     save(root, card, now);
     return card;
   });
@@ -225,17 +254,34 @@ export function setCase(root: string, id: string, a: SetArgs, now = new Date()):
     if (a.scheduleRemove?.length) c.schedules = c.schedules.filter(s => !a.scheduleRemove!.includes(s));
     if (a.space && !c.places.includes(a.space)) c.places.push(a.space);
     if (a.person && !c.people.includes(a.person)) c.people.push(a.person);
-    if (a.clearDeliver) c.deliver = null;
-    else if (a.deliver) {
+    const prevTarget = formatDeliveryTarget(c.deliver);
+    if (a.clearDeliver) {
+      c.deliver = null;
+      c.delivered = null;
+    } else if (a.deliver) {
       const prev = c.deliver ?? {};
-      const merged: DeliveryTarget = a.deliver.person
-        ? { person: a.deliver.person, replyTo: a.deliver.replyTo !== undefined ? a.deliver.replyTo : prev.replyTo }
-        : (a.deliver.chat !== undefined || a.deliver.topic !== undefined)
-          ? { chat: a.deliver.chat !== undefined ? a.deliver.chat : prev.chat,
-              topic: a.deliver.topic !== undefined ? a.deliver.topic : prev.topic,
-              replyTo: a.deliver.replyTo !== undefined ? a.deliver.replyTo : prev.replyTo }
-          : { ...prev, ...a.deliver };
+      let merged: DeliveryTarget;
+      if (a.deliver.person !== undefined) {
+        // Switching to a private chat (or another person) drops stale group topic/replyTo unless explicitly passed.
+        const samePerson = prev.person === optStr(a.deliver.person);
+        merged = {
+          person: a.deliver.person,
+          replyTo: a.deliver.replyTo !== undefined ? a.deliver.replyTo : (samePerson ? prev.replyTo : undefined),
+        };
+      } else if (a.deliver.chat !== undefined || a.deliver.topic !== undefined) {
+        // Switching to a different group chat drops stale topic/replyTo from the old chat unless explicitly passed.
+        const chatChanged = a.deliver.chat !== undefined && prev.chat !== optStr(a.deliver.chat);
+        const topicChanged = a.deliver.topic !== undefined && prev.topic !== optStr(a.deliver.topic);
+        merged = {
+          chat: a.deliver.chat !== undefined ? a.deliver.chat : prev.chat,
+          topic: a.deliver.topic !== undefined ? a.deliver.topic : (chatChanged ? undefined : prev.topic),
+          replyTo: a.deliver.replyTo !== undefined ? a.deliver.replyTo : (chatChanged || topicChanged ? undefined : prev.replyTo),
+        };
+      } else {
+        merged = { ...prev, ...a.deliver };
+      }
       c.deliver = normalizeDeliveryTarget(merged);
+      if (formatDeliveryTarget(c.deliver) !== prevTarget) c.delivered = null;
     }
     if (a.result !== undefined) c.result = a.result;
     c.since = now.toISOString();
@@ -258,25 +304,92 @@ function describe(a: SetArgs): string {
   return parts.join("; ") || "изменено";
 }
 
-/** Record a bridge-confirmed delivery in the case card and its journal. */
+/**
+ * Atomically acquire an in-flight delivery lease on a case card under withLock to prevent TOCTOU double sends
+ * from concurrent turns/schedules. Also validates closed / already-delivered / uncertain-delivery guards.
+ */
+export function acquireDeliveryLease(
+  root: string,
+  id: string,
+  opts: { force?: boolean; byThread?: string; ttlMs?: number } = {},
+  now = new Date(),
+): { ok: true; card: Card; lease: DeliveryLease } | { ok: false; code: string; message: string } {
+  const ttl = opts.ttlMs ?? DELIVERY_LEASE_MS;
+  return withLock(casesDir(root), () => {
+    const c = readCard(root, id);
+    if (c.state === "closed" && !opts.force) {
+      return { ok: false as const, code: "case_closed", message: `case_closed: дело ${c.id} уже закрыто. Если действительно нужно отправить сообщение по закрытому делу — добавь --force.` };
+    }
+    const d = c.deliver;
+    if (!d || (!d.person && !d.chat && !d.topic)) {
+      return { ok: false as const, code: "no_delivery_target", message: `no_delivery_target: у дела ${c.id} не задан адрес ответа. Задай его через case set ${c.id} --deliver-chat … [--deliver-topic …] или --deliver-person …` };
+    }
+    if (c.delivered && !opts.force) {
+      if (c.delivered.uncertain) {
+        const note = c.delivered.note ? ` (${c.delivered.note})` : "";
+        return { ok: false as const, code: "delivery_uncertain", message: `delivery_uncertain: предыдущая отправка по делу ${c.id} (${c.delivered.at}) не подтверждена или выполнена частично${note}. Проверь чат перед повтором; если нужно отправить снова — добавь --force.` };
+      }
+      const msg = typeof c.delivered.messageId === "number" ? `, msg ${c.delivered.messageId}` : "";
+      return { ok: false as const, code: "already_delivered", message: `already_delivered: итог по делу ${c.id} уже доставлен (${c.delivered.at}${msg}). Не повторяй отправку без нужды; если нужно отправить ещё раз — добавь --force.` };
+    }
+    if (c.delivering) {
+      const age = now.getTime() - new Date(c.delivering.at).getTime();
+      if (Number.isFinite(age) && age >= 0 && age < ttl) {
+        return { ok: false as const, code: "delivery_in_progress", message: `delivery_in_progress: отправка по делу ${c.id} уже выполняется (${c.delivering.at}). Дождись завершения.` };
+      }
+    }
+    const lease: DeliveryLease = {
+      nonce: randomBytes(8).toString("hex"),
+      at: now.toISOString(),
+      pid: process.pid,
+      ...(opts.byThread ? { byThread: opts.byThread } : {}),
+    };
+    c.delivering = lease;
+    save(root, c, now);
+    return { ok: true as const, card: c, lease };
+  });
+}
+
+/** Release the delivery lease if it still belongs to this caller. */
+export function releaseDeliveryLease(root: string, id: string, nonce: string, now = new Date()): void {
+  try {
+    withLock(casesDir(root), () => {
+      const c = readCard(root, id);
+      if (c.delivering?.nonce === nonce) {
+        c.delivering = null;
+        save(root, c, now);
+      }
+    });
+  } catch { /* card gone or lock unavailable during cleanup */ }
+}
+
+/** Record a bridge-confirmed delivery (or partial/uncertain delivery) in the case card and its journal. */
 export function recordDelivery(root: string, id: string, rec: DeliveryRecord, now = new Date()): Card {
   return withLock(casesDir(root), () => {
     const c = readCard(root, id);
     c.delivered = rec;
-    if (c.state === "undelivered") c.state = "open";
+    c.delivering = null;
+    if (rec.uncertain) {
+      if (c.state !== "closed") c.state = "undelivered";
+    } else if (c.state === "undelivered") {
+      c.state = c.waiting?.who ? "waiting" : "open";
+    }
     c.since = now.toISOString();
     const msg = typeof rec.messageId === "number" ? `, msg ${rec.messageId}` : "";
-    c.journal.push(`${stamp(now)} доставлено (${rec.target}${msg})`);
+    const label = rec.uncertain ? "доставка не подтверждена/частично" : "доставлено";
+    const note = rec.note ? `: ${clean(rec.note).slice(0, 140)}` : "";
+    c.journal.push(`${stamp(now)} ${label} (${rec.target}${msg})${note}`);
     c.journal = c.journal.slice(-JOURNAL_KEEP);
     save(root, c, now);
     return c;
   });
 }
 
-/** Record a failed/refused delivery attempt without marking the case delivered. */
+/** Record a clean failed/refused delivery attempt without marking the case delivered. */
 export function recordDeliveryFailure(root: string, id: string, reason: string, now = new Date()): Card {
   return withLock(casesDir(root), () => {
     const c = readCard(root, id);
+    c.delivering = null;
     if (c.state !== "closed") c.state = "undelivered";
     c.since = now.toISOString();
     const short = clean(reason).slice(0, 160) || "ошибка отправки";
@@ -296,6 +409,7 @@ export function closeCase(root: string, id: string, result: string, now = new Da
     c.result = result || c.result;
     c.waiting = null;
     c.schedules = [];
+    c.delivering = null;
     c.since = now.toISOString();
     c.journal.push(`${stamp(now)} закрыто${result ? `: ${result}` : ""}`);
     c.journal = c.journal.slice(-JOURNAL_KEEP);
@@ -317,12 +431,16 @@ export function findCases(root: string, chat: string | null, words: string): Ind
 
 /**
  * Every open case has its next step on the calendar or a person it waits for with a date; its schedules exist and
- * are on; a promised or awaited date has not passed unnoticed.
+ * are on; a promised or awaited date has not passed unnoticed; an undelivered result is flagged.
  */
 export function checkCases(root: string, chat: string | null, liveSchedules: ReadonlySet<string>, now = new Date()): string[] {
   const out: string[] = [];
   for (const r of listCases(root, chat)) {
     const c = readCard(root, r.id);
+    if (c.state === "undelivered") {
+      const hint = c.delivered?.uncertain ? "исход отправки не подтверждён — проверь чат перед повтором" : "доставка итога не прошла — разбери причину и доставь";
+      out.push(`${c.id} «${c.title}»: ${hint}`);
+    }
     const gone = c.schedules.filter(s => !liveSchedules.has(s));
     if (gone.length) out.push(`${c.id} «${c.title}»: расписания нет или выключено — ${gone.join(", ")}; поставь следующий шаг заново`);
     const alive = c.schedules.length > gone.length;
@@ -343,4 +461,3 @@ export function openCasesHint(root: string | undefined): string | null {
     + "это дела этого чата; по делу, о котором речь, читай его карточку (`case show <id>`), не переспрашивай решённое и не повторяй "
     + "сделанное (журнал карточки); обещание с прошедшим сроком — выполни или честно напиши о задержке; затем `case check --here`.";
 }
-

@@ -1,6 +1,7 @@
-import json
 """С114: acceptance checks without a person — each 25.11 case gives «не прошло — что сделать»; a shared model login is the
 owner's decision, not a failure; the summary refuses the launch while anything failed."""
+import json
+import subprocess
 import sys, tempfile, unittest
 from pathlib import Path
 
@@ -117,6 +118,22 @@ class Checks(unittest.TestCase):
         r_err = a.check_group_rights(lambda *args, **kw: R(1, "", "bot_token_missing"))
         self.assertEqual(r_err["state"], a.FAIL)
         self.assertIn("bot_token_missing", r_err["text"])
+
+    def test_group_rights_hardening_timeout_bad_json_and_ok_false(self):
+        class R:
+            def __init__(self, rc=0, out="", err=""):
+                self.returncode, self.stdout, self.stderr = rc, out, err
+
+        def raise_timeout(*args, **kw):
+            raise subprocess.TimeoutExpired(cmd="bb", timeout=60)
+
+        self.assertEqual(a.check_group_rights(raise_timeout)["state"], a.FAIL)
+        # exitCode 1 with "not found" must be FAIL, not UNCHECKED
+        self.assertEqual(a.check_group_rights(lambda *args, **kw: R(1, "", "chat not found"))["state"], a.FAIL)
+        # top-level ok:false with empty groups must be FAIL
+        self.assertEqual(a.check_group_rights(lambda *args, **kw: R(0, '{"ok": false, "groups": []}'))["state"], a.FAIL)
+        # non-dict group entry must be FAIL
+        self.assertEqual(a.check_group_rights(lambda *args, **kw: R(0, '{"ok": true, "groups": ["bad"]}'))["state"], a.FAIL)
 
 if __name__ == "__main__":
     unittest.main()

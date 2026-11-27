@@ -170,12 +170,25 @@ def check_configured(plugin_list_text):
 
 def check_group_rights(run=subprocess.run):
     """С117 / С114: verify real bot rights in connected groups via `bb telegram-projects check-rights --json`."""
-    res = run(["bb", "telegram-projects", "check-rights", "--json"], capture_output=True, text=True)
+    env = {k: v for k, v in os.environ.items() if k != "BB_THREAD_ID"}
+    try:
+        res = run(["bb", "telegram-projects", "check-rights", "--json"],
+                  capture_output=True, text=True, timeout=60, env=env)
+    except subprocess.TimeoutExpired:
+        return _row("group_rights", FAIL, "проверка прав бота в группах не ответила за 60 с",
+                    "проверить связь с Telegram и повторить приёмку")
+    except OSError as exc:
+        return _row("group_rights", FAIL, f"не удалось запустить проверку прав бота в группах ({exc})",
+                    "проверить наличие bb в PATH и повторить приёмку")
     stdout = (res.stdout or "").strip()
     stderr = (res.stderr or "").strip()
     if res.returncode != 0:
         low = stderr.lower()
-        if any(tok in low for tok in ("usage:", "unknown", "unexpected_argument", "not found")):
+        is_old_bridge = (
+            res.returncode == 2
+            and ("usage:" in low or "unknown command" in low or ("unexpected_argument" in low and "check-rights" in low))
+        )
+        if is_old_bridge:
             return _row("group_rights", UNCHECKED,
                         "мост не поддерживает проверку прав в группах (нужен telegram-projects 0.9.84+)",
                         "обновить telegram-projects до 0.9.84+")
@@ -188,17 +201,36 @@ def check_group_rights(run=subprocess.run):
         return _row("group_rights", FAIL, "ответ проверки прав бота в группах не удалось разобрать",
                     "проверить версию и состояние telegram-projects")
     groups = data.get("groups") if isinstance(data, dict) else None
-    if not isinstance(groups, list):
+    if not isinstance(data, dict) or not isinstance(groups, list) or any(not isinstance(g, dict) for g in groups):
         return _row("group_rights", FAIL, "проверка прав бота в группах вернула неожиданный ответ",
                     "проверить версию и состояние telegram-projects")
+    if data.get("ok") is False and not groups:
+        return _row("group_rights", FAIL, "проверка прав бота в группах завершилась с ошибкой",
+                    "проверить права бота и состояние telegram-projects")
     if not groups:
         return _row("group_rights", OK, "подключённых групп нет — права в группах не требуются")
-    bad = [g for g in groups if isinstance(g, dict) and not g.get("ok")]
+    bad = [g for g in groups if not g.get("ok")]
     if bad:
-        titles = ", ".join(f"«{g.get('title') or 'группа'}»" for g in bad)
-        hints = [str(g.get("hint") or "").strip() for g in bad if str(g.get("hint") or "").strip()]
-        action = " ".join(hints) if hints else "выдать боту права администратора в указанных группах"
-        return _row("group_rights", FAIL, f"не хватает прав бота в группах: {titles}", action)
+        def _label(g):
+            title = str(g.get("title") or "").strip()
+            if title:
+                return f"«{title}»"
+            cid = g.get("chatId")
+            return f"чат {cid}" if cid is not None else "«группа»"
+        titles = ", ".join(_label(g) for g in bad)
+        hints = []
+        for g in bad:
+            h = str(g.get("hint") or "").strip()
+            if h:
+                hints.append(h)
+            else:
+                err = str(g.get("error") or "").strip()
+                suffix = f" ({err})" if err else ""
+                hints.append(f"В {_label(g)} не удалось подтвердить права администратора{suffix}: выдайте права администратора боту.")
+        return _row("group_rights", FAIL, f"не хватает прав бота в группах: {titles}", " ".join(hints))
+    if data.get("ok") is False:
+        return _row("group_rights", FAIL, "проверка прав бота в группах сообщила о проблеме",
+                    "проверить права бота в подключённых группах")
     return _row("group_rights", OK, f"права бота в подключённых группах ({len(groups)}) в порядке")
 
 

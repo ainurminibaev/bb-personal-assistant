@@ -280,8 +280,9 @@ if (mode === "ok") {
 `);
   chmodSync(fakeBb, 0o755);
 
-  const prevPath = process.env.PATH;
+  const prevPath = process.env.PATH, prevCli = process.env.BB_CLI;
   process.env.PATH = `${binDir}:${prevPath}`;
+  process.env.BB_CLI = fakeBb;
   try {
     const res = await run("group-task", "deliver", id, "--text", "Итог готов");
     assert.equal(res.exitCode, 0, res.stderr);
@@ -312,5 +313,133 @@ if (mode === "ok") {
     assert.ok(dmAfter.journal.some(j => j.includes("доставка не прошла") && j.includes("send_refused")));
   } finally {
     process.env.PATH = prevPath;
+    if (prevCli === undefined) delete process.env.BB_CLI; else process.env.BB_CLI = prevCli;
+  }
+});
+
+test("review hardening: closed guard, uncertain/incomplete delivery, setCase target switch, text-file scope, checkCases undelivered", async () => {
+  const { chmodSync } = await import("node:fs");
+  const { root, run } = await setup({
+    conversations: {
+      "group": { kind: "group", chatId: -100555, topicId: 7 },
+      "group-task": { kind: "group", chatId: -100555, topicId: 7 },
+    },
+  });
+
+  // Opening with explicit --deliver-topic inherits group chat; explicit --deliver-person does NOT inherit group --message as replyTo.
+  const tOpen = await run("group", "open", "--title", "Другая тема", "--deliver-topic", "99");
+  assert.equal(tOpen.exitCode, 0, tOpen.stderr);
+  const tId = tOpen.stdout.split("\n")[0].trim();
+  const tCard = JSON.parse((await run("group", "show", tId)).stdout);
+  assert.deepEqual(tCard.deliver, { chat: "-100555", topic: "99" });
+
+  const pOpen = await run("group", "open", "--title", "Личка без чужого reply", "--message", "555", "--deliver-person", "777");
+  assert.equal(pOpen.exitCode, 0, pOpen.stderr);
+  const pId = pOpen.stdout.split("\n")[0].trim();
+  const pCard = JSON.parse((await run("group", "show", pId)).stdout);
+  assert.deepEqual(pCard.deliver, { person: "777" });
+
+  // Switching deliver chat drops stale topic/replyTo from previous chat.
+  await run("group", "set", tId, "--deliver-chat", "-100999");
+  const tCard2 = JSON.parse((await run("group", "show", tId)).stdout);
+  assert.deepEqual(tCard2.deliver, { chat: "-100999" });
+
+  // Relative --text-file and --text-file outside project are rejected for non-coordinator thread.
+  const relErr = await run("group", "deliver", tId, "--text-file", "relative.txt");
+  assert.equal(relErr.exitCode, 2);
+  const outsideErr = await run("group", "deliver", tId, "--text-file", "/etc/hosts");
+  assert.equal(outsideErr.exitCode, 1);
+  assert.match(outsideErr.stderr, /text_file_outside_project/);
+
+  // send_outcome_unknown marks uncertain and blocks retry without --force; checkCases flags undelivered.
+  const binDir = mkdtempSync(join(tmpdir(), "fake-bb-unc-"));
+  const modeFile = join(binDir, "mode.txt");
+  writeFileSync(modeFile, "unknown");
+  const fakeBb = join(binDir, "bb");
+  writeFileSync(fakeBb, `#!/usr/bin/env node
+const fs = require("node:fs");
+const mode = fs.readFileSync(${JSON.stringify(modeFile)}, "utf8").trim();
+if (mode === "unknown") {
+  process.stderr.write("send_outcome_unknown: Telegram не ответил");
+  process.exit(1);
+} else if (mode === "incomplete") {
+  process.stdout.write(JSON.stringify({ sent: true, messageId: 777, note: "часть файлов не ушла" }));
+  process.stderr.write("часть файлов не ушла");
+  process.exit(1);
+} else {
+  process.stdout.write(JSON.stringify({ sent: true, messageId: 888 }));
+  process.exit(0);
+}
+`);
+  chmodSync(fakeBb, 0o755);
+  const prevPath = process.env.PATH, prevCli = process.env.BB_CLI;
+  process.env.PATH = `${binDir}:${prevPath}`;
+  process.env.BB_CLI = fakeBb;
+  try {
+    const uRes = await run("group", "deliver", tId, "--text", "Итог");
+    assert.equal(uRes.exitCode, 1);
+    assert.match(uRes.stderr, /send_outcome_unknown/);
+    const uRetry = await run("group", "deliver", tId, "--text", "Повтор");
+    assert.equal(uRetry.exitCode, 1);
+    assert.match(uRetry.stderr, /delivery_uncertain/);
+
+    const chk = await run("group", "check", "--here");
+    assert.match(chk.stdout, /исход отправки не подтверждён/);
+
+    // Partial/incomplete send (sent:true + exitCode:1) also blocks retry without --force.
+    writeFileSync(modeFile, "incomplete");
+    const iRes = await run("group", "deliver", pId, "--text", "Частично");
+    assert.equal(iRes.exitCode, 1);
+    const iRetry = await run("group", "deliver", pId, "--text", "Повтор");
+    assert.equal(iRetry.exitCode, 1);
+    assert.match(iRetry.stderr, /delivery_uncertain/);
+
+    // Closed case blocks deliver without --force.
+    await run("group", "close", pId, "--result", "закрыто");
+    const cRes = await run("group", "deliver", pId, "--text", "После закрытия");
+    assert.equal(cRes.exitCode, 1);
+    assert.match(cRes.stderr, /case_closed/);
+  } finally {
+    process.env.PATH = prevPath;
+    if (prevCli === undefined) delete process.env.BB_CLI; else process.env.BB_CLI = prevCli;
+  }
+});
+
+test("review hardening: concurrent case deliver calls are serialized by atomic lease (no double send)", async () => {
+  const { chmodSync } = await import("node:fs");
+  const { run } = await setup({
+    conversations: { "group": { kind: "group", chatId: -100555, topicId: 7 } },
+  });
+  const opened = await run("group", "open", "--title", "Параллельная доставка");
+  const id = opened.stdout.split("\n")[0].trim();
+
+  const binDir = mkdtempSync(join(tmpdir(), "fake-bb-race-"));
+  const logFile = join(binDir, "calls.jsonl");
+  const fakeBb = join(binDir, "bb");
+  writeFileSync(fakeBb, `#!/usr/bin/env node
+const fs = require("node:fs");
+setTimeout(() => {
+  fs.appendFileSync(${JSON.stringify(logFile)}, "sent\\n");
+  process.stdout.write(JSON.stringify({ sent: true, messageId: 404 }));
+  process.exit(0);
+}, 150);
+`);
+  chmodSync(fakeBb, 0o755);
+
+  const prevCli = process.env.BB_CLI;
+  process.env.BB_CLI = fakeBb;
+  try {
+    const [r1, r2] = await Promise.all([
+      run("group", "deliver", id, "--text", "Ответ 1"),
+      run("group", "deliver", id, "--text", "Ответ 2"),
+    ]);
+    const ok = [r1, r2].filter(r => r.exitCode === 0);
+    const blocked = [r1, r2].filter(r => r.exitCode !== 0);
+    assert.equal(ok.length, 1);
+    assert.equal(blocked.length, 1);
+    assert.match(blocked[0].stderr, /delivery_in_progress/);
+    assert.equal(readFileSync(logFile, "utf8").trim().split("\n").length, 1);
+  } finally {
+    if (prevCli === undefined) delete process.env.BB_CLI; else process.env.BB_CLI = prevCli;
   }
 });

@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { isAbsolute, resolve, sep } from "node:path";
 import type { BbPluginApi } from "@bb/plugin-sdk";
 import { z } from "zod";
 import {
-  checkCases, closeCase, findCases, formatDeliveryTarget, listCases, normalizeDeliveryTarget,
-  openCase, readCard, recordDelivery, recordDeliveryFailure, setCase,
+  acquireDeliveryLease, checkCases, closeCase, findCases, formatDeliveryTarget, listCases,
+  normalizeDeliveryTarget, openCase, readCard, recordDelivery, recordDeliveryFailure,
+  releaseDeliveryLease, setCase,
   type DeliveryTarget, type IndexRow,
 } from "./cases";
 
@@ -89,31 +92,64 @@ export function deliverEnv(base: NodeJS.ProcessEnv, ctx: { threadId?: string; pr
   return env;
 }
 
+export interface BridgeSendResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  timedOut?: boolean;
+}
+
 export type BridgeSender = (
   args: string[],
   ctx: { threadId?: string; projectId?: string },
-) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+) => Promise<BridgeSendResult>;
 
-function defaultBridgeSender(args: string[], ctx: { threadId?: string; projectId?: string }) {
-  return new Promise<{ exitCode: number; stdout: string; stderr: string }>(resolve => {
-    const child = execFile("bb", args, { timeout: 60_000, maxBuffer: 4 * 1024 * 1024, env: deliverEnv(process.env, ctx) },
+function defaultBridgeSender(args: string[], ctx: { threadId?: string; projectId?: string }): Promise<BridgeSendResult> {
+  const bin = process.env.BB_CLI || "bb";
+  return new Promise(resolvePromise => {
+    const child = execFile(bin, args, { timeout: 60_000, maxBuffer: 4 * 1024 * 1024, env: deliverEnv(process.env, ctx) },
       (error, stdout, stderr) => {
-        const code = error ? (typeof (error as { code?: unknown }).code === "number" ? (error as unknown as { code: number }).code : 1) : 0;
-        resolve({ exitCode: code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") || (error && !code ? error.message : "") });
+        const err = error as (Error & { code?: unknown; killed?: boolean; signal?: string }) | null;
+        const timedOut = Boolean(err && (err.killed || err.signal));
+        const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
+        const errText = String(stderr ?? "").trim() || (err ? err.message : "");
+        resolvePromise({ exitCode: code, stdout: String(stdout ?? ""), stderr: errText, timedOut });
       });
     child.stdin?.end();
   });
 }
 
-/** Flags: `--name value`, repeated ones collected; positionals separately. */
+/** Check whether `targetPath` resolves strictly inside `baseDir` (following symlinks when present). */
+function isInsideDir(baseDir: string, targetPath: string): boolean {
+  try {
+    const realBase = realpathSync(baseDir);
+    const realTarget = realpathSync(targetPath);
+    return realTarget === realBase || realTarget.startsWith(realBase + sep);
+  } catch {
+    const absBase = resolve(baseDir);
+    const absTarget = resolve(targetPath);
+    return absTarget === absBase || absTarget.startsWith(absBase + sep);
+  }
+}
+
+/** Flags: `--name value` or `--name=value`, repeated ones collected; positionals separately. */
 export function flags(argv: string[]): { pos: string[]; one: (k: string) => string | undefined; many: (k: string) => string[]; has: (k: string) => boolean } {
   const pos: string[] = [], m = new Map<string, string[]>(), bare = new Set<string>();
   const BARE = new Set(["--here", "--all", "--closed", "--no-waiting", "--clear-deliver", "--force"]);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith("--") && BARE.has(a)) bare.add(a);
-    else if (a.startsWith("--")) { m.set(a, [...(m.get(a) ?? []), argv[i + 1] ?? ""]); i++; }
-    else pos.push(a);
+    if (a.startsWith("--") && BARE.has(a)) {
+      bare.add(a);
+    } else if (a.startsWith("--") && a.includes("=")) {
+      const eq = a.indexOf("=");
+      const k = a.slice(0, eq), v = a.slice(eq + 1);
+      m.set(k, [...(m.get(k) ?? []), v]);
+    } else if (a.startsWith("--")) {
+      m.set(a, [...(m.get(a) ?? []), argv[i + 1] ?? ""]);
+      i++;
+    } else {
+      pos.push(a);
+    }
   }
   return { pos, one: k => m.get(k)?.at(-1), many: k => m.get(k) ?? [], has: k => bare.has(k) };
 }
@@ -125,18 +161,35 @@ export const CASE_USAGE = "bb personal-assistant case open --title … [--by …
   + "  | deliver <id> (--text … | --text-file …) [--file …] [--reply-to …] [--force]\n"
   + "  | close <id> [--result …] | show <id> | list [--here|--all] [--closed] | find <words> [--all] | check [--here|--all]";
 
-function explicitDeliveryFromFlags(f: ReturnType<typeof flags>): DeliveryTarget | undefined {
+const isPosInt = (v: string | undefined): boolean => Boolean(v && /^\d+$/.test(v.trim()) && Number(v.trim()) > 0);
+
+function explicitDeliveryFromFlags(f: ReturnType<typeof flags>): { target?: DeliveryTarget; error?: string } {
   const chat = f.one("--deliver-chat");
   const topic = f.one("--deliver-topic");
   const person = f.one("--deliver-person");
   const replyTo = f.one("--deliver-reply-to");
-  if (chat === undefined && topic === undefined && person === undefined && replyTo === undefined) return undefined;
+  if (person !== undefined && (chat !== undefined || topic !== undefined)) {
+    return { error: "cannot combine --deliver-person with --deliver-chat or --deliver-topic" };
+  }
+  if (replyTo !== undefined && replyTo.trim() !== "" && !isPosInt(replyTo)) {
+    return { error: `--deliver-reply-to must be a positive integer message ID, got: ${replyTo}` };
+  }
+  if (chat === undefined && topic === undefined && person === undefined && replyTo === undefined) return {};
   return {
-    ...(chat !== undefined ? { chat } : {}),
-    ...(topic !== undefined ? { topic } : {}),
-    ...(person !== undefined ? { person } : {}),
-    ...(replyTo !== undefined ? { replyTo } : {}),
+    target: {
+      ...(chat !== undefined ? { chat } : {}),
+      ...(topic !== undefined ? { topic } : {}),
+      ...(person !== undefined ? { person } : {}),
+      ...(replyTo !== undefined ? { replyTo } : {}),
+    },
   };
+}
+
+async function callerProjectDir(sdk: BbPluginApi["sdk"], projectId?: string): Promise<string | undefined> {
+  if (!projectId) return undefined;
+  const proj = await sdk.projects.get({ projectId }).catch(() => undefined) as { sources?: { path?: string; isDefault?: boolean }[] } | undefined;
+  const src = proj?.sources ?? [];
+  return (src.find(s => s.isDefault) ?? src[0])?.path;
 }
 
 export async function runCase(
@@ -172,16 +225,31 @@ export async function runCase(
   try {
     switch (sub) {
       case "open": {
-        const explicit = explicitDeliveryFromFlags(f);
+        const exp = explicitDeliveryFromFlags(f);
+        if (exp.error) return { exitCode: 2, stderr: exp.error };
+        const explicit = exp.target;
         const msgRaw = f.one("--message")?.trim();
-        const inferredReply = msgRaw && /^\d+$/.test(msgRaw) && Number(msgRaw) > 0 ? msgRaw : undefined;
+        const inferredReply = isPosInt(msgRaw) ? msgRaw : undefined;
         let deliver: DeliveryTarget | null = null;
-        if (explicit && (explicit.person || explicit.chat || explicit.topic)) {
-          deliver = normalizeDeliveryTarget({ ...explicit, replyTo: explicit.replyTo ?? inferredReply });
+        if (explicit && explicit.person) {
+          // Explicit private-chat target: only inherit inferredReply if it matches current private chat.
+          const sameAsCurrent = chatCtx.defaultDeliver?.person === explicit.person.trim();
+          deliver = normalizeDeliveryTarget({
+            person: explicit.person,
+            replyTo: explicit.replyTo ?? (sameAsCurrent ? inferredReply : undefined),
+          });
+        } else if (explicit && (explicit.chat || explicit.topic)) {
+          // Explicit group/topic target: inherit current group chat if only --deliver-topic was passed.
+          const targetChat = explicit.chat ?? chatCtx.defaultDeliver?.chat;
+          const sameChat = Boolean(targetChat && chatCtx.defaultDeliver?.chat === targetChat.trim());
+          const sameTopic = !explicit.topic || chatCtx.defaultDeliver?.topic === explicit.topic.trim();
+          deliver = normalizeDeliveryTarget({
+            chat: targetChat,
+            topic: explicit.topic,
+            replyTo: explicit.replyTo ?? (sameChat && sameTopic ? inferredReply : undefined),
+          });
         } else if (chatCtx.defaultDeliver) {
           deliver = normalizeDeliveryTarget({ ...chatCtx.defaultDeliver, replyTo: explicit?.replyTo ?? inferredReply });
-        } else if (explicit) {
-          deliver = normalizeDeliveryTarget(explicit);
         }
         const c = openCase(root, { title: f.one("--title") ?? "", chat, place: f.one("--place"), by: f.one("--by"), message: f.one("--message"),
           thread: f.one("--thread"), next: f.one("--next"), promise: f.one("--promise"), schedule: f.one("--schedule"), space: f.one("--space"),
@@ -191,68 +259,120 @@ export async function runCase(
       }
       case "set": {
         const id = f.pos[0]; mine(id);
+        const exp = explicitDeliveryFromFlags(f);
+        if (exp.error) return { exitCode: 2, stderr: exp.error };
         const c = setCase(root, id, { state: f.one("--state"), next: f.one("--next"), thread: f.one("--thread"),
           waitingWho: f.one("--waiting-who"), waitingWhat: f.one("--waiting-what"), waitingBack: f.one("--waiting-back"),
           noWaiting: f.has("--no-waiting"), promise: f.one("--promise"), scheduleAdd: f.many("--schedule"),
           scheduleRemove: f.many("--unschedule"), space: f.one("--space"), person: f.one("--person"),
-          deliver: explicitDeliveryFromFlags(f), clearDeliver: f.has("--clear-deliver"), note: f.one("--note") });
+          deliver: exp.target, clearDeliver: f.has("--clear-deliver"), note: f.one("--note") });
         return { exitCode: 0, stdout: `${c.id}: ${c.state}${c.next ? `; дальше: ${c.next}` : ""}` };
       }
       case "deliver": {
         const id = f.pos[0];
         if (!id) return { exitCode: 2, stderr: `Usage: ${CASE_USAGE}` };
-        const c = mine(id);
+        mine(id);
         const text = f.one("--text");
         const textFile = f.one("--text-file");
         const files = f.many("--file").filter(Boolean);
-        if (textFile === "-") return { exitCode: 2, stderr: "--text-file cannot be stdin (-); pass a file path or --text" };
+        const cliReplyTo = f.one("--reply-to");
+        if (text !== undefined && textFile !== undefined) {
+          return { exitCode: 2, stderr: "cannot combine --text and --text-file; pass one of them" };
+        }
+        if (textFile === "-") return { exitCode: 2, stderr: "--text-file cannot be stdin (-); pass an absolute file path or --text" };
         if (!text?.trim() && !textFile?.trim()) {
           return { exitCode: 2, stderr: "deliver requires --text <TEXT> or --text-file <PATH>" };
         }
-        const d = c.deliver;
-        if (!d || (!d.person && !d.chat && !d.topic)) {
-          return { exitCode: 1, stderr: `no_delivery_target: у дела ${c.id} не задан адрес ответа. Задай его через case set ${c.id} --deliver-chat … [--deliver-topic …] или --deliver-person …` };
+        if (cliReplyTo !== undefined && !isPosInt(cliReplyTo)) {
+          return { exitCode: 2, stderr: `--reply-to must be a positive integer message ID, got: ${cliReplyTo}` };
         }
-        if (c.delivered && !f.has("--force")) {
-          const msg = typeof c.delivered.messageId === "number" ? `, msg ${c.delivered.messageId}` : "";
-          return { exitCode: 1, stderr: `already_delivered: итог по делу ${c.id} уже доставлен (${c.delivered.at}${msg}). Не повторяй отправку без нужды; если нужно отправить ещё раз — добавь --force.` };
+        // Require absolute paths for --text-file and --file so server cwd never alters path resolution.
+        if (textFile && !isAbsolute(textFile)) {
+          return { exitCode: 2, stderr: `--text-file must be an absolute path, got: ${textFile}` };
         }
-        const sendArgs = ["telegram-projects", "send"];
-        if (d.person) {
-          sendArgs.push("--person", d.person);
-        } else {
-          if (d.chat) sendArgs.push("--chat", d.chat);
-          if (d.topic) sendArgs.push("--topic", d.topic);
+        for (const fp of files) {
+          if (!isAbsolute(fp)) return { exitCode: 2, stderr: `--file must be an absolute path, got: ${fp}` };
         }
-        const replyTo = (f.one("--reply-to") ?? d.replyTo)?.trim();
-        if (replyTo && /^\d+$/.test(replyTo) && Number(replyTo) > 0) sendArgs.push("--reply-to", replyTo);
-        if (textFile?.trim()) sendArgs.push("--text-file", textFile);
-        else if (text !== undefined) sendArgs.push("--text", text);
-        for (const fp of files) sendArgs.push("--file", fp);
+        // Non-coordinator, non-terminal threads may only pass --text-file inside their own project folder.
+        if (textFile && !terminal && !coordinator(ctx.threadId!)) {
+          const projDir = await callerProjectDir(bb.sdk, ctx.projectId);
+          if (!projDir || !isInsideDir(projDir, textFile)) {
+            return { exitCode: 1, stderr: "text_file_outside_project: --text-file должен находиться внутри папки текущего разговора/проекта (или передай текст через --text)" };
+          }
+        }
 
-        const res = await sendBridge(sendArgs, ctx);
-        if (res.exitCode !== 0) {
-          const reason = (res.stderr || res.stdout || "bridge_send_failed").trim();
+        // Atomically acquire an in-flight lease and validate closed / delivered / uncertain guards under withLock.
+        const acquired = acquireDeliveryLease(root, id, { force: f.has("--force"), byThread: ctx.threadId });
+        if (!acquired.ok) return { exitCode: 1, stderr: acquired.message };
+
+        const c = acquired.card;
+        const d = c.deliver!;
+        const targetText = formatDeliveryTarget(d);
+        try {
+          const sendArgs = ["telegram-projects", "send"];
+          if (d.person) {
+            sendArgs.push("--person", d.person);
+          } else {
+            if (d.chat) sendArgs.push("--chat", d.chat);
+            if (d.topic) sendArgs.push("--topic", d.topic);
+          }
+          const replyTo = (cliReplyTo ?? d.replyTo)?.trim();
+          if (isPosInt(replyTo)) sendArgs.push("--reply-to", replyTo!);
+          if (textFile?.trim()) sendArgs.push("--text-file", textFile);
+          else if (text !== undefined) sendArgs.push("--text", text);
+          for (const fp of files) sendArgs.push("--file", fp);
+
+          const res = await sendBridge(sendArgs, ctx);
+          let parsed: { sent?: boolean; messageId?: number; note?: string } | null = null;
+          try { parsed = res.stdout.trim() ? JSON.parse(res.stdout.trim()) : null; } catch { parsed = null; }
+
+          // Case A: clean confirmed send.
+          if (res.exitCode === 0 && parsed?.sent === true) {
+            recordDelivery(root, c.id, {
+              at: new Date().toISOString(),
+              ...(typeof parsed.messageId === "number" ? { messageId: parsed.messageId } : {}),
+              target: targetText,
+              ...(ctx.threadId ? { byThread: ctx.threadId } : {}),
+            });
+            const msg = typeof parsed.messageId === "number" ? `, msg ${parsed.messageId}` : "";
+            const note = parsed.note ? ` ${parsed.note}` : "";
+            return { exitCode: 0, stdout: `Доставлено по делу ${c.id} (${targetText}${msg}).${note}` };
+          }
+
+          const reason = (res.stderr || parsed?.note || res.stdout || "bridge_send_failed").trim();
+
+          // Case B: partial/incomplete send where bridge already delivered part (sent:true with exitCode!=0).
+          if (parsed?.sent === true) {
+            recordDelivery(root, c.id, {
+              at: new Date().toISOString(),
+              ...(typeof parsed.messageId === "number" ? { messageId: parsed.messageId } : {}),
+              target: targetText,
+              ...(ctx.threadId ? { byThread: ctx.threadId } : {}),
+              uncertain: true,
+              note: reason,
+            });
+            return { exitCode: res.exitCode || 1, stderr: reason };
+          }
+
+          // Case C: uncertain outcome (send_outcome_unknown or execFile timeout) — block blind retries without --force.
+          if (res.timedOut || /send_outcome_unknown/i.test(reason)) {
+            const uncertainReason = res.timedOut ? `send_timeout: ${reason || "превышено время ожидания моста — сообщение могло дойти"}` : reason;
+            recordDelivery(root, c.id, {
+              at: new Date().toISOString(),
+              target: targetText,
+              ...(ctx.threadId ? { byThread: ctx.threadId } : {}),
+              uncertain: true,
+              note: uncertainReason,
+            });
+            return { exitCode: res.exitCode || 1, stderr: uncertainReason };
+          }
+
+          // Case D: clean refusal/failure before send — do not mark delivered, keep card undelivered.
           recordDeliveryFailure(root, c.id, reason);
           return { exitCode: res.exitCode || 1, stderr: reason };
+        } finally {
+          releaseDeliveryLease(root, c.id, acquired.lease.nonce);
         }
-        let parsed: { sent?: boolean; messageId?: number; note?: string } | null = null;
-        try { parsed = JSON.parse(res.stdout.trim()); } catch { parsed = null; }
-        if (!parsed || parsed.sent !== true) {
-          const reason = (res.stdout || res.stderr || "unexpected_bridge_response").trim();
-          recordDeliveryFailure(root, c.id, reason);
-          return { exitCode: 1, stderr: reason };
-        }
-        const targetText = formatDeliveryTarget(d);
-        recordDelivery(root, c.id, {
-          at: new Date().toISOString(),
-          ...(typeof parsed.messageId === "number" ? { messageId: parsed.messageId } : {}),
-          target: targetText,
-          ...(ctx.threadId ? { byThread: ctx.threadId } : {}),
-        });
-        const msg = typeof parsed.messageId === "number" ? `, msg ${parsed.messageId}` : "";
-        const note = parsed.note ? ` ${parsed.note}` : "";
-        return { exitCode: 0, stdout: `Доставлено по делу ${c.id} (${targetText}${msg}).${note}` };
       }
       case "close": {
         const id = f.pos[0]; mine(id);

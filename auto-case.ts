@@ -1,6 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { chatOf } from "./case-command";
+import { chatContextOf } from "./case-command";
 import { openCase, readCard, readIndex, setCase } from "./cases";
 
 /**
@@ -34,7 +34,8 @@ export async function autoCases(bb: BbPluginApi, root: string | undefined, now =
       if (seen.has(a.id) || a.enabled === false || !a.createdByThreadId || (a.createdAt ?? now) < now - DAY) continue;
       seen.add(a.id);
       if (held.has(a.id)) continue;
-      const chat = await chatOf(bb.sdk, a.createdByThreadId).catch(() => "");
+      const chatCtx = await chatContextOf(bb.sdk, a.createdByThreadId).catch(() => ({ key: "", defaultDeliver: null }));
+      const chat = chatCtx.key;
       if (!chat.startsWith("tg:")) continue;   // not made from a Telegram chat: the installation's own schedule
       const named = /^(c-\d{8}-[a-z0-9-]+):/.exec(a.name ?? "")?.[1];
       let id: string;
@@ -43,7 +44,7 @@ export async function autoCases(bb: BbPluginApi, root: string | undefined, now =
         id = named;
       } else {
         const card = openCase(root, { title: (a.name ?? "Поручение").replace(/^c-[^:]+:\s*/, "").slice(0, 120), chat,
-          thread: a.createdByThreadId, schedule: a.id, next: `запуск ${when(a.nextRunAt ?? a.trigger?.runAt)}` });
+          thread: a.createdByThreadId, schedule: a.id, next: `запуск ${when(a.nextRunAt ?? a.trigger?.runAt)}`, deliver: chatCtx.defaultDeliver });
         id = card.id;
       }
       opened.push(id);

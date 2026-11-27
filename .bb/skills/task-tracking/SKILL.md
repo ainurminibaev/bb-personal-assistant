@@ -47,7 +47,7 @@ After three reminders without an answer, or when the deadline is about to be mis
 
 ## Delivering the result
 
-When you promised to come back with an answer later, deliver the finished result through the case card: `bb personal-assistant case deliver <id> --text "<result>"` (or `--text-file <path>`, optional `--file <path>` and `--reply-to <msgId>`). It sends the answer to the destination saved in the card via the standard bridge (`bb telegram-projects send`, with all bridge rights and audience checks intact), records the bridge confirmation (`messageId`, timestamp) in the card journal, and blocks accidental duplicate sends after a restart (pass `--force` only if a new send is genuinely required). If the bridge refuses, the card stays open as `undelivered` with the refusal reason in its journal — never work around a bridge refusal.
+When you promised to come back with an answer later, deliver the finished result through the case card: `bb personal-assistant case deliver <id> --text "<result>"` (or `--text-file <path>`, optional `--file <path>` and `--reply-to <msgId>`). It sends the answer to the destination saved in the card via the standard bridge (`bb telegram-projects send`, with all bridge rights and audience checks intact), records the bridge confirmation (`messageId`, timestamp) in the card journal, and blocks accidental duplicate sends after a restart (pass `--force` only if a new send is genuinely required). If the bridge refuses, the card stays open as `undelivered` with the refusal reason in its journal — never work around a bridge refusal. When `case deliver` sent the answer into the **current** chat (especially a private chat), finish the turn with `NO_REPLY` so the person does not receive a duplicate message.
 
 ## Closing
 
